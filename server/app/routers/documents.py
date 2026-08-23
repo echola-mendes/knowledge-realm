@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.db import session_scope
 from app.kb import resolve_knowledge_base_id
-from app.models import Document, DocumentChunk, DocumentTag, KnowledgeBase, Tag
+from app.models import Document, DocumentChunk, DocumentTag, Favorite, KnowledgeBase, Tag
 from app.schemas import DocumentOut, DocumentTagsPut, NoteCreate, UrlCreate
 from app import index as index_mod
 from app.storage import original_path, remove_document_files, write_original
@@ -164,12 +164,15 @@ def create_url_document(
 def list_documents(
     knowledge_base_id: uuid.UUID | None = None,
     tag_id: uuid.UUID | None = None,
+    favorite: bool | None = None,
     session: Session = Depends(get_db),
 ):
     kb_id = resolve_knowledge_base_id(session, knowledge_base_id)
     stmt = select(Document).where(Document.knowledge_base_id == kb_id)
     if tag_id is not None:
         stmt = stmt.join(DocumentTag).where(DocumentTag.tag_id == tag_id)
+    if favorite is True:
+        stmt = stmt.join(Favorite, Favorite.document_id == Document.id)
     rows = session.scalars(stmt.order_by(Document.created_at.desc())).all()
     return [_document_out(row) for row in rows]
 
@@ -195,6 +198,31 @@ def set_document_tags(
     return _document_out(doc)
 
 
+@router.post("/{document_id}/favorite", response_model=DocumentOut)
+def favorite_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
+    doc = session.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    existing = session.get(Favorite, document_id)
+    if existing is None:
+        session.add(Favorite(document_id=document_id))
+        session.commit()
+    session.refresh(doc)
+    return _document_out(doc)
+
+
+@router.delete("/{document_id}/favorite")
+def unfavorite_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
+    doc = session.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    row = session.get(Favorite, document_id)
+    if row is not None:
+        session.delete(row)
+        session.commit()
+    return {"ok": True}
+
+
 @router.get("/{document_id}", response_model=DocumentOut)
 def get_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
     doc = session.get(Document, document_id)
@@ -210,6 +238,7 @@ def delete_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="文档不存在")
     remove_document_files(doc)
     session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
+    session.execute(delete(Favorite).where(Favorite.document_id == document_id))
     session.delete(doc)
     session.commit()
     return {"ok": True}

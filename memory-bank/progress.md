@@ -94,4 +94,10 @@
 
 - 状态：已执行并验证
 - 结果：`/api/tags` 创建/列表/删除；`PUT /api/documents/{id}/tags` 覆盖设置；`GET /api/documents?tag_id=` 过滤。重名 409。`tests/test_tags.py` 通过。
-- 下一步：步骤 15
+- 下一步：步骤 15 已完成，见下
+
+## 步骤 15 — 收藏
+
+- 状态：已执行并验证
+- 结果：`POST/DELETE /api/documents/{id}/favorite`；同文档再收藏不增行；`GET ?favorite=true` 只返回已收藏；删文档时清收藏行。`tests/test_favorites.py` 通过。
+- 下一步：步骤 16
