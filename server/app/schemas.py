@@ -53,6 +53,25 @@ class TagOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    knowledge_base_id: uuid.UUID | None = None
+    tag_id: uuid.UUID | None = None
+    kind: str | None = None
+    k: int = Field(default=5, ge=1, le=20)
+
+
+class SearchHitOut(BaseModel):
+    document_id: uuid.UUID
+    document_name: str
+    chunk_id: uuid.UUID
+    content: str
+    score: float
+    page: int | None = None
+    heading: str | None = None
+    kind: str
+
+
 class DocumentTagsPut(BaseModel):
     tag_ids: list[uuid.UUID]
 

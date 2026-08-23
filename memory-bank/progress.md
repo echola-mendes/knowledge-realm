@@ -100,4 +100,10 @@
 
 - 状态：已执行并验证
 - 结果：`POST/DELETE /api/documents/{id}/favorite`；同文档再收藏不增行；`GET ?favorite=true` 只返回已收藏；删文档时清收藏行。`tests/test_favorites.py` 通过。
-- 下一步：步骤 16
+- 下一步：步骤 16 已完成，见下
+
+## 步骤 16 — 向量搜索 API
+
+- 状态：已执行并验证
+- 结果：`POST /api/search` 对 query embedding 后 SQL `<=>` TopK；可筛库/标签/kind；最高分 &lt; 0.30 空列表；不调 Chat。假向量测试隔离库 A/B。
+- 下一步：步骤 17
