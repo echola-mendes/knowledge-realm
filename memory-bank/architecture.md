@@ -1,0 +1,32 @@
+# 架构地图
+
+代码尚未落地。约定目录见 `tech-stack.md`。
+
+| 路径 | 职责 |
+|---|---|
+| `PRD.md` | 产品需求（V1=P0） |
+| `memory-bank/design-document.md` | 实现规格 |
+| `memory-bank/tech-stack.md` | 技术选型 |
+| `AGENTS.md` | Agent 约束 |
+| `server/.venv` | Python 3.12 虚拟环境（不用 conda） |
+| `server/requirements.txt` | 后端依赖 |
+| `server/app/config.py` | 环境变量与 Settings |
+| `server/app/main.py` | FastAPI 入口、`/health`、启动时确保默认库 |
+| `server/app/db.py` | 引擎与会话 |
+| `server/app/kb.py` | 默认知识库 |
+| `server/app/routers/knowledge_bases.py` | 知识库 HTTP |
+| `server/app/routers/documents.py` | 文档上传后入队解析+索引；`POST .../index` |
+| `server/app/parse.py` | md/txt UTF-8；PDF PyMuPDF 按页 `## Page N`；DOCX 按段落。无 OCR/MinerU |
+| `server/app/chunk.py` | LangChain 标题切分 + 800/120；内存 `TextChunk`（page/heading）；无 LlamaIndex |
+| `server/app/index.py` | 切块 Embedding 写入 `document_chunk`；状态 `ready`；额度不足提示改 v4 |
+| `server/app/storage.py` | 本地文件路径与清理 |
+| `server/app/schemas.py` | Pydantic 模型 |
+| `server/app/models.py` | SQLAlchemy 表 |
+| `server/alembic/` | 迁移；当前 `20260823_0001` |
+| `web/` | 前端目录（已建，尚无应用代码） |
+| `data/files/`、`data/parsed/` | 原件与解析稿；内容被 gitignore |
+| `.env.example` | 环境变量模板（DashScope，无真实密钥） |
+| `.gitignore` | 忽略 `.env`、venv、node_modules、用户 data |
+| 本机 PostgreSQL `echola_kb` | 已创建；`vector` 0.8.0。连接用户 `postgres`，密码仅本机，不入库 |
+
+无 MinerU、无独立向量库、无 Docker。
