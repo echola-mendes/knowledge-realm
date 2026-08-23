@@ -38,6 +38,8 @@ class DocumentOut(BaseModel):
     source_path: str | None = None
     byte_size: int
     existed: bool = False
+    tag_ids: list[uuid.UUID] = Field(default_factory=list)
+    is_favorite: bool = False
 
     model_config = {"from_attributes": True}
 

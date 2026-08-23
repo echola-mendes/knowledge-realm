@@ -35,12 +35,16 @@ def _normalize_ext(filename: str) -> str:
     return Path(filename or "").suffix.lower()
 
 
-def _document_out(doc: Document, *, existed: bool = False) -> DocumentOut:
+def _document_out(doc: Document, session: Session, *, existed: bool = False) -> DocumentOut:
+    tag_ids = list(session.scalars(select(DocumentTag.tag_id).where(DocumentTag.document_id == doc.id)))
+    fav = session.get(Favorite, doc.id) is not None
     return DocumentOut.model_validate(doc).model_copy(
         update={
             "existed": existed,
             "source_url": doc.source_url,
             "source_path": str(original_path(doc.id, doc.ext)),
+            "tag_ids": tag_ids,
+            "is_favorite": fav,
         }
     )
 
@@ -66,7 +70,7 @@ async def upload_document(
         select(Document).where(Document.knowledge_base_id == kb_id, Document.checksum == checksum)
     )
     if existing is not None:
-        return _document_out(existing, existed=True)
+        return _document_out(existing, session, existed=True)
     doc_id = uuid.uuid4()
     write_original(doc_id, ext, data)
     doc = Document(
@@ -83,7 +87,7 @@ async def upload_document(
     session.commit()
     session.refresh(doc)
     background.add_task(index_mod.process_document, doc.id)
-    return _document_out(doc, existed=False)
+    return _document_out(doc, session, existed=False)
 
 
 @router.post("/notes", response_model=DocumentOut)
@@ -104,7 +108,7 @@ def create_note(
         select(Document).where(Document.knowledge_base_id == kb_id, Document.checksum == checksum)
     )
     if existing is not None:
-        return _document_out(existing, existed=True)
+        return _document_out(existing, session, existed=True)
     doc_id = uuid.uuid4()
     write_original(doc_id, ".md", data)
     doc = Document(
@@ -121,7 +125,7 @@ def create_note(
     session.commit()
     session.refresh(doc)
     background.add_task(index_mod.process_document, doc.id)
-    return _document_out(doc, existed=False)
+    return _document_out(doc, session, existed=False)
 
 
 @router.post("/url", response_model=DocumentOut)
@@ -141,7 +145,7 @@ def create_url_document(
         select(Document).where(Document.knowledge_base_id == kb_id, Document.checksum == checksum)
     )
     if existing is not None:
-        return _document_out(existing, existed=True)
+        return _document_out(existing, session, existed=True)
     doc_id = uuid.uuid4()
     doc = Document(
         id=doc_id,
@@ -158,7 +162,7 @@ def create_url_document(
     session.commit()
     session.refresh(doc)
     background.add_task(index_mod.process_document, doc.id)
-    return _document_out(doc, existed=False)
+    return _document_out(doc, session, existed=False)
 
 
 @router.get("", response_model=list[DocumentOut])
@@ -175,7 +179,7 @@ def list_documents(
     if favorite is True:
         stmt = stmt.join(Favorite, Favorite.document_id == Document.id)
     rows = session.scalars(stmt.order_by(Document.created_at.desc())).all()
-    return [_document_out(row) for row in rows]
+    return [_document_out(row, session) for row in rows]
 
 
 @router.put("/{document_id}/tags", response_model=DocumentOut)
@@ -196,7 +200,7 @@ def set_document_tags(
         session.add(DocumentTag(document_id=document_id, tag_id=tag_id))
     session.commit()
     session.refresh(doc)
-    return _document_out(doc)
+    return _document_out(doc, session)
 
 
 @router.post("/{document_id}/favorite", response_model=DocumentOut)
@@ -209,7 +213,7 @@ def favorite_document(document_id: uuid.UUID, session: Session = Depends(get_db)
         session.add(Favorite(document_id=document_id))
         session.commit()
     session.refresh(doc)
-    return _document_out(doc)
+    return _document_out(doc, session)
 
 
 @router.delete("/{document_id}/favorite")
@@ -229,7 +233,7 @@ def get_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
     doc = session.get(Document, document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
-    return _document_out(doc)
+    return _document_out(doc, session)
 
 
 @router.get("/{document_id}/parsed.md")
@@ -265,7 +269,7 @@ def reindex_document_http(document_id: uuid.UUID, session: Session = Depends(get
         raise HTTPException(status_code=404, detail="文档不存在")
     index_mod.reindex_document(document_id)
     session.refresh(doc)
-    return _document_out(doc)
+    return _document_out(doc, session)
 
 
 @router.post("/{document_id}/index", response_model=DocumentOut)
@@ -277,4 +281,4 @@ def index_document_http(document_id: uuid.UUID, session: Session = Depends(get_d
         raise HTTPException(status_code=404, detail="文档不存在")
     index_mod.index_document(document_id)
     session.refresh(doc)
-    return _document_out(doc)
+    return _document_out(doc, session)

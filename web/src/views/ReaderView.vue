@@ -1,11 +1,18 @@
 <script setup lang="ts">
 import MarkdownIt from "markdown-it";
-import { onMounted, ref, watch } from "vue";
+import { nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { getParsedMarkdown } from "../api";
 
 const route = useRoute();
 const md = new MarkdownIt();
+const defaultOpen = md.renderer.rules.heading_open || ((tokens, idx, options, env, slf) => slf.renderToken(tokens, idx, options));
+md.renderer.rules.heading_open = (tokens, idx, options, env, slf) => {
+  const text = tokens[idx + 1]?.content || "";
+  const page = /Page\s+(\d+)/i.exec(text);
+  tokens[idx].attrSet("id", page ? `page-${page[1]}` : text.slice(0, 40));
+  return defaultOpen(tokens, idx, options, env, slf);
+};
 const html = ref("");
 const error = ref("");
 
@@ -14,6 +21,10 @@ async function load() {
   try {
     const text = await getParsedMarkdown(String(route.params.id));
     html.value = md.render(text);
+    await nextTick();
+    if (route.hash) {
+      document.querySelector(decodeURIComponent(route.hash))?.scrollIntoView();
+    }
   } catch (e) {
     html.value = "";
     error.value = String(e);
@@ -21,7 +32,7 @@ async function load() {
 }
 
 onMounted(load);
-watch(() => route.params.id, load);
+watch(() => [route.params.id, route.hash], load);
 </script>
 
 <template>
