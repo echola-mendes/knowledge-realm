@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.db import session_scope
 from app.kb import resolve_knowledge_base_id
 from app.models import Document, DocumentChunk, KnowledgeBase
-from app.schemas import DocumentOut
+from app.schemas import DocumentOut, NoteCreate, UrlCreate
 from app import index as index_mod
 from app.storage import original_path, remove_document_files, write_original
 
@@ -77,6 +77,81 @@ async def upload_document(
         checksum=checksum,
         status=STATUS_PENDING,
         byte_size=len(data),
+    )
+    session.add(doc)
+    session.commit()
+    session.refresh(doc)
+    background.add_task(index_mod.process_document, doc.id)
+    return _document_out(doc, existed=False)
+
+
+@router.post("/notes", response_model=DocumentOut)
+def create_note(
+    body: NoteCreate,
+    background: BackgroundTasks,
+    session: Session = Depends(get_db),
+):
+    text = body.content.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="笔记内容为空")
+    kb_id = resolve_knowledge_base_id(session, body.knowledge_base_id)
+    if session.get(KnowledgeBase, kb_id) is None:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    data = text.encode("utf-8")
+    checksum = hashlib.sha256(data).hexdigest()
+    existing = session.scalar(
+        select(Document).where(Document.knowledge_base_id == kb_id, Document.checksum == checksum)
+    )
+    if existing is not None:
+        return _document_out(existing, existed=True)
+    doc_id = uuid.uuid4()
+    write_original(doc_id, ".md", data)
+    doc = Document(
+        id=doc_id,
+        knowledge_base_id=kb_id,
+        filename=body.filename or "笔记.md",
+        ext=".md",
+        kind="note",
+        checksum=checksum,
+        status=STATUS_PENDING,
+        byte_size=len(data),
+    )
+    session.add(doc)
+    session.commit()
+    session.refresh(doc)
+    background.add_task(index_mod.process_document, doc.id)
+    return _document_out(doc, existed=False)
+
+
+@router.post("/url", response_model=DocumentOut)
+def create_url_document(
+    body: UrlCreate,
+    background: BackgroundTasks,
+    session: Session = Depends(get_db),
+):
+    url = body.url.strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="只支持 http/https 公开页")
+    kb_id = resolve_knowledge_base_id(session, body.knowledge_base_id)
+    if session.get(KnowledgeBase, kb_id) is None:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    checksum = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    existing = session.scalar(
+        select(Document).where(Document.knowledge_base_id == kb_id, Document.checksum == checksum)
+    )
+    if existing is not None:
+        return _document_out(existing, existed=True)
+    doc_id = uuid.uuid4()
+    doc = Document(
+        id=doc_id,
+        knowledge_base_id=kb_id,
+        filename=url,
+        ext=".md",
+        kind="url",
+        source_url=url,
+        checksum=checksum,
+        status=STATUS_PENDING,
+        byte_size=0,
     )
     session.add(doc)
     session.commit()

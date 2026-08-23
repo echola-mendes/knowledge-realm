@@ -12,7 +12,8 @@ PARSE_TIMEOUT_SEC = 60
 STATUS_PARSING = "parsing"
 STATUS_PARSED = "parsed"
 STATUS_PARSE_FAILED = "parse_failed"
-TEXT_KINDS = {"txt", "md"}
+TEXT_KINDS = {"txt", "md", "note"}
+URL_KIND = "url"
 PDF_KIND = "pdf"
 DOCX_KIND = "docx"
 

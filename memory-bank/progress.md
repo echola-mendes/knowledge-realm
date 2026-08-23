@@ -82,4 +82,10 @@
 
 - 状态：已执行并验证
 - 结果：`POST /api/documents/{id}/reindex` 清切片后重新解析+索引；`DELETE` 删库行与本地 files/parsed（处理中也可删）；`GET` 列表/详情含 status、error_message、source_path/source_url。`tests/test_document_manage.py` 通过。
-- 下一步：步骤 13
+- 下一步：步骤 13 已完成，见下
+
+## 步骤 13 — 笔记与 URL 导入
+
+- 状态：已执行并验证
+- 结果：`POST /api/documents/notes`（kind=note，正文 SHA-256）与 `POST /api/documents/url`（httpx 20s + trafilatura）。空正文/超时失败。`tests/test_notes_url.py` 用 mock HTML，无 Playwright。
+- 下一步：步骤 14

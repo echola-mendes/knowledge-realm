@@ -9,7 +9,8 @@ from app.chunk import split_markdown
 from app.config import get_settings
 from app.db import session_scope
 from app.models import Document, DocumentChunk
-from app.parse import DOCX_KIND, PDF_KIND, TEXT_KINDS, parse_docx_document, parse_pdf_document, parse_text_document
+from app.parse import DOCX_KIND, PDF_KIND, TEXT_KINDS, URL_KIND, parse_docx_document, parse_pdf_document, parse_text_document
+from app.url_import import process_url_document
 from app.storage import parsed_dir
 
 STATUS_PARSED = "parsed"
@@ -168,4 +169,6 @@ def process_document(document_id: uuid.UUID) -> None:
         parse_pdf_document(document_id)
     elif kind == DOCX_KIND:
         parse_docx_document(document_id)
+    elif kind == URL_KIND:
+        process_url_document(document_id)
     index_document(document_id)
