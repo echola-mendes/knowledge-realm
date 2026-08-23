@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.db import session_scope
 from app.kb import resolve_knowledge_base_id
-from app.models import Document, DocumentChunk, KnowledgeBase
-from app.schemas import DocumentOut, NoteCreate, UrlCreate
+from app.models import Document, DocumentChunk, DocumentTag, KnowledgeBase, Tag
+from app.schemas import DocumentOut, DocumentTagsPut, NoteCreate, UrlCreate
 from app import index as index_mod
 from app.storage import original_path, remove_document_files, write_original
 
@@ -163,13 +163,36 @@ def create_url_document(
 @router.get("", response_model=list[DocumentOut])
 def list_documents(
     knowledge_base_id: uuid.UUID | None = None,
+    tag_id: uuid.UUID | None = None,
     session: Session = Depends(get_db),
 ):
     kb_id = resolve_knowledge_base_id(session, knowledge_base_id)
-    rows = session.scalars(
-        select(Document).where(Document.knowledge_base_id == kb_id).order_by(Document.created_at.desc())
-    ).all()
+    stmt = select(Document).where(Document.knowledge_base_id == kb_id)
+    if tag_id is not None:
+        stmt = stmt.join(DocumentTag).where(DocumentTag.tag_id == tag_id)
+    rows = session.scalars(stmt.order_by(Document.created_at.desc())).all()
     return [_document_out(row) for row in rows]
+
+
+@router.put("/{document_id}/tags", response_model=DocumentOut)
+def set_document_tags(
+    document_id: uuid.UUID,
+    body: DocumentTagsPut,
+    session: Session = Depends(get_db),
+):
+    doc = session.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    unique_ids = list(dict.fromkeys(body.tag_ids))
+    for tag_id in unique_ids:
+        if session.get(Tag, tag_id) is None:
+            raise HTTPException(status_code=404, detail="标签不存在")
+    session.execute(delete(DocumentTag).where(DocumentTag.document_id == document_id))
+    for tag_id in unique_ids:
+        session.add(DocumentTag(document_id=document_id, tag_id=tag_id))
+    session.commit()
+    session.refresh(doc)
+    return _document_out(doc)
 
 
 @router.get("/{document_id}", response_model=DocumentOut)

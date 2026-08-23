@@ -42,6 +42,21 @@ class DocumentOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TagCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class TagOut(BaseModel):
+    id: uuid.UUID
+    name: str
+
+    model_config = {"from_attributes": True}
+
+
+class DocumentTagsPut(BaseModel):
+    tag_ids: list[uuid.UUID]
+
+
 class KnowledgeBaseOut(BaseModel):
     id: uuid.UUID
     name: str

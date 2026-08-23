@@ -88,4 +88,10 @@
 
 - 状态：已执行并验证
 - 结果：`POST /api/documents/notes`（kind=note，正文 SHA-256）与 `POST /api/documents/url`（httpx 20s + trafilatura）。空正文/超时失败。`tests/test_notes_url.py` 用 mock HTML，无 Playwright。
-- 下一步：步骤 14
+- 下一步：步骤 14 已完成，见下
+
+## 步骤 14 — 标签
+
+- 状态：已执行并验证
+- 结果：`/api/tags` 创建/列表/删除；`PUT /api/documents/{id}/tags` 覆盖设置；`GET /api/documents?tag_id=` 过滤。重名 409。`tests/test_tags.py` 通过。
+- 下一步：步骤 15

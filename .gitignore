@@ -21,3 +21,4 @@ data/parsed/**
 !data/parsed/.gitkeep
 
 .DS_Store
+test.md

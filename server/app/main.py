@@ -7,6 +7,7 @@ from app.db import reset_engine, session_scope
 from app.kb import ensure_default_knowledge_base
 from app.routers.documents import router as documents_router
 from app.routers.knowledge_bases import router as kb_router
+from app.routers.tags import router as tags_router
 
 
 def create_app(*, load_file: bool = True, ensure_default: bool = True) -> FastAPI:
@@ -25,6 +26,7 @@ def create_app(*, load_file: bool = True, ensure_default: bool = True) -> FastAP
     app = FastAPI(title="知域", lifespan=lifespan)
     app.include_router(kb_router)
     app.include_router(documents_router)
+    app.include_router(tags_router)
 
     @app.get("/health")
     def health():
