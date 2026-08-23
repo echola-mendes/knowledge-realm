@@ -112,4 +112,10 @@
 
 - 状态：已执行并验证
 - 结果：`POST /api/chat`；无命中固定文案且不调 LLM；有命中走 LangChain 单链并返回 citations；处理中 document_id 为 400；库隔离。`tests/test_chat.py` 用假 LLM/Embedding。
-- 下一步：步骤 18
+- 下一步：步骤 18 已完成，见下
+
+## 步骤 18 — 多轮与流式
+
+- 状态：已执行并验证
+- 结果：会话 CRUD；第二轮带 conversation_id 时 LLM 收到上轮问答；SSE token + citations 与非流式字段一致。`tests/test_chat_multi.py` 通过。
+- 下一步：步骤 19

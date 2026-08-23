@@ -96,6 +96,23 @@ class ChatResponse(BaseModel):
     citations: list[CitationOut]
 
 
+class ConversationOut(BaseModel):
+    id: uuid.UUID
+    knowledge_base_id: uuid.UUID
+    title: str
+
+    model_config = {"from_attributes": True}
+
+
+class MessageOut(BaseModel):
+    id: uuid.UUID
+    role: str
+    content: str
+    citations: list | dict | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class DocumentTagsPut(BaseModel):
     tag_ids: list[uuid.UUID]
 

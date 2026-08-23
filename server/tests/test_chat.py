@@ -37,7 +37,7 @@ def test_chat_hit_miss_pending_and_kb_isolation(monkeypatch):
     monkeypatch.setattr("app.search.embed_texts", _directional_embed)
     monkeypatch.setattr("app.index.embed_texts", _directional_embed)
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
-    monkeypatch.setattr("app.llm.chat", lambda question, context: "假LLM答案")
+    monkeypatch.setattr("app.llm.chat", lambda question, context, history=None: "假LLM答案")
     llm_mod.CHAT_CALLS = 0
     with _client() as client:
         kb_a = client.post("/api/knowledge-bases", json={"name": f"库A-{uuid.uuid4().hex[:8]}"}).json()
