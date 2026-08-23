@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -13,7 +14,7 @@ from app.kb import resolve_knowledge_base_id
 from app.models import Document, DocumentChunk, DocumentTag, Favorite, KnowledgeBase, Tag
 from app.schemas import DocumentOut, DocumentTagsPut, NoteCreate, UrlCreate
 from app import index as index_mod
-from app.storage import original_path, remove_document_files, write_original
+from app.storage import original_path, parsed_dir, remove_document_files, write_original
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -229,6 +230,17 @@ def get_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
     return _document_out(doc)
+
+
+@router.get("/{document_id}/parsed.md")
+def get_parsed_markdown(document_id: uuid.UUID, session: Session = Depends(get_db)):
+    doc = session.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    path = parsed_dir(document_id) / "document.md"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="解析稿不存在")
+    return PlainTextResponse(path.read_text(encoding="utf-8"), media_type="text/markdown; charset=utf-8")
 
 
 @router.delete("/{document_id}")

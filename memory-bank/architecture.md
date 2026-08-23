@@ -15,7 +15,8 @@
 | `server/app/db.py` | 引擎与会话 |
 | `server/app/kb.py` | 默认知识库 |
 | `server/app/routers/knowledge_bases.py` | 知识库 HTTP |
-| `server/app/routers/documents.py` | 上传、笔记、URL、列表（`tag_id` / `favorite`）、收藏、详情、删除、打标签、`/index`、`/reindex` |
+| `server/app/routers/documents.py` | 上传、笔记、URL、列表、详情、`parsed.md`、删除、打标签、收藏、`/index`、`/reindex` |
+| `web/src/` | 知识库切换、文档导入/列表/阅读、隐私说明 |
 | `server/app/routers/tags.py` | 标签创建/列表/删除 |
 | `server/app/search.py` | 余弦 TopK；只查 `ready`；低于 0.30 空列表；无第二套向量表 |
 | `server/app/routers/search.py` | `POST /api/search` |

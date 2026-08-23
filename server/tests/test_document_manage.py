@@ -29,6 +29,9 @@ def test_reindex_after_original_change(monkeypatch):
         )
         doc_id = uuid.UUID(res.json()["id"])
         parse_text_document(doc_id)
+        parsed = client.get(f"/api/documents/{doc_id}/parsed.md")
+        assert parsed.status_code == 200
+        assert old in parsed.text
         index_document(doc_id)
         original_path(doc_id, ".txt").write_bytes(new.encode())
         again = client.post(f"/api/documents/{doc_id}/reindex")
