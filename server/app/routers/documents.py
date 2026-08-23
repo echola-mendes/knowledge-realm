@@ -5,15 +5,15 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.db import session_scope
 from app.kb import resolve_knowledge_base_id
-from app.models import Document, KnowledgeBase
+from app.models import Document, DocumentChunk, KnowledgeBase
 from app.schemas import DocumentOut
 from app import index as index_mod
-from app.storage import write_original
+from app.storage import original_path, remove_document_files, write_original
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -32,6 +32,16 @@ def get_db():
 
 def _normalize_ext(filename: str) -> str:
     return Path(filename or "").suffix.lower()
+
+
+def _document_out(doc: Document, *, existed: bool = False) -> DocumentOut:
+    return DocumentOut.model_validate(doc).model_copy(
+        update={
+            "existed": existed,
+            "source_url": doc.source_url,
+            "source_path": str(original_path(doc.id, doc.ext)),
+        }
+    )
 
 
 @router.post("/upload", response_model=DocumentOut)
@@ -55,7 +65,7 @@ async def upload_document(
         select(Document).where(Document.knowledge_base_id == kb_id, Document.checksum == checksum)
     )
     if existing is not None:
-        return DocumentOut.model_validate(existing).model_copy(update={"existed": True})
+        return _document_out(existing, existed=True)
     doc_id = uuid.uuid4()
     write_original(doc_id, ext, data)
     doc = Document(
@@ -72,7 +82,51 @@ async def upload_document(
     session.commit()
     session.refresh(doc)
     background.add_task(index_mod.process_document, doc.id)
-    return DocumentOut.model_validate(doc).model_copy(update={"existed": False})
+    return _document_out(doc, existed=False)
+
+
+@router.get("", response_model=list[DocumentOut])
+def list_documents(
+    knowledge_base_id: uuid.UUID | None = None,
+    session: Session = Depends(get_db),
+):
+    kb_id = resolve_knowledge_base_id(session, knowledge_base_id)
+    rows = session.scalars(
+        select(Document).where(Document.knowledge_base_id == kb_id).order_by(Document.created_at.desc())
+    ).all()
+    return [_document_out(row) for row in rows]
+
+
+@router.get("/{document_id}", response_model=DocumentOut)
+def get_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
+    doc = session.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return _document_out(doc)
+
+
+@router.delete("/{document_id}")
+def delete_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
+    doc = session.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    remove_document_files(doc)
+    session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
+    session.delete(doc)
+    session.commit()
+    return {"ok": True}
+
+
+@router.post("/{document_id}/reindex", response_model=DocumentOut)
+def reindex_document_http(document_id: uuid.UUID, session: Session = Depends(get_db)):
+    if not index_mod.embedding_keys_ready():
+        raise HTTPException(status_code=503, detail="未配置 Embedding API Key")
+    doc = session.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    index_mod.reindex_document(document_id)
+    session.refresh(doc)
+    return _document_out(doc)
 
 
 @router.post("/{document_id}/index", response_model=DocumentOut)
@@ -84,4 +138,4 @@ def index_document_http(document_id: uuid.UUID, session: Session = Depends(get_d
         raise HTTPException(status_code=404, detail="文档不存在")
     index_mod.index_document(document_id)
     session.refresh(doc)
-    return DocumentOut.model_validate(doc).model_copy(update={"existed": False})
+    return _document_out(doc)

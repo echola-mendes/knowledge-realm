@@ -76,4 +76,10 @@
 
 - 状态：已执行并验证
 - 结果：解析后 `process_document` 切块并写入 `document_chunk`；成功状态 `ready`。无 Key 时 `POST /api/documents/{id}/index` 为 503。同 checksum 再传不调用 Embedding。额度类错误文案含 `text-embedding-v4`。测试用假向量，未打真实 DashScope。
-- 下一步：步骤 12
+- 下一步：步骤 12 已完成，见下
+
+## 步骤 12 — 重新处理与删除文档
+
+- 状态：已执行并验证
+- 结果：`POST /api/documents/{id}/reindex` 清切片后重新解析+索引；`DELETE` 删库行与本地 files/parsed（处理中也可删）；`GET` 列表/详情含 status、error_message、source_path/source_url。`tests/test_document_manage.py` 通过。
+- 下一步：步骤 13

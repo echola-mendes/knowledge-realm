@@ -15,7 +15,7 @@
 | `server/app/db.py` | 引擎与会话 |
 | `server/app/kb.py` | 默认知识库 |
 | `server/app/routers/knowledge_bases.py` | 知识库 HTTP |
-| `server/app/routers/documents.py` | 文档上传后入队解析+索引；`POST .../index` |
+| `server/app/routers/documents.py` | 上传、列表、详情、删除、`/index`、`/reindex` |
 | `server/app/parse.py` | md/txt UTF-8；PDF PyMuPDF 按页 `## Page N`；DOCX 按段落。无 OCR/MinerU |
 | `server/app/chunk.py` | LangChain 标题切分 + 800/120；内存 `TextChunk`（page/heading）；无 LlamaIndex |
 | `server/app/index.py` | 切块 Embedding 写入 `document_chunk`；状态 `ready`；额度不足提示改 v4 |

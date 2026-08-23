@@ -140,6 +140,21 @@ def index_document(document_id: uuid.UUID) -> None:
         session.close()
 
 
+def reindex_document(document_id: uuid.UUID) -> None:
+    session = session_scope()
+    try:
+        doc = session.get(Document, document_id)
+        if doc is None:
+            return
+        session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
+        doc.status = "pending"
+        doc.error_message = None
+        session.commit()
+    finally:
+        session.close()
+    process_document(document_id)
+
+
 def process_document(document_id: uuid.UUID) -> None:
     session = session_scope()
     try:

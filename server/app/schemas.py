@@ -23,6 +23,8 @@ class DocumentOut(BaseModel):
     checksum: str | None
     status: str
     error_message: str | None = None
+    source_url: str | None = None
+    source_path: str | None = None
     byte_size: int
     existed: bool = False
 
