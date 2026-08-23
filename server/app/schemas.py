@@ -72,6 +72,30 @@ class SearchHitOut(BaseModel):
     kind: str
 
 
+class ChatRequest(BaseModel):
+    query: str = Field(min_length=1)
+    knowledge_base_id: uuid.UUID | None = None
+    document_id: uuid.UUID | None = None
+    conversation_id: uuid.UUID | None = None
+    k: int = Field(default=5, ge=1, le=20)
+
+
+class CitationOut(BaseModel):
+    document_id: uuid.UUID
+    document_name: str
+    chunk_id: uuid.UUID
+    page_start: int | None = None
+    page_end: int | None = None
+    content: str
+    score: float
+
+
+class ChatResponse(BaseModel):
+    conversation_id: uuid.UUID
+    answer: str
+    citations: list[CitationOut]
+
+
 class DocumentTagsPut(BaseModel):
     tag_ids: list[uuid.UUID]
 

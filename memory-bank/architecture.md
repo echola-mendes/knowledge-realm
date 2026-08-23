@@ -19,7 +19,9 @@
 | `server/app/routers/tags.py` | 标签创建/列表/删除 |
 | `server/app/search.py` | 余弦 TopK；只查 `ready`；低于 0.30 空列表；无第二套向量表 |
 | `server/app/routers/search.py` | `POST /api/search` |
-| `server/app/llm.py` | Chat 调用计数占位（搜索不调用） |
+| `server/app/llm.py` | LangChain 单链 Chat；无命中不调用 |
+| `server/app/chat.py` | 非流式问答：检索、会话、citations |
+| `server/app/routers/chat.py` | `POST /api/chat` |
 | `server/app/url_import.py` | 公开页 httpx + trafilatura；超时 20s；无浏览器自动化 |
 | `server/app/parse.py` | md/txt UTF-8；PDF PyMuPDF 按页 `## Page N`；DOCX 按段落。无 OCR/MinerU |
 | `server/app/chunk.py` | LangChain 标题切分 + 800/120；内存 `TextChunk`（page/heading）；无 LlamaIndex |

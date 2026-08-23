@@ -106,4 +106,10 @@
 
 - 状态：已执行并验证
 - 结果：`POST /api/search` 对 query embedding 后 SQL `<=>` TopK；可筛库/标签/kind；最高分 &lt; 0.30 空列表；不调 Chat。假向量测试隔离库 A/B。
-- 下一步：步骤 17
+- 下一步：步骤 17 已完成，见下
+
+## 步骤 17 — RAG 问答（非流式）
+
+- 状态：已执行并验证
+- 结果：`POST /api/chat`；无命中固定文案且不调 LLM；有命中走 LangChain 单链并返回 citations；处理中 document_id 为 400；库隔离。`tests/test_chat.py` 用假 LLM/Embedding。
+- 下一步：步骤 18

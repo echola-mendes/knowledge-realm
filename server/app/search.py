@@ -37,6 +37,7 @@ def search_chunks(
     knowledge_base_id: uuid.UUID | None = None,
     tag_id: uuid.UUID | None = None,
     kind: str | None = None,
+    document_id: uuid.UUID | None = None,
     k: int = DEFAULT_K,
 ) -> list[SearchHit]:
     if k < 1 or k > 20:
@@ -53,6 +54,8 @@ def search_chunks(
         stmt = stmt.join(DocumentTag, DocumentTag.document_id == Document.id).where(DocumentTag.tag_id == tag_id)
     if kind is not None:
         stmt = stmt.where(Document.kind == kind)
+    if document_id is not None:
+        stmt = stmt.where(Document.id == document_id)
     stmt = stmt.order_by(distance).limit(k)
     rows = session.execute(stmt).all()
     hits = [
