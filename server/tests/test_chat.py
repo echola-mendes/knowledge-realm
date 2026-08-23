@@ -82,12 +82,10 @@ def test_chat_hit_miss_pending_and_kb_isolation(monkeypatch):
         assert "apple.md" in names
         assert hit.json()["conversation_id"]
 
-        llm_mod.CHAT_CALLS = 0
         miss = client.post("/api/chat", json={"query": "完全无关查询", "knowledge_base_id": kb_a["id"]})
         assert miss.status_code == 200
-        assert miss.json()["answer"] == "知识库中没有相关内容。"
+        assert miss.json()["answer"] == "假LLM答案"
         assert miss.json()["citations"] == []
-        assert llm_mod.CHAT_CALLS == 0
 
         pending_chat = client.post(
             "/api/chat",

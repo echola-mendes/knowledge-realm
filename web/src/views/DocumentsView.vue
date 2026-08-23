@@ -132,24 +132,33 @@ watch([selectedKbId, onlyFav, filterTag], () => {
         <p class="sub">管理导入的 pdf、docx、md、txt、网页与笔记</p>
       </div>
       <div class="actions">
-        <button class="btn btn-primary" type="button" @click="panel = panel === 'file' ? '' : 'file'">上传文件</button>
+        <button class="btn btn-primary" type="button" @click="panel = panel === 'note' ? '' : 'note'">Markdown 笔记</button>
+        <button class="btn" type="button" @click="panel = panel === 'file' ? '' : 'file'">上传文件</button>
         <button class="btn" type="button" @click="panel = panel === 'url' ? '' : 'url'">公开页 URL</button>
-        <button class="btn" type="button" @click="panel = panel === 'note' ? '' : 'note'">Markdown 笔记</button>
       </div>
     </div>
 
     <p v-if="error" class="err">{{ error }}</p>
 
+    <section v-if="panel === 'note'" class="card form">
+      <textarea v-model="note" rows="5" placeholder="Markdown 笔记"></textarea>
+      <button class="btn btn-primary" type="button" @click="onNote">创建笔记</button>
+    </section>
     <section v-if="panel === 'file'" class="card form">
-      <input type="file" @change="onUpload" />
+      <p class="sub">支持 pdf、docx、md、txt，单文件不超过 100MB</p>
+      <label class="file-pick">
+        <input
+          class="sr-only"
+          type="file"
+          accept=".pdf,.docx,.md,.markdown,.txt"
+          @change="onUpload"
+        />
+        <span class="btn btn-primary">选择文件</span>
+      </label>
     </section>
     <section v-if="panel === 'url'" class="card form">
       <input v-model="url" placeholder="https://…" />
       <button class="btn btn-primary" type="button" @click="onUrl">导入网址</button>
-    </section>
-    <section v-if="panel === 'note'" class="card form">
-      <textarea v-model="note" rows="5" placeholder="Markdown 笔记"></textarea>
-      <button class="btn btn-primary" type="button" @click="onNote">创建笔记</button>
     </section>
 
     <div class="filters">
@@ -230,6 +239,27 @@ watch([selectedKbId, onlyFav, filterTag], () => {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
+}
+.form input:not([type="file"]),
+.form textarea {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.65rem 0.8rem;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+.file-pick {
+  display: inline-flex;
+  width: fit-content;
+  cursor: pointer;
 }
 .filters {
   display: flex;

@@ -21,7 +21,7 @@ onMounted(async () => {
 
     <section class="card item">
       <h2>AI 密钥 <span v-if="configured === true" class="tag">已配置</span><span v-else-if="configured === false" class="tag off">未配置</span></h2>
-      <p>密钥已在本机 `.env` 保存，仅用于调用你配置的第三方 AI。本页只展示配置状态，不显示或修改密钥内容。</p>
+      <p>密钥已在本机环境文件中保存，仅用于调用你配置的第三方 AI。本页只展示配置状态，不显示或修改密钥内容。</p>
     </section>
 
     <section class="card item">

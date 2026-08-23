@@ -3,8 +3,10 @@ from __future__ import annotations
 from app.config import get_settings
 
 CHAT_CALLS = 0
-NO_HIT_TEXT = "知识库中没有相关内容。"
-SYSTEM_PROMPT = "只根据提供的资料回答。禁止编造出处。资料不足时明确说不知道。"
+SYSTEM_PROMPT = (
+    "若资料非空：只根据资料回答，禁止编造出处。"
+    "若资料为空：进行正常对话，不要说知识库没有相关内容。"
+)
 
 
 def llm_keys_ready() -> bool:

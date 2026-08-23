@@ -147,9 +147,9 @@
 
 ## 步骤 17 — RAG 问答（非流式）
 
-**指令：** `POST /api/chat`：解析知识库（缺省默认）、可选 document_id 与 k。检索逻辑与步骤 16 相同。无命中或最高分低于 0.30：不调用 LLM，正文为「知识库中没有相关内容。」有命中：LangChain 单链，系统提示只根据资料回答、禁止编造出处；返回设计规定的 citations 字段。无 conversation_id 则新建会话，title 为问题前 40 字。未完成文档作为 document_id 时 400。未配 Key 且需要 LLM 时 503。禁止 LangGraph 与问题改写。
+**指令：** `POST /api/chat`：解析知识库（缺省默认）、可选 document_id 与 k。检索逻辑与步骤 16 相同。无命中或最高分低于 0.30：仍调用 LLM 作普通对话，citations 为空。有命中：LangChain 单链，优先根据资料回答、禁止编造出处；返回设计规定的 citations 字段。无 conversation_id 则新建会话，title 为问题前 40 字。未完成文档作为 document_id 时 400。未配 Key 且需要 LLM 时 503。禁止 LangGraph 与问题改写。
 
-**验证：** 假 LLM + 假 Embedding：有相关切片时答案来自假 LLM 且 citations 含正确 document_name。无关查询（分数压到阈值下）不调用 LLM 且文案为固定句。指定 document_id 指向处理中文档得 400。指定库 B 时不得出现库 A 的文件名。
+**验证：** 假 LLM + 假 Embedding：有相关切片时答案来自假 LLM 且 citations 含正确 document_name。无关查询（分数压到阈值下）仍调用假 LLM，citations 为空。指定 document_id 指向处理中文档得 400。指定库 B 时不得出现库 A 的文件名。
 
 ---
 

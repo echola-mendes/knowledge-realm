@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from "vue";
+import { nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { listMessages, messageFromErrorBody, type ChatMessage, type Citation } from "../api";
 import { selectedKb, selectedKbId } from "../kb";
@@ -11,7 +11,41 @@ const messages = ref<ChatMessage[]>([]);
 const conversationId = ref<string>(typeof route.query.c === "string" ? route.query.c : "");
 const error = ref("");
 const streaming = ref(false);
+const CHAT_MAP = "zhiyu-chat-by-kb";
+
+function chatMap(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(CHAT_MAP) || "{}") as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function rememberConversation(id: string) {
+  conversationId.value = id;
+  const kb = selectedKbId.value;
+  const map = chatMap();
+  if (id && kb) map[kb] = id;
+  else if (kb) delete map[kb];
+  localStorage.setItem(CHAT_MAP, JSON.stringify(map));
+  const query: Record<string, string> = {};
+  if (id) query.c = id;
+  router.replace({ path: "/chat", query });
+}
 const box = ref<HTMLElement | null>(null);
+const CITE_LIMIT = 2;
+const citeOpen = ref<Record<string, boolean>>({});
+
+function visibleCites(m: ChatMessage) {
+  const rows = m.citations || [];
+  if (citeOpen.value[m.id] || rows.length <= CITE_LIMIT) return rows;
+  return rows.slice(0, CITE_LIMIT);
+}
+
+function isThinking(m: ChatMessage) {
+  const last = messages.value[messages.value.length - 1];
+  return m.role === "assistant" && !m.content.trim() && streaming.value && last === m;
+}
 
 function hashFor(c: Citation) {
   if (c.page_start != null) return `#page-${c.page_start}`;
@@ -73,7 +107,8 @@ async function ask() {
         };
         if (payload.type === "token" && payload.text) assistant.content += payload.text;
         if (payload.type === "citations") {
-          conversationId.value = payload.conversation_id || conversationId.value;
+          const cid = payload.conversation_id || conversationId.value;
+          if (cid) rememberConversation(cid);
           assistant.citations = payload.citations || [];
           if (payload.answer) assistant.content = payload.answer;
         }
@@ -95,20 +130,33 @@ function onKey(e: KeyboardEvent) {
 }
 
 function newChat() {
-  conversationId.value = "";
+  rememberConversation("");
   messages.value = [];
   draft.value = "";
   error.value = "";
-  router.replace({ path: "/chat" });
 }
 
 onMounted(async () => {
+  if (!conversationId.value) {
+    conversationId.value = chatMap()[selectedKbId.value] || "";
+  }
   try {
     await loadHistory();
   } catch (e) {
     error.value = String(e);
   }
   if (draft.value) ask();
+});
+
+watch(selectedKbId, async (kb) => {
+  if (streaming.value) return;
+  conversationId.value = chatMap()[kb] || "";
+  messages.value = [];
+  try {
+    await loadHistory();
+  } catch (e) {
+    error.value = String(e);
+  }
 });
 
 function openCite(c: Citation) {
@@ -133,11 +181,15 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
       <div v-for="m in messages" :key="m.id" :class="['msg', m.role]">
         <div v-if="m.role === 'assistant'" class="who">知域</div>
         <div class="bubble">
-          <pre>{{ m.content }}</pre>
+          <div v-if="isThinking(m)" class="thinking">
+            <span class="spin" aria-hidden="true"></span>
+            思考中……
+          </div>
+          <pre v-else>{{ m.content.replace(/^\s+/, "") }}</pre>
           <div v-if="m.role === 'assistant' && m.citations?.length" class="cites">
             <p>引用来源 ({{ m.citations.length }})</p>
             <button
-              v-for="c in m.citations"
+              v-for="c in visibleCites(m)"
               :key="c.chunk_id"
               type="button"
               class="cite"
@@ -145,6 +197,14 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
             >
               <span>{{ c.document_name }}</span>
               <em v-if="c.page_start != null">第 {{ c.page_start }} 页</em>
+            </button>
+            <button
+              v-if="m.citations.length > CITE_LIMIT && !citeOpen[m.id]"
+              type="button"
+              class="more"
+              @click="citeOpen[m.id] = true"
+            >
+              …
             </button>
           </div>
         </div>
@@ -203,13 +263,33 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 0.9rem 1rem;
+  padding: 0.65rem 0.9rem;
 }
 pre {
   margin: 0;
+  padding: 0;
   white-space: pre-wrap;
   font: inherit;
-  line-height: 1.6;
+  line-height: 1.55;
+}
+.thinking {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+}
+.spin {
+  width: 0.95rem;
+  height: 0.95rem;
+  border: 2px solid var(--line);
+  border-top-color: var(--teal);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .cites {
   margin-top: 0.8rem;
@@ -234,10 +314,24 @@ pre {
   cursor: pointer;
   text-align: left;
 }
+.cite span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cite em {
   font-style: normal;
   color: var(--muted);
   white-space: nowrap;
+}
+.more {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  letter-spacing: 0.2em;
+  padding: 0.2rem 0;
+  cursor: pointer;
 }
 .composer {
   padding: 0.8rem 0.9rem;

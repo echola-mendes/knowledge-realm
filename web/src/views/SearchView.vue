@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { RouterLink } from "vue-router";
+import Icon from "../components/Icon.vue";
 import { listTags, searchChunks, type SearchHit, type TagItem } from "../api";
 import { selectedKbId } from "../kb";
 
@@ -50,8 +51,14 @@ function pct(score: number) {
       <p class="sub">只返回相似片段，不生成长答案。点击文档名进入阅读页，可携带页锚点。</p>
       <p v-if="error" class="err">{{ error }}</p>
       <div class="bar">
-        <input v-model="query" placeholder="输入问题或关键词…" @keyup.enter="run" />
-        <button class="btn btn-primary" type="button" @click="run">搜索</button>
+        <div class="bar-field">
+          <Icon name="search" />
+          <input v-model="query" placeholder="输入关键词，例如：工作记忆模型" @keyup.enter="run" />
+        </div>
+        <button class="btn btn-primary" type="button" @click="run">
+          <Icon name="search" />
+          搜索
+        </button>
       </div>
       <div class="row">
         <span>标签</span>
@@ -122,12 +129,27 @@ function pct(score: number) {
   flex-wrap: wrap;
   margin: 1rem 0;
 }
-.bar input {
+.bar-field {
   flex: 1;
   min-width: 12rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 0.7rem 0.85rem;
+  border-radius: 999px;
+  padding: 0.15rem 0.9rem;
+  color: var(--muted);
+}
+.bar-field input {
+  flex: 1;
+  border: none;
+  outline: none;
+  padding: 0.55rem 0;
+  background: transparent;
+}
+.bar .btn-primary .ico {
+  width: 15px;
+  height: 15px;
 }
 .row {
   display: flex;

@@ -89,7 +89,8 @@ LangChain 按标题切，过长再 **800 字符 / overlap 120**。表格尽量�
 - Embedding 与 Chat：OpenAI 兼容 SDK，环境变量配置。Chat 默认 `qwen-plus`。  
 - **Embedding 方案（已确认）：** 走 DashScope 兼容接口，**不**改用本机权重（Qwen3-Embedding / BGE 等留作以后若改设计再议）。默认 `EMBEDDING_MODEL=text-embedding-v3`，`EMBEDDING_DIM=1024`。额度用尽、限流或官方提示 v3 不可再调时：**不要自动换模型**；在文档 `error_message` 与接口错误中写明：把 `.env` 的 `EMBEDDING_MODEL` 改为 `text-embedding-v4` 后重启。v4 若仍为 1024 维可只改模型名并 reindex；**改维度必须改库列并全量重建向量**。  
 - TopK 默认 5，范围 1～20。  
-- 最高分余弦 **&lt; 0.30**：不调用 LLM，文案「知识库中没有相关内容。」  
+- 最高分余弦 **&lt; 0.30** 或无切片：仍调用 Chat，按普通对话回答，citations 为空；有命中时优先根据资料回答并带引用，禁止编造出处。对话页仅在有引用时于气泡下方列出；超过 2 条先显示省略。  
+
 - 多轮：最近 **6 条** 消息给 LLM；**检索只用当前句**，不改写。  
 - 引用字段：`document_id`、`document_name`、`chunk_id`、`page_start`、`page_end`、`content`、`score`。无页码则页码为 null。  
 - 流式 SSE 与非流式语义相同。

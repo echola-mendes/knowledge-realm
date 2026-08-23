@@ -71,15 +71,15 @@ def run_chat(
         if convo is None:
             raise LookupError("会话不存在")
         history = _history(session, convo.id)
-    if not hits:
-        answer = llm_mod.NO_HIT_TEXT
-        cites: list[dict] = []
-    else:
-        if not llm_mod.llm_keys_ready():
-            raise PermissionError("未配置 LLM API Key")
+    if not llm_mod.llm_keys_ready():
+        raise PermissionError("未配置 LLM API Key")
+    if hits:
         context = "\n\n".join(f"[{hit.document_name}]\n{hit.content}" for hit in hits)
         answer = llm_mod.chat(query, context, history)
         cites = _citations(hits)
+    else:
+        answer = llm_mod.chat(query, "", history)
+        cites = []
     session.add(Message(conversation_id=convo.id, role="user", content=query, citations=None))
     session.add(Message(conversation_id=convo.id, role="assistant", content=answer, citations=cites or None))
     session.commit()
