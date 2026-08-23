@@ -26,6 +26,7 @@ export type SearchHit = {
   score: number;
   page: number | null;
   heading: string | null;
+  kind?: string;
 };
 
 export type Citation = {
@@ -40,11 +41,20 @@ export type Citation = {
 
 export type Conversation = { id: string; knowledge_base_id: string; title: string };
 
+export function messageFromErrorBody(text: string, fallback = "请求失败"): string {
+  try {
+    const body = JSON.parse(text) as { detail?: unknown };
+    if (typeof body.detail === "string") return body.detail;
+  } catch {
+    /* keep raw text */
+  }
+  return text || fallback;
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || res.statusText);
+    throw new Error(messageFromErrorBody(await res.text(), res.statusText));
   }
   if (res.status === 204) {
     return undefined as T;
@@ -160,6 +170,10 @@ export function reindexDocument(id: string) {
 
 export function deleteDocument(id: string) {
   return api<{ ok: boolean }>(`/api/documents/${id}`, { method: "DELETE" });
+}
+
+export function getDocument(id: string) {
+  return api<DocumentItem>(`/api/documents/${id}`);
 }
 
 export function getParsedMarkdown(id: string) {

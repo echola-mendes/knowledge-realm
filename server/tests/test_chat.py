@@ -102,3 +102,15 @@ def test_chat_hit_miss_pending_and_kb_isolation(monkeypatch):
         assert "apple.md" not in b_names
         assert "apple.md" not in only_b.json()["answer"]
     reset_app_state()
+
+
+def test_chat_without_embed_key_returns_503(monkeypatch):
+    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: False)
+    with _client() as client:
+        res = client.post("/api/chat", json={"query": "你好"})
+        assert res.status_code == 503
+        assert res.json()["detail"] == "未配置 Embedding API Key"
+        stream = client.post("/api/chat/stream", json={"query": "你好"})
+        assert stream.status_code == 503
+        assert stream.json()["detail"] == "未配置 Embedding API Key"
+    reset_app_state()

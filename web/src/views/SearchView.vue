@@ -10,11 +10,16 @@ const kind = ref("");
 const hits = ref<SearchHit[]>([]);
 const tags = ref<TagItem[]>([]);
 const error = ref("");
+const ran = ref(false);
+const kinds = ["pdf", "docx", "md", "txt", "url", "note"];
 
-listTags().then((rows) => (tags.value = rows)).catch(() => undefined);
+listTags()
+  .then((rows) => (tags.value = rows))
+  .catch(() => undefined);
 
 async function run() {
   error.value = "";
+  ran.value = true;
   try {
     hits.value = await searchChunks({
       query: query.value,
@@ -32,42 +37,170 @@ function hashFor(hit: SearchHit) {
   if (hit.heading) return `#${hit.heading}`;
   return "";
 }
+
+function pct(score: number) {
+  return `${Math.round(score * 100)}%`;
+}
 </script>
 
 <template>
-  <h1>搜索</h1>
-  <p>仅返回相似片段，不生成长答案。</p>
-  <p v-if="error" class="err">{{ error }}</p>
-  <p>
-    <input v-model="query" size="40" @keyup.enter="run" />
-    <select v-model="tagId">
-      <option value="">标签不限</option>
-      <option v-for="t in tags" :key="t.id" :value="t.id">{{ t.name }}</option>
-    </select>
-    <select v-model="kind">
-      <option value="">类型不限</option>
-      <option value="pdf">pdf</option>
-      <option value="docx">docx</option>
-      <option value="md">md</option>
-      <option value="txt">txt</option>
-      <option value="url">url</option>
-      <option value="note">note</option>
-    </select>
-    <button type="button" @click="run">搜索</button>
-  </p>
-  <ol>
-    <li v-for="hit in hits" :key="hit.chunk_id">
-      <RouterLink :to="{ path: `/documents/${hit.document_id}`, hash: hashFor(hit) }">
-        {{ hit.document_name }}
-      </RouterLink>
-      <span> · {{ hit.score.toFixed(3) }}</span>
-      <p>{{ hit.content.slice(0, 240) }}</p>
-    </li>
-  </ol>
+  <main class="page">
+    <section class="card search-card">
+      <h1>搜索知识库</h1>
+      <p class="sub">只返回相似片段，不生成长答案。点击文档名进入阅读页，可携带页锚点。</p>
+      <p v-if="error" class="err">{{ error }}</p>
+      <div class="bar">
+        <input v-model="query" placeholder="输入问题或关键词…" @keyup.enter="run" />
+        <button class="btn btn-primary" type="button" @click="run">搜索</button>
+      </div>
+      <div class="row">
+        <span>标签</span>
+        <button class="pill" :class="{ on: !tagId }" type="button" @click="tagId = ''">全部</button>
+        <button
+          v-for="t in tags"
+          :key="t.id"
+          class="pill"
+          :class="{ on: tagId === t.id }"
+          type="button"
+          @click="tagId = t.id"
+        >
+          {{ t.name }}
+        </button>
+      </div>
+      <div class="row">
+        <span>类型</span>
+        <button class="pill" :class="{ on: !kind, soft: !kind }" type="button" @click="kind = ''">全部类型</button>
+        <button
+          v-for="k in kinds"
+          :key="k"
+          class="pill"
+          :class="{ on: kind === k }"
+          type="button"
+          @click="kind = k"
+        >
+          {{ k }}
+        </button>
+      </div>
+    </section>
+
+    <p v-if="ran" class="meta">共 {{ hits.length }} 条结果 · 按相似度排序</p>
+
+    <article v-for="hit in hits" :key="hit.chunk_id" class="card hit">
+      <div class="score">
+        <strong>{{ pct(hit.score) }}</strong>
+        <span>相似度</span>
+      </div>
+      <div class="body">
+        <header>
+          <RouterLink :to="{ path: `/documents/${hit.document_id}`, hash: hashFor(hit) }">
+            {{ hit.document_name }}
+          </RouterLink>
+          <span class="meta-pills">
+            <em v-if="hit.kind">{{ hit.kind }}</em>
+            <em v-if="hit.page != null">第 {{ hit.page }} 页</em>
+          </span>
+        </header>
+        <p>{{ hit.content.slice(0, 220) }}</p>
+        <RouterLink class="read" :to="{ path: `/documents/${hit.document_id}`, hash: hashFor(hit) }">
+          阅读原文
+        </RouterLink>
+      </div>
+    </article>
+  </main>
 </template>
 
 <style scoped>
-.err {
-  color: #a30;
+.search-card {
+  padding: 1.3rem 1.3rem 1rem;
+}
+.search-card h1 {
+  margin: 0 0 0.4rem;
+}
+.bar {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+.bar input {
+  flex: 1;
+  min-width: 12rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.6rem;
+}
+.row > span {
+  width: 2.4rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.meta {
+  color: var(--muted);
+  font-size: 0.88rem;
+  margin: 1rem 0 0.7rem;
+}
+.hit {
+  display: flex;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  margin-bottom: 0.75rem;
+}
+.score {
+  min-width: 4.2rem;
+  text-align: center;
+  border-left: 3px solid var(--teal);
+  padding-left: 0.7rem;
+}
+.score strong {
+  display: block;
+  color: var(--teal);
+  font-size: 1.25rem;
+}
+.score span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.body {
+  flex: 1;
+  min-width: 0;
+}
+.body header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.body header a {
+  font-weight: 700;
+}
+.body p {
+  color: #4b5563;
+  margin: 0.45rem 0 0.6rem;
+  line-height: 1.55;
+}
+.meta-pills em {
+  font-style: normal;
+  background: #eef1f4;
+  color: #667;
+  border-radius: 6px;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.75rem;
+  margin-left: 0.3rem;
+}
+.read {
+  float: right;
+  font-size: 0.88rem;
+}
+@media (max-width: 640px) {
+  .hit {
+    flex-direction: column;
+  }
 }
 </style>

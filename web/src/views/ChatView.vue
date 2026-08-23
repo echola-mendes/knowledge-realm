@@ -1,39 +1,57 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { nextTick, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { listMessages, type Citation } from "../api";
-import { selectedKbId } from "../kb";
+import { listMessages, messageFromErrorBody, type ChatMessage, type Citation } from "../api";
+import { selectedKb, selectedKbId } from "../kb";
 
 const route = useRoute();
 const router = useRouter();
-const query = ref(typeof route.query.q === "string" ? route.query.q : "");
-const answer = ref("");
-const citations = ref<Citation[]>([]);
+const draft = ref(typeof route.query.q === "string" ? route.query.q : "");
+const messages = ref<ChatMessage[]>([]);
 const conversationId = ref<string>(typeof route.query.c === "string" ? route.query.c : "");
 const error = ref("");
 const streaming = ref(false);
+const box = ref<HTMLElement | null>(null);
 
 function hashFor(c: Citation) {
   if (c.page_start != null) return `#page-${c.page_start}`;
   return "";
 }
 
+function scrollBottom() {
+  nextTick(() => {
+    box.value?.scrollTo({ top: box.value.scrollHeight });
+  });
+}
+
+async function loadHistory() {
+  if (!conversationId.value) return;
+  const rows = await listMessages(conversationId.value);
+  messages.value = rows;
+  scrollBottom();
+}
+
 async function ask() {
+  const q = draft.value.trim();
+  if (!q || streaming.value) return;
   error.value = "";
-  answer.value = "";
-  citations.value = [];
+  messages.value.push({ id: "u-" + Date.now(), role: "user", content: q });
+  const assistant: ChatMessage = { id: "a-" + Date.now(), role: "assistant", content: "" };
+  messages.value.push(assistant);
+  draft.value = "";
   streaming.value = true;
+  scrollBottom();
   try {
     const res = await fetch("/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        query: query.value,
+        query: q,
         knowledge_base_id: selectedKbId.value || undefined,
         conversation_id: conversationId.value || undefined,
       }),
     });
-    if (!res.ok || !res.body) throw new Error(await res.text());
+    if (!res.ok || !res.body) throw new Error(messageFromErrorBody(await res.text(), res.statusText));
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
@@ -53,12 +71,13 @@ async function ask() {
           conversation_id?: string;
           citations?: Citation[];
         };
-        if (payload.type === "token" && payload.text) answer.value += payload.text;
+        if (payload.type === "token" && payload.text) assistant.content += payload.text;
         if (payload.type === "citations") {
           conversationId.value = payload.conversation_id || conversationId.value;
-          citations.value = payload.citations || [];
-          if (payload.answer) answer.value = payload.answer;
+          assistant.citations = payload.citations || [];
+          if (payload.answer) assistant.content = payload.answer;
         }
+        scrollBottom();
       }
     }
   } catch (e) {
@@ -68,59 +87,172 @@ async function ask() {
   }
 }
 
-onMounted(async () => {
-  if (conversationId.value) {
-    try {
-      const rows = await listMessages(conversationId.value);
-      const lastAssistant = [...rows].reverse().find((m) => m.role === "assistant");
-      if (lastAssistant) {
-        answer.value = lastAssistant.content;
-        citations.value = (lastAssistant.citations as Citation[]) || [];
-      }
-    } catch (e) {
-      error.value = String(e);
-    }
+function onKey(e: KeyboardEvent) {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    ask();
   }
-  if (query.value) ask();
+}
+
+function newChat() {
+  conversationId.value = "";
+  messages.value = [];
+  draft.value = "";
+  error.value = "";
+  router.replace({ path: "/chat" });
+}
+
+onMounted(async () => {
+  try {
+    await loadHistory();
+  } catch (e) {
+    error.value = String(e);
+  }
+  if (draft.value) ask();
 });
 
 function openCite(c: Citation) {
   router.push({ path: `/documents/${c.document_id}`, hash: hashFor(c) });
 }
+
+const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value?.name || "默认");
 </script>
 
 <template>
-  <h1>对话</h1>
-  <p v-if="error" class="err">{{ error }}</p>
-  <p>
-    <textarea v-model="query" rows="3" cols="60"></textarea><br />
-    <button type="button" :disabled="streaming" @click="ask">提问</button>
-  </p>
-  <pre class="answer">{{ answer }}</pre>
-  <h2>引用</h2>
-  <ul>
-    <li v-for="c in citations" :key="c.chunk_id">
-      <button type="button" class="link" @click="openCite(c)">{{ c.document_name }}</button>
-      <span v-if="c.page_start != null"> p.{{ c.page_start }}</span>
-    </li>
-  </ul>
+  <main class="page chat-page">
+    <div class="page-head">
+      <div>
+        <h1>对话</h1>
+        <p class="sub">与「{{ kbName() }}」知识库对话，回答会标注引用来源</p>
+      </div>
+      <button class="btn" type="button" @click="newChat">+ 新对话</button>
+    </div>
+    <p v-if="error" class="err">{{ error }}</p>
+
+    <div ref="box" class="thread">
+      <div v-for="m in messages" :key="m.id" :class="['msg', m.role]">
+        <div v-if="m.role === 'assistant'" class="who">知域</div>
+        <div class="bubble">
+          <pre>{{ m.content }}</pre>
+          <div v-if="m.role === 'assistant' && m.citations?.length" class="cites">
+            <p>引用来源 ({{ m.citations.length }})</p>
+            <button
+              v-for="c in m.citations"
+              :key="c.chunk_id"
+              type="button"
+              class="cite"
+              @click="openCite(c)"
+            >
+              <span>{{ c.document_name }}</span>
+              <em v-if="c.page_start != null">第 {{ c.page_start }} 页</em>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer card">
+      <textarea
+        v-model="draft"
+        rows="3"
+        placeholder="继续追问，或输入新问题..."
+        @keydown="onKey"
+      ></textarea>
+      <div class="composer-bar">
+        <span>Enter 发送 · Shift+Enter 换行</span>
+        <button class="btn btn-primary" type="button" :disabled="streaming" @click="ask">发送</button>
+      </div>
+    </div>
+  </main>
 </template>
 
 <style scoped>
-.err {
-  color: #a30;
+.chat-page {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 8rem);
 }
-.answer {
+.thread {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding-bottom: 1rem;
+}
+.msg.user {
+  align-self: flex-end;
+  max-width: min(36rem, 92%);
+}
+.msg.assistant {
+  align-self: flex-start;
+  max-width: min(44rem, 100%);
+}
+.who {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-bottom: 0.35rem;
+}
+.user .bubble {
+  background: var(--teal);
+  color: #fff;
+  border-radius: 14px;
+  padding: 0.75rem 0.95rem;
+}
+.assistant .bubble {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+}
+pre {
+  margin: 0;
   white-space: pre-wrap;
-  max-width: 48rem;
-}
-.link {
-  background: none;
-  border: none;
-  color: #245;
-  text-decoration: underline;
-  cursor: pointer;
-  padding: 0;
   font: inherit;
+  line-height: 1.6;
+}
+.cites {
+  margin-top: 0.8rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--line);
+}
+.cites p {
+  margin: 0 0 0.45rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.cite {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  background: #f3f5f7;
+  border: none;
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  margin-bottom: 0.4rem;
+  cursor: pointer;
+  text-align: left;
+}
+.cite em {
+  font-style: normal;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.composer {
+  padding: 0.8rem 0.9rem;
+}
+.composer textarea {
+  width: 100%;
+  border: none;
+  resize: vertical;
+  outline: none;
+}
+.composer-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 </style>

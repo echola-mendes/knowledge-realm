@@ -9,60 +9,26 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="shell">
-    <header>
-      <strong>知域</strong>
-      <nav>
+  <div class="app-shell">
+    <header class="topbar">
+      <RouterLink class="brand" to="/">
+        <span aria-hidden="true">☰</span>
+        知域
+      </RouterLink>
+      <nav class="nav">
         <RouterLink to="/">首页</RouterLink>
         <RouterLink to="/documents">文档</RouterLink>
         <RouterLink to="/search">搜索</RouterLink>
         <RouterLink to="/chat">对话</RouterLink>
         <RouterLink to="/settings">设置</RouterLink>
       </nav>
-      <label>
-        知识库
-        <select :value="selectedKbId" @change="selectKb(($event.target as HTMLSelectElement).value)">
-          <option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
-            {{ kb.name }}{{ kb.is_default ? "（默认）" : "" }}
-          </option>
-        </select>
-      </label>
+      <select class="kb-switch" :value="selectedKbId" @change="selectKb(($event.target as HTMLSelectElement).value)">
+        <option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
+          {{ kb.is_default ? "默认" : kb.name }}
+        </option>
+      </select>
     </header>
-    <p class="privacy">隐私说明：检索与问答时，文本片段会发往所配置的第三方 AI。</p>
-    <main>
-      <RouterView />
-    </main>
+    <RouterView />
+    <footer class="footer-note">🔒 检索与问答时，文本片段会发往所配置的第三方 AI。</footer>
   </div>
 </template>
-
-<style>
-body {
-  margin: 0;
-  font-family: sans-serif;
-  color: #222;
-}
-.shell header {
-  display: flex;
-  gap: 1.5rem;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid #ddd;
-}
-nav {
-  display: flex;
-  gap: 1rem;
-}
-a {
-  color: #245;
-}
-main {
-  padding: 1rem;
-}
-.privacy {
-  margin: 0;
-  padding: 0.5rem 1rem;
-  background: #f6f3e8;
-  font-size: 0.9rem;
-}
-</style>

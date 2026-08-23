@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app import index as index_mod
 from app.chat import run_chat
 from app.models import Conversation, Message
 from app.routers.documents import get_db
@@ -17,6 +18,8 @@ router = APIRouter(prefix="/api", tags=["chat"])
 
 
 def _http_chat(body: ChatRequest, session: Session) -> ChatResponse:
+    if not index_mod.embedding_keys_ready():
+        raise HTTPException(status_code=503, detail="未配置 Embedding API Key")
     try:
         convo, answer, cites = run_chat(
             session,
