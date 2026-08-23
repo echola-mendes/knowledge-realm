@@ -40,6 +40,16 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --app-dir .
 
 健康检查：`GET http://127.0.0.1:8000/health`
 
+前端（开发，`/api` 代理到 8000）：
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+打开 `http://127.0.0.1:5173/`
+
 ```bash
 cd server
 pytest -q

@@ -44,7 +44,7 @@ def create_app(*, load_file: bool = True, ensure_default: bool = True) -> FastAP
     return app
 
 
-app = None
+app = create_app()
 
 
 def reset_app_state() -> None:

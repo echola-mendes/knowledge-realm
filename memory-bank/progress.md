@@ -118,4 +118,10 @@
 
 - 状态：已执行并验证
 - 结果：会话 CRUD；第二轮带 conversation_id 时 LLM 收到上轮问答；SSE token + citations 与非流式字段一致。`tests/test_chat_multi.py` 通过。
-- 下一步：步骤 19
+- 下一步：步骤 19 已完成，见下
+
+## 步骤 19 — 前端工程与代理
+
+- 状态：已执行并验证
+- 结果：`web/` Vite + Vue 3 + TS；六条路由壳页；`npm run typecheck` 通过；`/api` 代理到 8000，经 5173 可取知识库列表。`app.main:app` 改为 `create_app()` 实例以便 uvicorn 启动。
+- 下一步：步骤 20

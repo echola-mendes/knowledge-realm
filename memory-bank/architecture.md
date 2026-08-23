@@ -30,7 +30,7 @@
 | `server/app/schemas.py` | Pydantic 模型 |
 | `server/app/models.py` | SQLAlchemy 表 |
 | `server/alembic/` | 迁移；当前 `20260823_0001` |
-| `web/` | 前端目录（已建，尚无应用代码） |
+| `web/` | Vite + Vue 3 + TS；路由首页/文档/搜索/对话/阅读/设置；`/api` 代理 `127.0.0.1:8000` |
 | `data/files/`、`data/parsed/` | 原件与解析稿；内容被 gitignore |
 | `.env.example` | 环境变量模板（DashScope，无真实密钥） |
 | `.gitignore` | 忽略 `.env`、venv、node_modules、用户 data |
