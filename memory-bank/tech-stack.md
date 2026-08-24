@@ -11,7 +11,7 @@
 |---|---|---|---|
 | 前端 | Vue 3 + TypeScript + Vite | 设计已定 Web；四五个页面，不必上大框架 | React（避免双栈） |
 | 后端 | Python 3.11+ / FastAPI / Uvicorn | 上传 + JSON + SSE 足够 | Django |
-| RAG 编排 | P0：LangChain 单链。P1 Agent：LangGraph（仅 `server/app/p1/graph.py` 一类模块） | P0 已定单链；Agent 多步检索 | 用图重写 `/api/chat`；LlamaIndex |
+| RAG 编排 | P0：LangChain 单链。P1 Agent / Research Report：LangGraph 做多步状态编排，经 Tool 调用 P0 检索 | P0 已定单链；Agent 复用而非替换 RAG | 用图重写 `/api/chat`；为引入图而重构 P0；LlamaIndex |
 | P1 短任务 | LangChain Chain（摘要、自动标签、对比） | 一次 LLM 足够 | 把摘要/标签做成 Graph |
 | 向量读写 | SQLAlchemy 管表 + SQL 余弦查询 | 一张 `document_chunk`，避免第二套向量表 | langchain 自建 PGVector 集合 |
 | 解析 | pymupdf、python-docx、标准库读文本 | 无 MinerU、无 OCR | MinerU、Unstructured 全家桶 |
@@ -98,4 +98,15 @@
 
 ## 明确拒绝
 
-MinerU、LlamaIndex、LangGraph、Ollama、Milvus、Celery、Redis、Kubernetes、全文检索引擎、浏览器自动化抓登录页。
+MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、全文检索引擎、浏览器自动化抓登录页。
+
+### LangGraph 使用边界
+
+核心：LangGraph 只负责 P1 的复杂 Agent 工作流；P0 RAG 保持原样。Agent 调用 P0 RAG，而不是替换 P0 RAG。
+
+1. LangGraph 用于 P1 的 Agent / Research Report 等需要多步骤状态编排的能力。
+2. P0 的 `/api/chat` 和 `/api/chat/stream` 保持现有 LangChain Chain 实现，不迁移到 LangGraph。
+3. P1 Agent 必须复用 P0 已有 RAG / Search 能力，不得重新实现 pgvector 检索。
+4. LangGraph 可以通过 Tool 调用 P0 Search/RAG 能力。
+5. 不得为了引入 LangGraph 而重构 P0。
+6. P1 中简单的摘要、自动标签、文档对比等线性任务继续使用 LangChain Chain，不强制 Graph 化。

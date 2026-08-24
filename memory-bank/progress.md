@@ -178,4 +178,112 @@
 
 - 状态：已执行并验证（提出人确认 P1.1 通过）
 - 结果：`architecture.md` 已记 P1.1 路径。未开始 P1.2（文档对比）与 P1.3（Agent）。
-- 下一步：须提出人明确后再开 P1.2
+- 下一步：P1.2 已落地，见下
+
+## 步骤 P1.2-0 — 范围已确认
+
+- 状态：已执行并验证
+- 结果：对比为两篇同库 ready 文档的 Chain；`POST /api/compare`；结果不落库。
+- 下一步：P1.2-1 已完成，见下
+
+## 步骤 P1.2-1 — 对比 Chain 与 API
+
+- 状态：已执行并验证
+- 结果：`compare_documents`；`POST /api/compare`；同 id / 跨库 / 非 ready 为 400。`tests/test_p1_compare.py`。无 langgraph import。
+- 下一步：P1.2-2 已完成，见下
+
+## 步骤 P1.2-2 — 文档页触发对比
+
+- 状态：已执行并验证（浏览器勾选两篇点「对比所选」可见结果）
+- 结果：`DocumentsView.vue`；对话仍走 `/api/chat/stream`。
+- 下一步：P1.2-3 已完成，见下
+
+## 步骤 P1.2-3 — 阶段收口
+
+- 状态：已执行并验证（提出人确认继续开发）
+- 结果：`architecture.md` 已记对比路径。未开始 P1.3 Graph / 报告 / 图谱。
+- 下一步：P1.3，一次只做计划中未验证的那一步
+
+## 步骤 P1.3-1 — search_knowledge Tool
+
+- 状态：已执行并验证（提出人确认图设计后继续）
+- 结果：`server/app/p1/tools.py` 内部调用 `search_chunks`；测试 `tests/test_p1_tools.py`。无 HTTP `/api/search`，无 LangGraph。
+- 下一步：P1.3-2 已完成，见下
+
+## 步骤 P1.3-2 — StateGraph（reason / run_tool / generate）
+
+- 状态：已执行并验证（提出人回复 1 进入下一步）
+- 结果：`server/app/p1/graph.py`；reason 不执行 Tool；`max_loops=3`；无 Checkpoint。测试 `tests/test_p1_graph.py`。`chat.py` / `chains.py` 无 langgraph。
+- 下一步：P1.3-3 已落地，见下
+
+## 步骤 P1.3-3 — POST /api/agent（非流式）
+
+- 状态：已执行并验证（提出人回复 1 进入下一步）
+- 结果：`POST /api/agent`，body 为 `task`（本期仅 `agent`）、`query`、`knowledge_base_id`；走 Graph；缺 Key 503。测试 `tests/test_p1_agent.py`。未改 `/api/chat` 契约。
+- 下一步：P1.3-4 已落地，见下
+
+## 步骤 P1.3-4 — POST /api/agent/stream
+
+- 状态：已执行并验证（提出人回复「可以」进入下一步）
+- 结果：SSE token + 最终 `citations` 事件字段与非流式 `POST /api/agent` 对齐。不经过 `/api/chat/stream`。
+- 下一步：P1.3-5 已落地，见下
+
+## 步骤 P1.3-5 — 前端 Agent 入口
+
+- 状态：已执行并验证（提出人回复「继续」进入下一步）
+- 结果：对话页「对话 / Agent」切换；默认仍为 `/api/chat/stream`；Agent 走 `/api/agent/stream`。首页提问仍进默认对话模式。
+- 下一步：P1.3-6 已落地，见下
+
+## 步骤 P1.3-6 — task=report
+
+- 状态：已执行并验证（提出人回复「开始」进入收口）
+- 结果：同一 `graph.py` / `build_graph()`；`task=report` 时 generate 按报告（大纲+分节）组织。`POST /api/agent` 与 stream 接受 `report`。对话页增加「报告」。无第二套 Graph。
+- 下一步：P1.3-7 已落地，见下
+
+## 步骤 P1.3-7 — 阶段收口
+
+- 状态：已执行并验证（提出人回复 1 进入 P1.4）
+- 结果：`architecture.md` 已记 P1.3 路径与边界。P1.3 通过。
+- 下一步：P1.4，见下
+
+## 步骤 P1.4-0 — 范围已确认
+
+- 状态：已执行并验证（提出人回复 1 同意计划）
+- 结果：最小 `entity` / `entity_link`；抽取 Chain；关联走 `search_chunks`；无复杂可视化；无 `search_graph` Tool。
+- 下一步：P1.4-1 已落地，见下
+
+## 步骤 P1.4-1 — entity / entity_link 表
+
+- 状态：已执行并验证（提出人回复 1 进入下一步）
+- 结果：迁移 `20260824_0004`；模型 `Entity` / `EntityLink`。测试 `tests/test_p1_graph_tables.py`。
+- 下一步：P1.4-2 已落地，见下
+
+## 步骤 P1.4-2 — 抽取 Chain 与 POST /api/documents/{id}/graph
+
+- 状态：已执行并验证（提出人回复 1 进入下一步）
+- 结果：`extract_graph`；`POST /api/documents/{id}/graph` upsert 实体、按文档替换边；未知端点跳过。测试 `tests/test_p1_extract_graph.py`。无 langgraph。未做 GET /graph 与前端。
+- 下一步：P1.4-3 已落地，见下
+
+## 步骤 P1.4-3 — GET /api/graph
+
+- 状态：已执行并验证（提出人回复 1 进入下一步）
+- 结果：`GET /api/graph` 按库返回实体与边 JSON；`document_id` 只返回该文档的边及两端实体。测试 `tests/test_p1_get_graph.py`。未改 chat，未做前端。
+- 下一步：P1.4-4 已落地，见下
+
+## 步骤 P1.4-4 — GET /api/documents/{id}/related
+
+- 状态：已执行并验证（提出人回复 1 进入下一步）
+- 结果：`GET /api/documents/{id}/related` 内部调 `search_chunks`（摘要优先否则文件名）；排除本文、按文档去重最多 5 条。测试 `tests/test_p1_related.py`。不调 LLM、不进 LangGraph、不 HTTP `/api/search`。未做前端。
+- 下一步：P1.4-5 已落地，见下
+
+## 步骤 P1.4-5 — 阅读页展示
+
+- 状态：已执行并验证（提出人回复 1 进入收口）
+- 结果：阅读页「抽取图谱」+ 实体/关系列表 + 相近文档列表（可点进阅读页）。无 vis.js/D3。对话页默认仍为 `/api/chat/stream`。
+- 下一步：P1.4-6 已落地，见下
+
+## 步骤 P1.4-6 — 阶段收口
+
+- 状态：已执行并验证（提出人回复 1 确认阶段结束）
+- 结果：`architecture.md` 已记 P1.4 路径与边界。P1.4 通过。未开始 `search_graph` Tool，未开始下一版本可视化。
+- 下一步：无。须先改计划再开新阶段

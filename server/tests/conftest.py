@@ -57,7 +57,7 @@ def isolate_from_user_database(tmp_path_factory):
         conn.execute(
             text(
                 "TRUNCATE TABLE message, conversation, document_tag, favorite, "
-                "document_chunk, document, tag, knowledge_base, app_user CASCADE"
+                "document_chunk, entity_link, document, entity, tag, knowledge_base, app_user CASCADE"
             )
         )
     yield

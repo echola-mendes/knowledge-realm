@@ -84,3 +84,43 @@ def compare_documents(text_a: str, name_a: str, text_b: str, name_b: str) -> str
         "对比两篇资料。用中文写出相同点、不同点与简要结论。不要编造资料中没有的事实。只输出对比正文。",
         body,
     )
+
+
+def extract_graph(text: str) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    raw = _chat_complete(
+        "从资料抽取实体与关系。只输出 JSON 对象。"
+        '{{"entities":[{{"name":"名称","type":"concept"}}],'
+        '"links":[{{"from_name":"甲","to_name":"乙","rel":"用于"}}]}}。'
+        "type 用短英文如 concept、person、tool。不要编造资料中没有的名称。",
+        text,
+    )
+    try:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        parsed = json.loads(raw[start : end + 1] if start >= 0 and end >= start else raw)
+    except json.JSONDecodeError:
+        return [], []
+    if not isinstance(parsed, dict):
+        return [], []
+    entities: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in parsed.get("entities") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()[:200]
+        typ = (str(item.get("type") or "concept").strip() or "concept")[:50]
+        if not name or (name, typ) in seen:
+            continue
+        seen.add((name, typ))
+        entities.append({"name": name, "type": typ})
+    links: list[dict[str, str]] = []
+    for item in parsed.get("links") or []:
+        if not isinstance(item, dict):
+            continue
+        frm = str(item.get("from_name") or "").strip()[:200]
+        to = str(item.get("to_name") or "").strip()[:200]
+        rel = str(item.get("rel") or "").strip()[:100]
+        if not frm or not to or not rel:
+            continue
+        links.append({"from_name": frm, "to_name": to, "rel": rel})
+    return entities, links

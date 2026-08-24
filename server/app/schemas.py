@@ -131,6 +131,20 @@ class CompareOut(BaseModel):
     comparison: str
 
 
+class AgentRequest(BaseModel):
+    task: str
+    query: str = Field(min_length=1)
+    knowledge_base_id: uuid.UUID | None = None
+
+
+class AgentOut(BaseModel):
+    task: str
+    knowledge_base_id: uuid.UUID
+    answer: str
+    citations: list[CitationOut]
+    loop_count: int
+
+
 class UserOut(BaseModel):
     id: uuid.UUID
     name: str
@@ -147,3 +161,34 @@ class KnowledgeBaseOut(BaseModel):
     updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class GraphEntityOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    type: str
+
+
+class GraphLinkOut(BaseModel):
+    from_id: uuid.UUID
+    to_id: uuid.UUID
+    rel: str
+    document_id: uuid.UUID | None = None
+
+
+class DocumentGraphOut(BaseModel):
+    document_id: uuid.UUID
+    entities: list[GraphEntityOut]
+    links: list[GraphLinkOut]
+
+
+class KnowledgeGraphOut(BaseModel):
+    entities: list[GraphEntityOut]
+    links: list[GraphLinkOut]
+
+
+class RelatedDocumentOut(BaseModel):
+    document_id: uuid.UUID
+    document_name: str
+    score: float
+    content: str

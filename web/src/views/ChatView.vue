@@ -19,6 +19,7 @@ const messages = ref<ChatMessage[]>([]);
 const conversationId = ref<string>(typeof route.query.c === "string" ? route.query.c : "");
 const error = ref("");
 const streaming = ref(false);
+const mode = ref<"chat" | "agent" | "report">("chat");
 const CHAT_MAP = "zhiyu-chat-by-kb";
 
 function chatMap(): Record<string, string> {
@@ -50,6 +51,7 @@ async function refreshConversations() {
 
 async function openConversation(id: string) {
   if (streaming.value) return;
+  mode.value = "chat";
   rememberConversation(id);
   try {
     await loadHistory();
@@ -99,15 +101,24 @@ async function ask() {
   draft.value = "";
   streaming.value = true;
   scrollBottom();
+  const useGraph = mode.value !== "chat";
   try {
-    const res = await fetch("/api/chat/stream", {
+    const res = await fetch(useGraph ? "/api/agent/stream" : "/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: q,
-        knowledge_base_id: selectedKbId.value || undefined,
-        conversation_id: conversationId.value || undefined,
-      }),
+      body: JSON.stringify(
+        useGraph
+          ? {
+              task: mode.value === "report" ? "report" : "agent",
+              query: q,
+              knowledge_base_id: selectedKbId.value || undefined,
+            }
+          : {
+              query: q,
+              knowledge_base_id: selectedKbId.value || undefined,
+              conversation_id: conversationId.value || undefined,
+            },
+      ),
     });
     if (!res.ok || !res.body) throw new Error(messageFromErrorBody(await res.text(), res.statusText));
     const reader = res.body.getReader();
@@ -131,15 +142,17 @@ async function ask() {
         };
         if (payload.type === "token" && payload.text) assistant.content += payload.text;
         if (payload.type === "citations") {
-          const cid = payload.conversation_id || conversationId.value;
-          if (cid) rememberConversation(cid);
+          if (!useGraph) {
+            const cid = payload.conversation_id || conversationId.value;
+            if (cid) rememberConversation(cid);
+          }
           assistant.citations = payload.citations || [];
           if (payload.answer) assistant.content = payload.answer;
         }
         scrollBottom();
       }
     }
-    await refreshConversations();
+    if (!useGraph) await refreshConversations();
   } catch (e) {
     error.value = String(e);
   } finally {
@@ -227,7 +240,20 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
         <h1>对话</h1>
         <p class="sub">与「{{ kbName() }}」知识库对话，回答会标注引用来源</p>
       </div>
-      <button class="btn" type="button" @click="newChat">+ 新对话</button>
+      <div class="head-actions">
+        <div class="mode-switch" role="group" aria-label="提问模式">
+          <button type="button" :class="{ on: mode === 'chat' }" :disabled="streaming" @click="mode = 'chat'">
+            对话
+          </button>
+          <button type="button" :class="{ on: mode === 'agent' }" :disabled="streaming" @click="mode = 'agent'">
+            Agent
+          </button>
+          <button type="button" :class="{ on: mode === 'report' }" :disabled="streaming" @click="mode = 'report'">
+            报告
+          </button>
+        </div>
+        <button class="btn" type="button" @click="newChat">+ 新对话</button>
+      </div>
     </div>
     <p v-if="error" class="err">{{ error }}</p>
 
@@ -269,7 +295,13 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
       <textarea
         v-model="draft"
         rows="3"
-        placeholder="继续追问，或输入新问题..."
+        :placeholder="
+          mode === 'report'
+            ? '按主题生成研究报告…'
+            : mode === 'agent'
+              ? 'Agent 可多步检索后再回答…'
+              : '继续追问，或输入新问题...'
+        "
         @keydown="onKey"
       ></textarea>
       <div class="composer-bar">
@@ -492,5 +524,33 @@ pre {
   align-items: center;
   color: var(--muted);
   font-size: 0.8rem;
+}
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+.mode-switch button {
+  border: none;
+  background: none;
+  padding: 0.45rem 0.8rem;
+  cursor: pointer;
+  color: var(--muted);
+}
+.mode-switch button.on {
+  background: var(--teal);
+  color: #fff;
+}
+.mode-switch button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 </style>

@@ -1,15 +1,29 @@
 from __future__ import annotations
 
+import json
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import session_scope
+from app.kb import resolve_knowledge_base_id
 from app.llm import llm_keys_ready
-from app.models import Document
+from app.models import Document, Entity, EntityLink
 from app.p1.chains import compare_documents, gather_document_text
-from app.schemas import CompareOut, CompareRequest
+from app.p1.graph import build_graph, initial_state
+from app.schemas import (
+    AgentOut,
+    AgentRequest,
+    CitationOut,
+    CompareOut,
+    CompareRequest,
+    GraphEntityOut,
+    GraphLinkOut,
+    KnowledgeGraphOut,
+)
 
 router = APIRouter(prefix="/api", tags=["p1"])
 
@@ -51,3 +65,84 @@ def compare(body: CompareRequest, session: Session = Depends(get_db)):
         document_id_b=doc_b.id,
         comparison=comparison,
     )
+
+
+def _agent_out(body: AgentRequest, session: Session) -> AgentOut:
+    if body.task not in ("agent", "report"):
+        raise HTTPException(status_code=400, detail="task 须为 agent 或 report")
+    if not llm_keys_ready():
+        raise HTTPException(status_code=503, detail="未配置 LLM API Key")
+    kb_id = resolve_knowledge_base_id(session, body.knowledge_base_id)
+    task = "report" if body.task == "report" else "agent"
+    out = build_graph().invoke(
+        initial_state(body.query, knowledge_base_id=kb_id, task=task),
+        config={"configurable": {"session": session}},
+    )
+    return AgentOut(
+        task=task,
+        knowledge_base_id=kb_id,
+        answer=out.get("answer") or "",
+        citations=[CitationOut.model_validate(item) for item in (out.get("citations") or [])],
+        loop_count=int(out.get("loop_count") or 0),
+    )
+
+
+@router.post("/agent", response_model=AgentOut)
+def agent_run(body: AgentRequest, session: Session = Depends(get_db)):
+    return _agent_out(body, session)
+
+
+@router.post("/agent/stream")
+async def agent_stream(body: AgentRequest, request: Request, session: Session = Depends(get_db)):
+    result = _agent_out(body, session)
+
+    async def events():
+        for char in result.answer:
+            if await request.is_disconnected():
+                return
+            yield f"data: {json.dumps({'type': 'token', 'text': char}, ensure_ascii=False)}\n\n"
+        payload = {"type": "citations", **result.model_dump(mode="json")}
+        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
+def _graph_out(entities: list[Entity], links: list[EntityLink]) -> KnowledgeGraphOut:
+    return KnowledgeGraphOut(
+        entities=[GraphEntityOut(id=row.id, name=row.name, type=row.type) for row in entities],
+        links=[
+            GraphLinkOut(from_id=row.from_id, to_id=row.to_id, rel=row.rel, document_id=row.document_id)
+            for row in links
+        ],
+    )
+
+
+@router.get("/graph", response_model=KnowledgeGraphOut)
+def get_graph(
+    knowledge_base_id: uuid.UUID | None = None,
+    document_id: uuid.UUID | None = None,
+    session: Session = Depends(get_db),
+):
+    kb_id = resolve_knowledge_base_id(session, knowledge_base_id)
+    if document_id is not None:
+        doc = session.get(Document, document_id)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="文档不存在")
+        if doc.knowledge_base_id != kb_id:
+            return _graph_out([], [])
+        link_rows = list(session.scalars(select(EntityLink).where(EntityLink.document_id == document_id)))
+        ids = {row.from_id for row in link_rows} | {row.to_id for row in link_rows}
+        entity_rows: list[Entity] = []
+        if ids:
+            entity_rows = list(
+                session.scalars(select(Entity).where(Entity.id.in_(ids), Entity.knowledge_base_id == kb_id))
+            )
+        allowed = {row.id for row in entity_rows}
+        link_rows = [row for row in link_rows if row.from_id in allowed and row.to_id in allowed]
+        return _graph_out(entity_rows, link_rows)
+    entity_rows = list(session.scalars(select(Entity).where(Entity.knowledge_base_id == kb_id)))
+    ids = {row.id for row in entity_rows}
+    link_rows: list[EntityLink] = []
+    if ids:
+        link_rows = list(session.scalars(select(EntityLink).where(EntityLink.from_id.in_(ids))))
+    return _graph_out(entity_rows, link_rows)

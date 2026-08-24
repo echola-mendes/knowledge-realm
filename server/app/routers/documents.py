@@ -12,9 +12,19 @@ from sqlalchemy.orm import Session
 from app.db import session_scope
 from app.kb import resolve_knowledge_base_id
 from app.llm import llm_keys_ready
-from app.models import Document, DocumentChunk, DocumentTag, Favorite, KnowledgeBase, Tag
-from app.p1.chains import gather_document_text, suggest_tag_names, summarize_document
-from app.schemas import DocumentOut, DocumentTagsPut, NoteCreate, UrlCreate
+from app.models import Document, DocumentChunk, DocumentTag, Entity, EntityLink, Favorite, KnowledgeBase, Tag
+from app.p1.chains import extract_graph, gather_document_text, suggest_tag_names, summarize_document
+from app.schemas import (
+    DocumentGraphOut,
+    DocumentOut,
+    DocumentTagsPut,
+    GraphEntityOut,
+    GraphLinkOut,
+    NoteCreate,
+    RelatedDocumentOut,
+    UrlCreate,
+)
+from app.search import search_chunks
 from app import index as index_mod
 from app.storage import original_path, parsed_dir, remove_document_files, write_original
 
@@ -238,6 +248,34 @@ def get_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
     return _document_out(doc, session)
 
 
+@router.get("/{document_id}/related", response_model=list[RelatedDocumentOut])
+def list_related_documents(document_id: uuid.UUID, session: Session = Depends(get_db)):
+    doc = session.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if not index_mod.embedding_keys_ready():
+        raise HTTPException(status_code=503, detail="未配置 Embedding API Key")
+    query = (doc.summary or "").strip() or doc.filename
+    hits = search_chunks(session, query, knowledge_base_id=doc.knowledge_base_id, k=20)
+    seen: set[uuid.UUID] = set()
+    out: list[RelatedDocumentOut] = []
+    for hit in hits:
+        if hit.document_id == document_id or hit.document_id in seen:
+            continue
+        seen.add(hit.document_id)
+        out.append(
+            RelatedDocumentOut(
+                document_id=hit.document_id,
+                document_name=hit.document_name,
+                score=hit.score,
+                content=hit.content,
+            )
+        )
+        if len(out) == 5:
+            break
+    return out
+
+
 def _require_ready_llm(doc: Document | None) -> Document:
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
@@ -281,6 +319,68 @@ def auto_tags(document_id: uuid.UUID, session: Session = Depends(get_db)):
     session.commit()
     session.refresh(doc)
     return _document_out(doc, session)
+
+
+def _upsert_entities(session: Session, knowledge_base_id: uuid.UUID, items: list[dict[str, str]]) -> None:
+    for item in items:
+        exists = session.scalar(
+            select(Entity).where(
+                Entity.knowledge_base_id == knowledge_base_id,
+                Entity.name == item["name"],
+                Entity.type == item["type"],
+            )
+        )
+        if exists is None:
+            session.add(Entity(knowledge_base_id=knowledge_base_id, name=item["name"], type=item["type"]))
+    session.flush()
+
+
+def _entity_by_name(session: Session, knowledge_base_id: uuid.UUID, name: str) -> Entity | None:
+    return session.scalar(
+        select(Entity).where(Entity.knowledge_base_id == knowledge_base_id, Entity.name == name).limit(1)
+    )
+
+
+@router.post("/{document_id}/graph", response_model=DocumentGraphOut)
+def extract_document_graph(document_id: uuid.UUID, session: Session = Depends(get_db)):
+    doc = _require_ready_llm(session.get(Document, document_id))
+    text = gather_document_text(session, doc)
+    if not text:
+        raise HTTPException(status_code=400, detail="empty_content")
+    entities, links = extract_graph(text)
+    _upsert_entities(session, doc.knowledge_base_id, entities)
+    session.execute(delete(EntityLink).where(EntityLink.document_id == doc.id))
+    written: list[EntityLink] = []
+    for item in links:
+        src = _entity_by_name(session, doc.knowledge_base_id, item["from_name"])
+        dst = _entity_by_name(session, doc.knowledge_base_id, item["to_name"])
+        if src is None or dst is None or src.id == dst.id:
+            continue
+        row = EntityLink(from_id=src.id, to_id=dst.id, rel=item["rel"], document_id=doc.id)
+        session.add(row)
+        written.append(row)
+    session.flush()
+    saved_entities: list[Entity] = []
+    for item in entities:
+        row = session.scalar(
+            select(Entity).where(
+                Entity.knowledge_base_id == doc.knowledge_base_id,
+                Entity.name == item["name"],
+                Entity.type == item["type"],
+            )
+        )
+        if row is not None:
+            saved_entities.append(row)
+    out = DocumentGraphOut(
+        document_id=doc.id,
+        entities=[GraphEntityOut(id=row.id, name=row.name, type=row.type) for row in saved_entities],
+        links=[
+            GraphLinkOut(from_id=row.from_id, to_id=row.to_id, rel=row.rel, document_id=row.document_id)
+            for row in written
+        ],
+    )
+    session.commit()
+    return out
 
 
 @router.get("/{document_id}/parsed.md")

@@ -209,6 +209,31 @@ export function getParsedMarkdown(id: string) {
   return api<string>(`/api/documents/${id}/parsed.md`);
 }
 
+export type GraphEntity = { id: string; name: string; type: string };
+export type GraphLink = { from_id: string; to_id: string; rel: string; document_id: string | null };
+export type KnowledgeGraph = { entities: GraphEntity[]; links: GraphLink[] };
+export type RelatedDocument = {
+  document_id: string;
+  document_name: string;
+  score: number;
+  content: string;
+};
+
+export function getKnowledgeGraph(opts: { knowledgeBaseId?: string; documentId?: string }) {
+  const q = new URLSearchParams();
+  if (opts.knowledgeBaseId) q.set("knowledge_base_id", opts.knowledgeBaseId);
+  if (opts.documentId) q.set("document_id", opts.documentId);
+  return api<KnowledgeGraph>(`/api/graph?${q}`);
+}
+
+export function extractDocumentGraph(id: string) {
+  return api<KnowledgeGraph>(`/api/documents/${id}/graph`, { method: "POST" });
+}
+
+export function listRelatedDocuments(id: string) {
+  return api<RelatedDocument[]>(`/api/documents/${id}/related`);
+}
+
 export function statusLabel(status: string): string {
   if (status === "ready") return "已完成";
   if (status === "parse_failed" || status === "index_failed") return "处理失败";

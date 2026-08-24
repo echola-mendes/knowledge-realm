@@ -289,6 +289,144 @@
 
 ---
 
+# P1.3 — Agent（LangGraph）
+
+**依据：** `PRD-P1.md`。P1.2 已结束。本阶段引入 LangGraph，**仅**用于 Agent。禁止 Checkpoint、HITL、Subgraph、Multi-Agent。禁止改 `/api/chat`。禁止 Tool 走 HTTP `/api/search`。
+
+**规则：** 一次只做一步；提出人确认后再下一步。`reason` 禁止执行 Tool；`run_tool` 才执行。`max_loops=3`。`task=report` 与 `task=agent` 同一张图。
+
+---
+
+## 步骤 P1.3-0 — 范围已确认
+
+**指令：** 不写代码。确认节点职责、Tool 内部调 `search.py`、SSE 新路径 `/api/agent/stream`。
+
+**验证：** 提出人已允许进入 P1.3。本步仅作计划锚点。
+
+---
+
+## 步骤 P1.3-1 — search_knowledge Tool
+
+**指令：** 新增 `server/app/p1/tools.py`：`search_knowledge` 直接调用现有 `search.py` 的 `search_chunks`，参数与阈值与 P0 一致。禁止 HTTP、禁止第二套向量 SQL、禁止 import LangGraph。本步不建 Graph、不改前端、不改 chat/search 路由。
+
+**验证：** pytest：该函数转发到 `search_chunks`；源码无 `langgraph`、无 `/api/search`、无 `httpx`。
+
+---
+
+## 步骤 P1.3-2 — StateGraph（reason / run_tool / generate）
+
+**指令：** 新增 `server/app/p1/graph.py`：State 含 `knowledge_base_id`、`task`、`messages`、`citations`、`loop_count`、`max_loops=3`。`reason` 只决策；`run_tool` 只执行 `search_knowledge`；Conditional Edge 控制是否再搜；`loop_count >= 3` 必须 generate。不做 Checkpoint。不做 HTTP。
+
+**验证：** pytest 假 LLM：需要检索时经过 run_tool；循环不超过 3。`chat.py` 未被 import LangGraph。
+
+---
+
+## 步骤 P1.3-3 — POST /api/agent（非流式）
+
+**指令：** `POST /api/agent`，body 含 `task`（先支持 `agent`）、`query`、`knowledge_base_id`。走 Graph，不经过 `/api/chat`。缺 Key 503。
+
+**验证：** pytest 假 LLM + 假检索；默认对话接口契约不变。
+
+---
+
+## 步骤 P1.3-4 — POST /api/agent/stream
+
+**指令：** SSE 与非流式最终答案、引用字段对齐（便于点进阅读页）。不经过 `/api/chat/stream`。
+
+**验证：** 收集 SSE 后字段与非流式一致。
+
+---
+
+## 步骤 P1.3-5 — 前端 Agent 入口
+
+**指令：** 另入口或对话页「模式」切换；**默认提问仍为 P0 `/api/chat/stream`**。
+
+**验证：** 浏览器：默认对话仍走旧接口；Agent 模式走 `/api/agent/stream`。
+
+---
+
+## 步骤 P1.3-6 — task=report
+
+**指令：** 同一张 Graph，`task=report` 时 generate 按报告组织。不新开 Graph。
+
+**验证：** pytest：同一模块、不同 task；无第二套 Agent 进程。
+
+---
+
+## 步骤 P1.3-7 — 阶段收口
+
+**指令：** 更新 `architecture.md` 与 `progress.md`。不要开始 P1.4。
+
+**验证：** 提出人确认后才开图谱。
+
+---
+
+# P1.4 — 知识图谱（最小）
+
+**依据：** `PRD-P1.md`。P1.3 已结束。本阶段只做：实体/关系落库、抽取 Chain、知识关联检索、JSON 列表展示。
+
+**禁止：** 力导向/复杂可视化、Neo4j、第二套向量表、把抽取或关联做成 LangGraph、改 `/api/chat`、给 Agent 增加 `search_graph` Tool、Checkpoint/HITL/Subgraph/Multi-Agent。
+
+**规则：** 一次只做一步；提出人确认后再下一步。实体按库隔离。抽取复用 `gather_document_text`。关联只调现有 `search_chunks`。
+
+---
+
+## 步骤 P1.4-0 — 范围已确认
+
+**指令：** 不写功能代码。确认表结构、三个 HTTP、无可视化、无 `search_graph` Tool。
+
+**验证：** 提出人已允许进入 P1.4，并同意下文步骤。本步仅作计划锚点。
+
+---
+
+## 步骤 P1.4-1 — entity / entity_link 表
+
+**指令：** Alembic 新迁移（revision `20260824_0004`，revises `20260824_0003`）。`server/app/models.py` 增加 `Entity`、`EntityLink`，字段与设计文档第 6 节一致：`entity` 含 `knowledge_base_id`、`name`、`type`、timestamps，UNIQUE(knowledge_base_id, name, type)；`entity_link` 含 `from_id`、`to_id`、`rel`、可空 `document_id`（ON DELETE SET NULL）、UNIQUE(from_id, to_id, rel, document_id)；from/to 外键 CASCADE 到 `entity`。删除知识库时实体级联删除。不写 HTTP、不写抽取、不改 chat/search、不做前端。
+
+**验证：** pytest 能在 `echola_kb_test` 插入同库两实体一条边；跨库外键不可用。测完不留用户库数据。
+
+---
+
+## 步骤 P1.4-2 — 抽取 Chain 与 POST /api/documents/{id}/graph
+
+**指令：** 在 `server/app/p1/chains.py` 增加抽取函数（LangChain Chain + 现有 ChatOpenAI）：入参为文档正文，出参为实体列表（name、type）与关系列表（from_name、to_name、rel）。文档须存在且 ready；用 `gather_document_text`；缺 Key 503；空正文 400。按 (knowledge_base_id, name, type) upsert 实体；先删除该 `document_id` 的旧 `entity_link`，再写入新边（同库解析名称；找不到端点则跳过该边）。不调用 LangGraph。不改 `/api/chat`。不做前端。
+
+**验证：** pytest 假 LLM：返回非空实体与边；再抽一次则该文档的边被替换而非无限叠加。本步文件无 `langgraph` import。
+
+---
+
+## 步骤 P1.4-3 — GET /api/graph
+
+**指令：** `GET /api/graph`，query：`knowledge_base_id` 可选（缺省默认库）、`document_id` 可选。返回 JSON：`entities`（id、name、type）、`links`（from_id、to_id、rel、document_id）。若传 `document_id`：只返回该文档的边，以及这些边两端的实体。只读，无布局坐标。不改 chat。不做前端。
+
+**验证：** pytest：抽过的文档能按库列出；按 `document_id` 过滤不含其它文档的边。
+
+---
+
+## 步骤 P1.4-4 — GET /api/documents/{id}/related
+
+**指令：** 文档须存在。用现有 `search_chunks`：query 优先 `document.summary`，否则文件名；`knowledge_base_id` 为该文档所属库；结果去掉本文 `document_id`，按文档去重后最多 5 条。返回 `document_id`、`document_name`、`score`、`content` 片段。不调 LLM。不进 LangGraph。禁止 HTTP 调 `/api/search`。不改 `/api/chat`。不做前端。
+
+**验证：** pytest 假 embedding：同库另一篇相近文档出现；本文不出现在结果里。
+
+---
+
+## 步骤 P1.4-5 — 阅读页展示
+
+**指令：** 阅读页增加「抽取图谱」按钮（走 P1.4-2）以及实体/关系列表（走 P1.4-3，带当前 `document_id`）和「相近文档」列表（走 P1.4-4，可点进另一篇阅读页）。列表/表格即可。禁止力导向图、禁止 vis.js/D3 关系图。不改默认对话为 Agent。
+
+**验证：** 浏览器：ready 文档可抽取并看到实体或空态；相近文档可点击。对话页默认仍走 `/api/chat/stream`。
+
+---
+
+## 步骤 P1.4-6 — 阶段收口
+
+**指令：** 更新 `architecture.md` 与 `progress.md`。不要开始 `search_graph` Tool，不要开始下一版本可视化。
+
+**验证：** 提出人确认后本阶段结束。
+
+---
+
 ## 执行纪律
 
 - 每步结束后等待提出人确认，再开始下一步。  

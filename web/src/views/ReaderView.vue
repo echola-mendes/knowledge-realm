@@ -2,8 +2,21 @@
 import MarkdownIt from "markdown-it";
 import { nextTick, onMounted, ref, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
-import { autoTagDocument, getDocument, getParsedMarkdown, statusLabel, summarizeDocument, type DocumentItem } from "../api";
-import { listTags, type TagItem } from "../api";
+import {
+  autoTagDocument,
+  extractDocumentGraph,
+  getDocument,
+  getKnowledgeGraph,
+  getParsedMarkdown,
+  listRelatedDocuments,
+  listTags,
+  statusLabel,
+  summarizeDocument,
+  type DocumentItem,
+  type KnowledgeGraph,
+  type RelatedDocument,
+  type TagItem,
+} from "../api";
 
 const route = useRoute();
 const md = new MarkdownIt();
@@ -20,14 +33,43 @@ const error = ref("");
 const busy = ref("");
 const doc = ref<DocumentItem | null>(null);
 const tags = ref<TagItem[]>([]);
+const graph = ref<KnowledgeGraph>({ entities: [], links: [] });
+const related = ref<RelatedDocument[]>([]);
+const graphError = ref("");
+const relatedError = ref("");
 
 const pageHint = () => {
   const m = /^#page-(\d+)/.exec(route.hash);
   return m ? m[1] : "";
 };
 
+function entityName(id: string) {
+  return graph.value.entities.find((item) => item.id === id)?.name || id.slice(0, 8);
+}
+
 function tagName(id: string) {
   return tags.value.find((t) => t.id === id)?.name;
+}
+
+async function loadSide() {
+  graphError.value = "";
+  relatedError.value = "";
+  graph.value = { entities: [], links: [] };
+  related.value = [];
+  if (!doc.value) return;
+  try {
+    graph.value = await getKnowledgeGraph({
+      knowledgeBaseId: doc.value.knowledge_base_id,
+      documentId: doc.value.id,
+    });
+  } catch (e) {
+    graphError.value = String(e);
+  }
+  try {
+    related.value = await listRelatedDocuments(doc.value.id);
+  } catch (e) {
+    relatedError.value = String(e);
+  }
 }
 
 async function load() {
@@ -38,6 +80,7 @@ async function load() {
     tags.value = await listTags();
     const text = await getParsedMarkdown(id);
     html.value = md.render(text);
+    await loadSide();
     await nextTick();
     if (route.hash) {
       document.querySelector(decodeURIComponent(route.hash))?.scrollIntoView();
@@ -77,6 +120,20 @@ async function runAutoTags() {
     busy.value = "";
   }
 }
+
+async function runExtract() {
+  if (!doc.value || busy.value) return;
+  error.value = "";
+  graphError.value = "";
+  busy.value = "graph";
+  try {
+    graph.value = await extractDocumentGraph(doc.value.id);
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    busy.value = "";
+  }
+}
 </script>
 
 <template>
@@ -101,8 +158,41 @@ async function runAutoTags() {
         <button class="btn" type="button" :disabled="doc.status !== 'ready' || !!busy" @click="runAutoTags">
           {{ busy === "tags" ? "打标中…" : "自动标签" }}
         </button>
+        <button class="btn" type="button" :disabled="doc.status !== 'ready' || !!busy" @click="runExtract">
+          {{ busy === "graph" ? "抽取中…" : "抽取图谱" }}
+        </button>
       </div>
       <p v-if="doc.summary" class="summary">{{ doc.summary }}</p>
+    </section>
+    <section v-if="doc" class="card graph-panel">
+      <h2>实体</h2>
+      <p v-if="graphError" class="err">{{ graphError }}</p>
+      <p v-else-if="!graph.entities.length" class="empty">暂无实体，可先抽取图谱</p>
+      <ul v-else class="plain-list">
+        <li v-for="item in graph.entities" :key="item.id">
+          {{ item.name }}
+          <span class="type">{{ item.type }}</span>
+        </li>
+      </ul>
+      <h2>关系</h2>
+      <p v-if="!graphError && !graph.links.length" class="empty">暂无关系</p>
+      <ul v-else-if="!graphError" class="plain-list">
+        <li v-for="(item, idx) in graph.links" :key="`${item.from_id}-${item.to_id}-${item.rel}-${idx}`">
+          {{ entityName(item.from_id) }}
+          <span class="rel">{{ item.rel }}</span>
+          {{ entityName(item.to_id) }}
+        </li>
+      </ul>
+      <h2>相近文档</h2>
+      <p v-if="relatedError" class="err">{{ relatedError }}</p>
+      <p v-else-if="!related.length" class="empty">暂无相近文档</p>
+      <ul v-else class="plain-list related">
+        <li v-for="item in related" :key="item.document_id">
+          <RouterLink :to="`/documents/${item.document_id}`">{{ item.document_name }}</RouterLink>
+          <span class="score">{{ item.score.toFixed(2) }}</span>
+          <p class="snippet">{{ item.content }}</p>
+        </li>
+      </ul>
     </section>
     <article class="card body" v-html="html"></article>
   </main>
@@ -140,6 +230,39 @@ async function runAutoTags() {
   margin: 0.85rem 0 0;
   color: var(--muted);
   line-height: 1.6;
+}
+.graph-panel {
+  padding: 1.1rem 1.2rem;
+  margin-bottom: 1rem;
+}
+.graph-panel h2 {
+  margin: 0.85rem 0 0.4rem;
+  font-size: 0.95rem;
+}
+.graph-panel h2:first-child {
+  margin-top: 0;
+}
+.empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.plain-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  line-height: 1.7;
+}
+.plain-list .type,
+.plain-list .rel,
+.plain-list .score {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-left: 0.35rem;
+}
+.related .snippet {
+  margin: 0.15rem 0 0.55rem;
+  color: var(--muted);
+  font-size: 0.86rem;
 }
 .chips {
   display: flex;

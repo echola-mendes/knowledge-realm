@@ -4,7 +4,7 @@
 **依据：** `PRD.md` 第 18 节 P1 名单；提出人对方案的 11 条调整  
 **基线：** P0 已完成且稳定。实现细节以 `memory-bank/design-document.md` 为准；本文只写 P1。
 
-**P1.1 已完成。** 当前只允许 **P1.2**（文档对比 Chain）。禁止写 P1.3+ 代码。
+**P1.1、P1.2、P1.3 已完成。** 当前只允许 **P1.4**（最小图谱落库 + 知识关联）。一次只做计划中未验证的那一步。禁止给 Agent 加 `search_graph` Tool（留给后续阶段）。
 
 ---
 
@@ -156,6 +156,9 @@ Agent 会话：复用 `conversation` / `message`；可用约定区分，**P1.1 �
 | P1.1 | `POST /api/documents/{id}/auto-tags` | 追加标签 |
 | P1.2 | `POST /api/compare` | 两文档对比 |
 | P1.3 | `POST /api/agent`、`POST /api/agent/stream` | Graph；body 含 `task`、`query`、`knowledge_base_id` |
+| P1.4 | `POST /api/documents/{id}/graph` | 抽取实体/关系并落库 |
+| P1.4 | `GET /api/graph` | 当前库实体与边 JSON；无可视化布局 |
+| P1.4 | `GET /api/documents/{id}/related` | 一次检索相近文档；不进图 |
 
 不修改 `POST /api/chat`、`POST /api/chat/stream`、`POST /api/search` 的契约。Agent Tool **不得** HTTP 调用 `/api/search`，只复用 `search.py` 函数。
 
@@ -180,4 +183,4 @@ Agent 会话：复用 `conversation` / `message`；可用约定区分，**P1.1 �
 
 ## 11. 当前实施计划
 
-见 `memory-bank/implementation-plan.md` 文末 **P1.2**。范围仅：**两篇文档对比**（LangChain Chain + `POST /api/compare`）。不含 Agent、研究报告、图谱、LangGraph。`search_knowledge` / Graph 属 P1.3，本阶段不建。
+见 `memory-bank/implementation-plan.md` 文末 **P1.4**（已收口）。最小 `entity` / `entity_link`、抽取 Chain、关联走 `search.py`、阅读页列表已落地。无复杂可视化；无 `search_graph` Tool；未改 `/api/chat`。新工作须先改计划。

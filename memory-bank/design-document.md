@@ -11,7 +11,7 @@
 
 | 项 | 裁决 |
 |---|---|
-| V1 范围 | **P0 已完成**（PRD 第 18 节 P0）。P1（V1.5）见 `PRD-P1.md`。**P1.1 已完成**；当前只允许 **P1.2** 文档对比 Chain |
+| V1 范围 | **P0 已完成**（PRD 第 18 节 P0）。P1（V1.5）见 `PRD-P1.md`。**P1.1 / P1.2 / P1.3 / P1.4 已完成**。不要开始 `search_graph` Tool 或下一版本可视化，除非先改计划 |
 | 编排 | **P0：** LangChain 单链 RAG；`/api/chat` 不进图。**P1 Agent：** 允许 LangGraph，且必须经 Tool 调用 P0 检索。摘要/标签/对比只用 Chain。不上 LlamaIndex |
 | 解析 | 不上 MinerU。PDF = PyMuPDF 文本层；DOCX = python-docx；MD/TXT/笔记 = 直读；URL = 抓公开页正文 |
 | 检索 | 问答与搜索均为 **pgvector 余弦相似度**（方案 A）。全文检索与按时间/来源筛为方案 B，V1 不做 |
@@ -131,7 +131,7 @@ LangChain 按标题切，过长再 **800 字符 / overlap 120**。表格尽量�
 
 **knowledge_base：** id, name UNIQUE, is_default BOOL, timestamps  
 
-**document：** id, knowledge_base_id FK CASCADE, filename, ext, kind, source_url 可空, checksum, status, error_message, byte_size, timestamps。UNIQUE(knowledge_base_id, checksum) 对文件；笔记可无 checksum 或对正文哈希。  
+**document：** id, knowledge_base_id FK CASCADE, filename, ext, kind, source_url 可空, checksum, status, error_message, byte_size, summary 可空, timestamps。UNIQUE(knowledge_base_id, checksum) 对文件；笔记可无 checksum 或对正文哈希。  
 
 **document_chunk：** id, document_id FK CASCADE, chunk_index, content, page 可空, heading 可空, metadata JSONB, embedding vector(N)。HNSW cosine。  
 
@@ -145,7 +145,11 @@ LangChain 按标题切，过长再 **800 字符 / overlap 120**。表格尽量�
 
 **message：** id, conversation_id, role, content, citations JSONB, created_at  
 
-不建：entity、relation、fragment_favorite。
+**P1.4 entity：** id, knowledge_base_id FK CASCADE, name, type（自由短字符串，如 concept/person/tool）, timestamps。UNIQUE(knowledge_base_id, name, type)。  
+
+**P1.4 entity_link：** id, from_id FK CASCADE → entity, to_id FK CASCADE → entity, rel（短字符串）, document_id FK ON DELETE SET NULL 可空, created_at。UNIQUE(from_id, to_id, rel, document_id)。两实体须同库。  
+
+不建：fragment_favorite、Neo4j、第二套向量表。  
 
 ---
 
@@ -164,6 +168,8 @@ LangChain 按标题切，过长再 **800 字符 / overlap 120**。表格尽量�
 搜索：`POST /search`  
 
 Chat：`POST /chat`，`POST /chat/stream`，会话 CRUD  
+
+P1.4 图谱：`POST /documents/{id}/graph` 抽取并落库；`GET /graph?knowledge_base_id=` 返回该库实体与边的 JSON；`GET /documents/{id}/related` 用 P0 `search_chunks` 给出相近文档（排除本文，不进 LangGraph）。  
 
 ---
 

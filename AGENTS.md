@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本仓库是 **知域**：个人本机知识库 Web。**P0 已完成**（导入、标签、收藏、向量余弦检索、LangChain RAG 问答）。P1 见 `PRD-P1.md`，一次只做 `implementation-plan.md` 里当前未验证的那一步。
+本仓库是 **知域**：个人本机知识库 Web。**P0 / P1.1 / P1.2 / P1.3 / P1.4 已完成**。不要开始 `search_graph` Tool，不要开始力导向/ vis.js / D3 可视化；新阶段须先改 `implementation-plan.md`。
 
 长期事实以 `memory-bank/` 为准，不以闲聊记忆为准。`PRD.md` 仍保留；实现细节以 `memory-bank/design-document.md` 为准。
 
@@ -23,7 +23,7 @@
 
 ## 范围
 
-只做当前计划步骤。P0 已收口。P1 未在 `implementation-plan.md` 列出的功能（含 Agent、图谱）不要做。改需求先改 `design-document.md` 与 `PRD-P1.md`。
+只做当前计划步骤。P0 / P1.1 / P1.2 / P1.3 / **P1.4 已收口**。未在 `implementation-plan.md` 列出的功能不要做。改需求先改 `design-document.md` 与 `PRD-P1.md`。
 
 ## 文档维护
 
