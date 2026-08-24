@@ -2,14 +2,15 @@
 
 个人本机知识库：导入文档、向量检索、RAG 问答。
 
-仓库：https://gitee.com/echola/knowledge
+代码仓库名：`knowledge_realm`  
+远程：https://gitee.com/echola/knowledge
 
 ## 技术栈
 
 - 后端：FastAPI、SQLAlchemy、Alembic
-- 数据库：本机 PostgreSQL + pgvector，库名 `echola_kb`
+- 数据库：PostgreSQL + pgvector，库名 `echola_kb`
 - 解析：PyMuPDF、python-docx、Markdown / 纯文本
-- 切块：LangChain（
+- 切块：LangChain
 - LLM / Embedding：阿里云 DashScope 兼容接口
 - 前端：Vue 3 + TypeScript + Vite（`web/`）
 

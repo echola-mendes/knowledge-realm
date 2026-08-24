@@ -12,6 +12,7 @@ import { selectedKb, selectedKbId } from "../kb";
 
 const router = useRouter();
 const q = ref("");
+const previewStem = ref("");
 const kbCount = ref(0);
 const docCount = ref(0);
 const tagCount = ref(0);
@@ -40,23 +41,34 @@ onMounted(async () => {
 function goChat() {
   router.push({ path: "/chat", query: q.value ? { q: q.value } : {} });
 }
+
+function goChallenge() {
+  router.push("/challenge");
+}
 </script>
 
 <template>
   <main class="page">
-    <section class="card hero">
-      <span class="badge">当前知识库：{{ kbLabel }}</span>
-      <h1>今天，想从知识库里发现什么？</h1>
-      <p class="sub">向当前库提问，回答会带来源引用；也可先去搜索只看相似片段。</p>
-      <div class="ask">
-        <input
-          v-model="q"
-          placeholder="例如：梳理文档的核心结论…"
-          @keyup.enter="goChat"
-        />
-        <button class="btn btn-primary" type="button" @click="goChat">提问 →</button>
+    <section class="hero-row">
+      <div class="card hero">
+        <span class="badge">当前知识库：{{ kbLabel }}</span>
+        <h1>今天，想从知识库里发现什么？</h1>
+        <p class="sub">向当前库提问，回答会带来源引用；也可先去搜索只看相似片段。</p>
+        <div class="ask">
+          <input
+            v-model="q"
+            placeholder="例如：梳理文档的核心结论…"
+            @keyup.enter="goChat"
+          />
+          <button class="btn btn-primary" type="button" @click="goChat">提问 →</button>
+        </div>
+        <p class="hint">Enter 提问，支持多轮追问，引用可点击回到原文</p>
       </div>
-      <p class="hint">Enter 提问，支持多轮追问，引用可点击回到原文</p>
+      <div class="card challenge">
+        <p class="challenge-title">每日一题</p>
+        <p class="challenge-q">{{ previewStem || "题目……" }}</p>
+        <button class="btn btn-primary" type="button" @click="goChallenge">开启挑战</button>
+      </div>
     </section>
 
     <section class="grid-3 stats">
@@ -92,8 +104,48 @@ function goChat() {
 </template>
 
 <style scoped>
+.hero-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(14rem, 0.55fr);
+  gap: 1rem;
+  align-items: stretch;
+}
 .hero {
   padding: 1.6rem 1.5rem 1.2rem;
+  min-width: 0;
+}
+.challenge {
+  min-width: 0;
+  padding: 1.6rem 1.5rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.7rem;
+}
+.challenge-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--teal);
+  line-height: 1.4;
+}
+.challenge-q {
+  margin: 0;
+  flex: 1;
+  align-self: stretch;
+  text-align: left;
+  font-size: 1.05rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+.challenge .btn {
+  align-self: center;
+}
+@media (max-width: 800px) {
+  .hero-row {
+    grid-template-columns: 1fr;
+  }
 }
 .badge {
   display: inline-block;

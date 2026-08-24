@@ -19,7 +19,7 @@ def fetch_html(url: str) -> str:
         url,
         timeout=URL_TIMEOUT_SEC,
         follow_redirects=True,
-        headers={"User-Agent": "echola-kb/1.0"},
+        headers={"User-Agent": "knowledge-realm/1.0"},
     )
     response.raise_for_status()
     return response.text

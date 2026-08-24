@@ -1,6 +1,6 @@
 # 架构地图
 
-代码尚未落地。约定目录见 `tech-stack.md`。
+代码仓库名：`knowledge_realm`。代码尚未落地。约定目录见 `tech-stack.md`。
 
 | 路径 | 职责 |
 |---|---|

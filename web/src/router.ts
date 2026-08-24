@@ -5,6 +5,7 @@ import SearchView from "./views/SearchView.vue";
 import ChatView from "./views/ChatView.vue";
 import ReaderView from "./views/ReaderView.vue";
 import SettingsView from "./views/SettingsView.vue";
+import ChallengeView from "./views/ChallengeView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -15,5 +16,6 @@ export const router = createRouter({
     { path: "/chat", name: "chat", component: ChatView },
     { path: "/documents/:id", name: "reader", component: ReaderView },
     { path: "/settings", name: "settings", component: SettingsView },
+    { path: "/challenge", name: "challenge", component: ChallengeView },
   ],
 });
