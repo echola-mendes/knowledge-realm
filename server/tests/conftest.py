@@ -1,6 +1,67 @@
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine.url import make_url
 
 from app.config import get_settings
+from app.main import reset_app_state
+
+TEST_DB_NAME = "echola_kb_test"
+_SERVER_DIR = Path(__file__).resolve().parents[1]
+
+
+def _render(url) -> str:
+    return url.render_as_string(hide_password=False)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolate_from_user_database(tmp_path_factory):
+    reset_app_state()
+    prod = get_settings(load_file=True)
+    prod_url = make_url(prod.database_url)
+    test_url = _render(prod_url.set(database=TEST_DB_NAME))
+    admin_url = _render(prod_url.set(database="postgres"))
+    engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")
+    try:
+        with engine.connect() as conn:
+            exists = conn.execute(
+                text("SELECT 1 FROM pg_database WHERE datname = :n"),
+                {"n": TEST_DB_NAME},
+            ).scalar()
+            if not exists:
+                conn.execute(text(f'CREATE DATABASE "{TEST_DB_NAME}"'))
+    finally:
+        engine.dispose()
+    data_dir = tmp_path_factory.mktemp("data")
+    os.environ["DATABASE_URL"] = test_url
+    os.environ["DATA_DIR"] = str(data_dir)
+    reset_app_state()
+    alembic_cli = _SERVER_DIR / ".venv" / "bin" / "alembic"
+    subprocess.run(
+        [sys.executable, str(alembic_cli), "upgrade", "head"],
+        cwd=str(_SERVER_DIR),
+        check=True,
+    )
+    loaded = make_url(get_settings(load_file=True).database_url).database
+    if loaded != TEST_DB_NAME:
+        raise RuntimeError(f"pytest refused to use user database {loaded!r}")
+    from app.db import get_engine
+
+    with get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "TRUNCATE TABLE message, conversation, document_tag, favorite, "
+                "document_chunk, document, tag, knowledge_base, app_user CASCADE"
+            )
+        )
+    yield
+    reset_app_state()
 
 
 @pytest.fixture(autouse=True)

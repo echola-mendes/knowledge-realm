@@ -40,6 +40,7 @@ class DocumentOut(BaseModel):
     existed: bool = False
     tag_ids: list[uuid.UUID] = Field(default_factory=list)
     is_favorite: bool = False
+    summary: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -117,6 +118,17 @@ class MessageOut(BaseModel):
 
 class DocumentTagsPut(BaseModel):
     tag_ids: list[uuid.UUID]
+
+
+class CompareRequest(BaseModel):
+    document_id_a: uuid.UUID
+    document_id_b: uuid.UUID
+
+
+class CompareOut(BaseModel):
+    document_id_a: uuid.UUID
+    document_id_b: uuid.UUID
+    comparison: str
 
 
 class UserOut(BaseModel):

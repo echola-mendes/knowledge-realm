@@ -11,7 +11,8 @@
 |---|---|---|---|
 | 前端 | Vue 3 + TypeScript + Vite | 设计已定 Web；四五个页面，不必上大框架 | React（避免双栈） |
 | 后端 | Python 3.11+ / FastAPI / Uvicorn | 上传 + JSON + SSE 足够 | Django |
-| RAG 编排 | LangChain（切块 + Chat/Embedding 调用） | 设计已定单链 | LlamaIndex、LangGraph |
+| RAG 编排 | P0：LangChain 单链。P1 Agent：LangGraph（仅 `server/app/p1/graph.py` 一类模块） | P0 已定单链；Agent 多步检索 | 用图重写 `/api/chat`；LlamaIndex |
+| P1 短任务 | LangChain Chain（摘要、自动标签、对比） | 一次 LLM 足够 | 把摘要/标签做成 Graph |
 | 向量读写 | SQLAlchemy 管表 + SQL 余弦查询 | 一张 `document_chunk`，避免第二套向量表 | langchain 自建 PGVector 集合 |
 | 解析 | pymupdf、python-docx、标准库读文本 | 无 MinerU、无 OCR | MinerU、Unstructured 全家桶 |
 | 网页正文 | httpx + trafilatura | 公开文章抽正文，失败即导入失败 | Playwright（过重） |
@@ -41,7 +42,7 @@
 ## 后端
 
 - FastAPI + Pydantic v2 + python-dotenv  
-- LangChain：切块器用 `RecursiveCharacterTextSplitter` / Markdown 标题切分。调用模型可用 `langchain-openai` 里的 `ChatOpenAI` / `OpenAIEmbeddings`（**类名带 OpenAI，实际 `base_url` 填 DashScope**），或直接用 `openai` 包。二者都只要 DashScope Key。  
+- LangChain：切块器用 `RecursiveCharacterTextSplitter` / Markdown 标题切分。P0 问答：`ChatOpenAI` 单链。P1 Agent（P1.3 起）可用 LangGraph，检索必须走现有 `search.py` 封装的 Tool，禁止第二套向量查询。  
 - 检索：自写 SQL `ORDER BY embedding <=> :q LIMIT k`（cosine 距离；与 HNSW `vector_cosine_ops` 一致），再在应用层换算分数并做 0.30 阈值  
 - 对话与向量：安装 PyPI 上的包 **`openai`**。这是通用客户端，**不是**「必须注册 OpenAI」。  
   指向阿里云兼容地址即可，例如：  

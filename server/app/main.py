@@ -9,6 +9,7 @@ from app.routers.chat import router as chat_router
 from app.routers.documents import router as documents_router
 from app.routers.knowledge_bases import router as kb_router
 from app.routers.me import router as me_router
+from app.routers.p1 import router as p1_router
 from app.routers.search import router as search_router
 from app.routers.tags import router as tags_router
 from app.user import ensure_default_user
@@ -35,6 +36,7 @@ def create_app(*, load_file: bool = True, ensure_default: bool = True) -> FastAP
     app.include_router(tags_router)
     app.include_router(search_router)
     app.include_router(chat_router)
+    app.include_router(p1_router)
 
     @app.get("/health")
     def health():

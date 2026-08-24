@@ -1,7 +1,7 @@
 # 知域 — 产品设计文档
 
 **状态：** 可执行  
-**依据：** 仓库 `PRD.md`（已与提出人确认同步）  
+**依据：** 仓库 `PRD.md`（P0 已确认）；P1 见 `PRD-P1.md`（提出人已确认边界）  
 **产品名称：** 知域  
 **用户：** 单人；Web；本机为主  
 
@@ -11,8 +11,8 @@
 
 | 项 | 裁决 |
 |---|---|
-| V1 范围 | 仅 PRD 第 18 节 **P0**。摘要、自动标签、图谱、Agent、研究报告、知识发现为 P1/P2 |
-| 编排 | **LangChain** 单链。不上 LangGraph、不上 LlamaIndex |
+| V1 范围 | **P0 已完成**（PRD 第 18 节 P0）。P1（V1.5）见 `PRD-P1.md`。**P1.1 已完成**；当前只允许 **P1.2** 文档对比 Chain |
+| 编排 | **P0：** LangChain 单链 RAG；`/api/chat` 不进图。**P1 Agent：** 允许 LangGraph，且必须经 Tool 调用 P0 检索。摘要/标签/对比只用 Chain。不上 LlamaIndex |
 | 解析 | 不上 MinerU。PDF = PyMuPDF 文本层；DOCX = python-docx；MD/TXT/笔记 = 直读；URL = 抓公开页正文 |
 | 检索 | 问答与搜索均为 **pgvector 余弦相似度**（方案 A）。全文检索与按时间/来源筛为方案 B，V1 不做 |
 | 知识库 | 可多个；启动时若不存在则创建名为 `默认知识库` 的记录。未传 `knowledge_base_id` 时只用默认库 |
@@ -35,7 +35,7 @@
 2. 导入：PDF / docx / md / txt、公开 URL、手动笔记（Markdown）。  
 3. 异步处理：解析 → 切块 → Embedding → 入库。  
 4. 文档列表/详情/阅读解析稿/删除/重新处理/来源展示。  
-5. 标签：增删、打在文档上、AI **不**自动打标（自动标签属 P1）。  
+5. 标签：增删、打在文档上。P0 不自动打标；自动标签属 **P1.1**。  
 6. 收藏：收藏/取消文档（V1 不收藏「片段」——PRD 片段收藏放到 P1，避免范围膨胀）。  
 7. 搜索：余弦 TopK，可筛知识库、标签、类型。  
 8. RAG 问答：全库（默认或指定）或指定文档；多轮；引用；流式。  
@@ -43,9 +43,11 @@
 
 ### 2.2 非目标
 
-MinerU、LlamaIndex、LangGraph、Ollama、Milvus、图谱、Agent、研究报告、智能摘要、自动标签、知识冲突/缺口、Web Search、多用户、扫描件 OCR、`.doc`、登录墙网页、关键词全文检索。
+MinerU、LlamaIndex、Ollama、Milvus、知识冲突/缺口、Web Search、多用户、扫描件 OCR、`.doc`、登录墙网页、关键词全文检索。P0 路径不上 LangGraph。Checkpoint / HITL / Subgraph / Multi-Agent 不进 LangGraph 第一阶段。
 
 **收藏片段：** V1 只收藏文档。
+
+**P1：** 不重构 P0；旧 RAG 不进图。细则 `PRD-P1.md`。
 
 ---
 
@@ -191,5 +193,6 @@ Chat：`POST /chat`，`POST /chat/stream`，会话 CRUD
 - `memory-bank/tech-stack.md`  
 - `memory-bank/implementation-plan.md`  
 - `memory-bank/architecture.md` / `progress.md`  
+- `PRD-P1.md`（P1 架构与阶段）  
 
-实现以本文为准。
+实现以本文为准；P1 增量以本文第 1 节编排裁决 + `PRD-P1.md` 为准。

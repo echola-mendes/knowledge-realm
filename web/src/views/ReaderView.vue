@@ -2,7 +2,7 @@
 import MarkdownIt from "markdown-it";
 import { nextTick, onMounted, ref, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
-import { getDocument, getParsedMarkdown, statusLabel, type DocumentItem } from "../api";
+import { autoTagDocument, getDocument, getParsedMarkdown, statusLabel, summarizeDocument, type DocumentItem } from "../api";
 import { listTags, type TagItem } from "../api";
 
 const route = useRoute();
@@ -17,6 +17,7 @@ md.renderer.rules.heading_open = (tokens, idx, options, env, slf) => {
 };
 const html = ref("");
 const error = ref("");
+const busy = ref("");
 const doc = ref<DocumentItem | null>(null);
 const tags = ref<TagItem[]>([]);
 
@@ -49,6 +50,33 @@ async function load() {
 
 onMounted(load);
 watch(() => [route.params.id, route.hash], load);
+
+async function runSummarize() {
+  if (!doc.value || busy.value) return;
+  error.value = "";
+  busy.value = "summary";
+  try {
+    doc.value = await summarizeDocument(doc.value.id);
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    busy.value = "";
+  }
+}
+
+async function runAutoTags() {
+  if (!doc.value || busy.value) return;
+  error.value = "";
+  busy.value = "tags";
+  try {
+    doc.value = await autoTagDocument(doc.value.id);
+    tags.value = await listTags();
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    busy.value = "";
+  }
+}
 </script>
 
 <template>
@@ -66,6 +94,15 @@ watch(() => [route.params.id, route.hash], load);
         <span class="right">{{ statusLabel(doc.status) }}</span>
       </div>
       <h1>{{ doc.filename }}</h1>
+      <div class="p1-actions">
+        <button class="btn" type="button" :disabled="doc.status !== 'ready' || !!busy" @click="runSummarize">
+          {{ busy === "summary" ? "摘要生成中…" : "生成摘要" }}
+        </button>
+        <button class="btn" type="button" :disabled="doc.status !== 'ready' || !!busy" @click="runAutoTags">
+          {{ busy === "tags" ? "打标中…" : "自动标签" }}
+        </button>
+      </div>
+      <p v-if="doc.summary" class="summary">{{ doc.summary }}</p>
     </section>
     <article class="card body" v-html="html"></article>
   </main>
@@ -92,6 +129,17 @@ watch(() => [route.params.id, route.hash], load);
 .meta h1 {
   margin: 0.5rem 0 0;
   font-size: clamp(1.3rem, 3vw, 1.7rem);
+}
+.p1-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+.summary {
+  margin: 0.85rem 0 0;
+  color: var(--muted);
+  line-height: 1.6;
 }
 .chips {
   display: flex;

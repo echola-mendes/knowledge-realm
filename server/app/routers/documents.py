@@ -11,7 +11,9 @@ from sqlalchemy.orm import Session
 
 from app.db import session_scope
 from app.kb import resolve_knowledge_base_id
+from app.llm import llm_keys_ready
 from app.models import Document, DocumentChunk, DocumentTag, Favorite, KnowledgeBase, Tag
+from app.p1.chains import gather_document_text, suggest_tag_names, summarize_document
 from app.schemas import DocumentOut, DocumentTagsPut, NoteCreate, UrlCreate
 from app import index as index_mod
 from app.storage import original_path, parsed_dir, remove_document_files, write_original
@@ -233,6 +235,51 @@ def get_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
     doc = session.get(Document, document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
+    return _document_out(doc, session)
+
+
+def _require_ready_llm(doc: Document | None) -> Document:
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if doc.status != "ready":
+        raise HTTPException(status_code=400, detail="文档未完成")
+    if not llm_keys_ready():
+        raise HTTPException(status_code=503, detail="未配置 LLM API Key")
+    return doc
+
+
+@router.post("/{document_id}/summarize", response_model=DocumentOut)
+def summarize(document_id: uuid.UUID, session: Session = Depends(get_db)):
+    doc = _require_ready_llm(session.get(Document, document_id))
+    text = gather_document_text(session, doc)
+    if not text:
+        raise HTTPException(status_code=400, detail="empty_content")
+    doc.summary = summarize_document(text)
+    session.commit()
+    session.refresh(doc)
+    return _document_out(doc, session)
+
+
+@router.post("/{document_id}/auto-tags", response_model=DocumentOut)
+def auto_tags(document_id: uuid.UUID, session: Session = Depends(get_db)):
+    doc = _require_ready_llm(session.get(Document, document_id))
+    text = gather_document_text(session, doc)
+    if not text:
+        raise HTTPException(status_code=400, detail="empty_content")
+    existing_ids = set(
+        session.scalars(select(DocumentTag.tag_id).where(DocumentTag.document_id == document_id))
+    )
+    for name in suggest_tag_names(text):
+        tag = session.scalar(select(Tag).where(Tag.name == name))
+        if tag is None:
+            tag = Tag(name=name)
+            session.add(tag)
+            session.flush()
+        if tag.id not in existing_ids:
+            session.add(DocumentTag(document_id=document_id, tag_id=tag.id))
+            existing_ids.add(tag.id)
+    session.commit()
+    session.refresh(doc)
     return _document_out(doc, session)
 
 

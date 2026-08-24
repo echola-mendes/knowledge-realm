@@ -47,7 +47,7 @@ def _positive_int(name: str, raw: str | None, default: int) -> int:
 
 def load_settings(environ: dict[str, str] | None = None, *, load_file: bool = False) -> Settings:
     if load_file:
-        load_dotenv(DEFAULT_DOTENV, override=True)
+        load_dotenv(DEFAULT_DOTENV, override=False)
     env = os.environ if environ is None else environ
     database_url = (env.get("DATABASE_URL") or "").strip()
     if not database_url:

@@ -14,6 +14,7 @@ export type DocumentItem = {
   source_url: string | null;
   tag_ids: string[];
   is_favorite: boolean;
+  summary: string | null;
 };
 
 export type TagItem = { id: string; name: string };
@@ -180,6 +181,28 @@ export function deleteDocument(id: string) {
 
 export function getDocument(id: string) {
   return api<DocumentItem>(`/api/documents/${id}`);
+}
+
+export function summarizeDocument(id: string) {
+  return api<DocumentItem>(`/api/documents/${id}/summarize`, { method: "POST" });
+}
+
+export function autoTagDocument(id: string) {
+  return api<DocumentItem>(`/api/documents/${id}/auto-tags`, { method: "POST" });
+}
+
+export type CompareResult = {
+  document_id_a: string;
+  document_id_b: string;
+  comparison: string;
+};
+
+export function compareDocuments(documentIdA: string, documentIdB: string) {
+  return api<CompareResult>("/api/compare", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document_id_a: documentIdA, document_id_b: documentIdB }),
+  });
 }
 
 export function getParsedMarkdown(id: string) {

@@ -142,4 +142,40 @@
 
 - 状态：已执行并验证（提出人确认 P0 完成）
 - 结果：本机已配置 DashScope，`GET /health` 为 `ai_configured=true`。提出人确认设计第 9 节总验收通过，V1/P0 收口。
-- 下一步：P0 实施计划结束。P1/P2 须先改设计文档再做。
+- 下一步：P0 实施计划结束。P1 见 `PRD-P1.md` 与下文 P1.1。
+
+## 步骤 P1.1-0 — 设计已确认
+
+- 状态：已执行并验证（提出人确认 11 条边界及 ChatGPT 两点澄清）
+- 结果：`search_knowledge` 内部调 `search.py`，不走 HTTP `/api/search`；`reason` 只决策、`run_tool` 才执行 Tool。P1.1 仅摘要+自动标签 Chain。
+- 下一步：P1.1-1～4 已落地，见下
+
+## 步骤 P1.1-1 — 摘要 Chain 与持久化
+
+- 状态：已执行并验证
+- 结果：`document.summary`（迁移 `20260824_0003`）；`POST /api/documents/{id}/summarize`；非 ready 400、无 Key 503。`tests/test_p1_summary_tags.py` 假 LLM。无 langgraph import。未改 chat/search。
+- 下一步：P1.1-2 已完成，见下
+
+## 步骤 P1.1-2 — 文档页展示与触发摘要
+
+- 状态：已执行并验证（浏览器阅读页可见「生成摘要」与已有摘要）
+- 结果：`ReaderView.vue` 展示并触发摘要。对话仍走 `/api/chat/stream`。
+- 下一步：P1.1-3 已完成，见下
+
+## 步骤 P1.1-3 — 自动标签 Chain
+
+- 状态：已执行并验证
+- 结果：`POST /api/documents/{id}/auto-tags`；只追加 `tag`/`document_tag`，不删已有标签。pytest 覆盖保留手打标签。
+- 下一步：P1.1-4 已完成，见下
+
+## 步骤 P1.1-4 — 文档页触发自动标签
+
+- 状态：已执行并验证（浏览器阅读页「自动标签」）
+- 结果：阅读页按钮走自动标签接口；手打标签不被清空。
+- 下一步：P1.1-5 已完成，见下
+
+## 步骤 P1.1-5 — 阶段收口
+
+- 状态：已执行并验证（提出人确认 P1.1 通过）
+- 结果：`architecture.md` 已记 P1.1 路径。未开始 P1.2（文档对比）与 P1.3（Agent）。
+- 下一步：须提出人明确后再开 P1.2

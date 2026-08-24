@@ -193,8 +193,105 @@
 
 ---
 
+# P1.1 — 智能摘要与自动标签
+
+**依据：** `PRD-P1.md`。P0 步骤 0–22 已结束。本阶段**禁止** LangGraph、文档对比、Agent、研究报告、知识图谱。
+
+**规则：** 一次只做一步；提出人确认后再下一步。不改 `/api/chat` 与 `/api/search` 契约。不重构 P0 切块与 embedding。
+
+---
+
+## 步骤 P1.1-0 — 设计已确认
+
+**指令：** 不写代码。确认 `PRD-P1.md`、`design-document.md` 编排裁决、`AGENTS.md` 与本文 P1.1 范围一致。
+
+**验证：** 提出人已确认 11 条边界。本步仅作计划锚点。
+
+---
+
+## 步骤 P1.1-1 — 摘要 Chain 与持久化
+
+**指令：** 新增 `server/app/p1/chains.py`：对指定已完成文档，用现有 chunk（无则解析稿）生成摘要（LangChain Chain + DashScope ChatOpenAI）。结果写入 `document.summary`。`POST /api/documents/{id}/summarize`。处理中/失败文档 400。未配 Key 503。不调用 LangGraph。不改 chat / search 路由。
+
+**验证：** pytest：假 LLM 下 ready 文档得到非空摘要并可再 GET 到；非 ready 为 400。`grep` 或测试保证本步文件无 `langgraph` import。
+
+---
+
+## 步骤 P1.1-2 — 文档页展示与触发摘要
+
+**指令：** 阅读页或文档详情提供「生成摘要」并展示已有摘要。走 P1.1-1 接口。不改默认对话为 Agent。
+
+**验证：** 浏览器：对一篇已完成文档点生成后可见摘要；对话页提问仍走 `/api/chat/stream`。
+
+---
+
+## 步骤 P1.1-3 — 自动标签 Chain
+
+**指令：** Chain 根据文档内容提出标签名；只创建尚不存在的 `tag`（或复用同名）并**追加** `document_tag`；不得删除用户已打标签。`POST /api/documents/{id}/auto-tags`。同样 400/503 规则。无 LangGraph。
+
+**验证：** pytest：已有标签 A 时自动打标后 A 仍在，并可能增加新标签。非 ready 400。
+
+---
+
+## 步骤 P1.1-4 — 文档页触发自动标签
+
+**指令：** 文档页提供「自动标签」；完成后列表标签更新。用户仍可手改/删除标签（P0 行为保留）。
+
+**验证：** 浏览器走通一次；手打标签不被清空。
+
+---
+
+## 步骤 P1.1-5 — 阶段收口
+
+**指令：** 更新 `memory-bank/architecture.md` 真实 P1.1 路径。`progress.md` 记录 P1.1 通过。不要开始 P1.2/P1.3。
+
+**验证：** 提出人确认后才开下一阶段。
+
+---
+
+# P1.2 — 文档对比
+
+**依据：** `PRD-P1.md`。P1.1 已结束。本阶段**禁止** LangGraph、Agent、研究报告、知识图谱。
+
+**规则：** 一次只做一步；提出人确认后再下一步。不改 `/api/chat` 与 `/api/search` 契约。不重构 P0 切块与 embedding。对比结果不落库。
+
+---
+
+## 步骤 P1.2-0 — 范围已确认
+
+**指令：** 不写代码。确认对比 = 两篇 `document_id` 的 LangChain Chain；`POST /api/compare`；两篇须同库且均为 ready。
+
+**验证：** 提出人已允许进入 P1.2。本步仅作计划锚点。
+
+---
+
+## 步骤 P1.2-1 — 对比 Chain 与 API
+
+**指令：** 在 `server/app/p1/chains.py` 增加对比 Chain（复用 `gather_document_text`）。`POST /api/compare`，body 为两篇文档 id。两篇须存在、ready、同一知识库、正文非空。缺 Key 503；两 id 相同或跨库 400。不持久化对比结果。不调用 LangGraph。不改 chat / search 路由。不做前端。
+
+**验证：** pytest：假 LLM 下两篇 ready 文档返回非空 comparison；非 ready / 跨库为 400。本步文件无 `langgraph` import。
+
+---
+
+## 步骤 P1.2-2 — 文档页触发对比
+
+**指令：** 前端提供选择两篇已完成文档并展示对比结果。走 P1.2-1 接口。不改默认对话为 Agent。
+
+**验证：** 浏览器走通一次；对话页仍走 `/api/chat/stream`。
+
+---
+
+## 步骤 P1.2-3 — 阶段收口
+
+**指令：** 更新 `memory-bank/architecture.md`。`progress.md` 记录 P1.2 通过。不要开始 P1.3。
+
+**验证：** 提出人确认后才开 P1.3。
+
+---
+
 ## 执行纪律
 
 - 每步结束后等待提出人确认，再开始下一步。  
 - 发现与设计不符：停止实现，先改设计文档并征得同意。  
-- 本计划含「验证」所述测试；步骤 20–22 允许以提出人手工验收为主，但 0–19 能自动化的必须自动化。
+- 本计划含「验证」所述测试；步骤 20–22 允许以提出人手工验收为主，但 0–19 能自动化的必须自动化。  
+- **P1：** 只做上文已列出且尚未验证的那一步。

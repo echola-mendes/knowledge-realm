@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import MarkdownIt from "markdown-it";
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import {
+  compareDocuments,
   createNote,
   createTag,
   deleteDocument,
@@ -19,6 +21,7 @@ import {
 } from "../api";
 import { selectedKbId } from "../kb";
 
+const md = new MarkdownIt();
 const docs = ref<DocumentItem[]>([]);
 const tags = ref<TagItem[]>([]);
 const error = ref("");
@@ -28,6 +31,9 @@ const newTag = ref("");
 const onlyFav = ref(false);
 const filterTag = ref("");
 const panel = ref<"" | "file" | "url" | "note">("");
+const picked = ref<string[]>([]);
+const comparing = ref(false);
+const comparisonHtml = ref("");
 let timer: number | undefined;
 
 async function refresh() {
@@ -37,6 +43,8 @@ async function refresh() {
     tagId: filterTag.value || undefined,
   });
   tags.value = await listTags();
+  const ids = new Set(docs.value.map((d) => d.id));
+  picked.value = picked.value.filter((id) => ids.has(id));
 }
 
 function busy(status: string) {
@@ -119,7 +127,42 @@ async function toggleFav(doc: DocumentItem) {
   await refresh();
 }
 
+function togglePick(doc: DocumentItem) {
+  if (doc.status !== "ready") return;
+  const i = picked.value.indexOf(doc.id);
+  if (i >= 0) {
+    picked.value = picked.value.filter((id) => id !== doc.id);
+    return;
+  }
+  if (picked.value.length >= 2) {
+    picked.value = [picked.value[1], doc.id];
+    return;
+  }
+  picked.value = [...picked.value, doc.id];
+}
+
+function pickName(id: string) {
+  return docs.value.find((d) => d.id === id)?.filename || id;
+}
+
+async function onCompare() {
+  if (picked.value.length !== 2 || comparing.value) return;
+  error.value = "";
+  comparisonHtml.value = "";
+  comparing.value = true;
+  try {
+    const result = await compareDocuments(picked.value[0], picked.value[1]);
+    comparisonHtml.value = md.render(result.comparison);
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    comparing.value = false;
+  }
+}
+
 watch([selectedKbId, onlyFav, filterTag], () => {
+  picked.value = [];
+  comparisonHtml.value = "";
   refresh().catch((e) => (error.value = String(e)));
 });
 </script>
@@ -175,12 +218,27 @@ watch([selectedKbId, onlyFav, filterTag], () => {
       </button>
       <input v-model="newTag" class="new-tag" placeholder="+ 新建标签" @keyup.enter="onCreateTag" />
       <label class="fav"><input v-model="onlyFav" type="checkbox" /> 只看收藏</label>
+      <button
+        class="btn btn-primary"
+        type="button"
+        :disabled="picked.length !== 2 || comparing"
+        @click="onCompare"
+      >
+        {{ comparing ? "对比中…" : picked.length === 2 ? "对比所选" : `对比（已选 ${picked.length}/2）` }}
+      </button>
     </div>
+
+    <section v-if="comparisonHtml" class="card compare">
+      <h2>对比结果</h2>
+      <p class="sub">{{ pickName(picked[0]) }} 与 {{ pickName(picked[1]) }}</p>
+      <article class="compare-body" v-html="comparisonHtml"></article>
+    </section>
 
     <div class="table-wrap card">
       <table>
         <thead>
           <tr>
+            <th>对比</th>
             <th>文件名</th>
             <th>类型</th>
             <th>状态</th>
@@ -192,6 +250,14 @@ watch([selectedKbId, onlyFav, filterTag], () => {
         </thead>
         <tbody>
           <tr v-for="doc in docs" :key="doc.id">
+            <td>
+              <input
+                type="checkbox"
+                :disabled="doc.status !== 'ready'"
+                :checked="picked.includes(doc.id)"
+                @change="togglePick(doc)"
+              />
+            </td>
             <td>
               <RouterLink :to="`/documents/${doc.id}`">{{ doc.filename }}</RouterLink>
             </td>
@@ -322,5 +388,20 @@ td {
   padding: 0.6rem 0.8rem;
   color: var(--muted);
   font-size: 0.85rem;
+}
+.compare {
+  padding: 1rem 1.1rem;
+  margin-bottom: 1rem;
+}
+.compare h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+}
+.compare-body {
+  margin-top: 0.6rem;
+  line-height: 1.65;
+}
+.compare-body :deep(p) {
+  margin: 0.4rem 0;
 }
 </style>
