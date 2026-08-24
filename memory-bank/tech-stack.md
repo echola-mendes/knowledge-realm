@@ -19,7 +19,7 @@
 | ORM / 迁移 | SQLAlchemy 2 + Alembic | 表演进可重复 | 纯手写 SQL |
 | 任务 | FastAPI BackgroundTasks | 设计允许进程内；个人单机 | Celery、Redis |
 | LLM / Embedding | Python 包 `openai`（仅作 HTTP 客户端）打 **DashScope 兼容模式** | 你不需要 OpenAI 账号；用阿里云 DashScope Key。协议碰巧和 OpenAI 一样 | 直连各家五花八门 SDK；Ollama |
-| 认证 | 无 | 单用户本机 | JWT |
+| 认证 | 无 | 单用户本机；占位表 `app_user` 一行 | JWT |
 | 部署 | 本机 `server/.venv` + npm；无 Docker | 设计明确 | conda 新建环境；K8s |
 | 测试 | pytest + httpx | 测 API 与隔离检索 | 强制 E2E |
 
@@ -70,7 +70,7 @@
 
 ## 认证与部署
 
-- 无登录；监听 `127.0.0.1`  
+- 无登录；仅有占位用户行；监听 `127.0.0.1`  
 - 不使用 Docker  
 
 ---

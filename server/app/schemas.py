@@ -119,6 +119,14 @@ class DocumentTagsPut(BaseModel):
     tag_ids: list[uuid.UUID]
 
 
+class UserOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    phone: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class KnowledgeBaseOut(BaseModel):
     id: uuid.UUID
     name: str

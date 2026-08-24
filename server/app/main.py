@@ -8,8 +8,10 @@ from app.kb import ensure_default_knowledge_base
 from app.routers.chat import router as chat_router
 from app.routers.documents import router as documents_router
 from app.routers.knowledge_bases import router as kb_router
+from app.routers.me import router as me_router
 from app.routers.search import router as search_router
 from app.routers.tags import router as tags_router
+from app.user import ensure_default_user
 
 
 def create_app(*, load_file: bool = True, ensure_default: bool = True) -> FastAPI:
@@ -21,11 +23,13 @@ def create_app(*, load_file: bool = True, ensure_default: bool = True) -> FastAP
             session = session_scope()
             try:
                 ensure_default_knowledge_base(session)
+                ensure_default_user(session)
             finally:
                 session.close()
         yield
 
     app = FastAPI(title="知域", lifespan=lifespan)
+    app.include_router(me_router)
     app.include_router(kb_router)
     app.include_router(documents_router)
     app.include_router(tags_router)

@@ -1,11 +1,29 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { RouterLink, RouterView } from "vue-router";
+import { getMe, type AppUser } from "./api";
 import Icon from "./components/Icon.vue";
-import { knowledgeBases, loadKnowledgeBases, selectKb, selectedKbId } from "./kb";
+import { knowledgeBases, loadKnowledgeBases, selectKb, selectedKb, selectedKbId } from "./kb";
+
+const me = ref<AppUser | null>(null);
+const initial = computed(() => (me.value?.name?.trim().charAt(0) || "?").toUpperCase());
+const kbFullName = computed(() => {
+  const kb = selectedKb.value;
+  if (!kb) return "";
+  return kb.is_default ? "默认" : kb.name;
+});
+const kbShortName = computed(() => {
+  const name = kbFullName.value;
+  return name.length > 3 ? `${name.slice(0, 3)}…` : name;
+});
 
 onMounted(() => {
   loadKnowledgeBases().catch(() => undefined);
+  getMe()
+    .then((row) => {
+      me.value = row;
+    })
+    .catch(() => undefined);
 });
 </script>
 
@@ -23,15 +41,22 @@ onMounted(() => {
         <RouterLink to="/chat"><Icon name="chat" />对话</RouterLink>
         <RouterLink to="/settings"><Icon name="gear" />设置</RouterLink>
       </nav>
-      <label class="kb-wrap">
-        <Icon name="db" />
-        <select class="kb-switch" :value="selectedKbId" @change="selectKb(($event.target as HTMLSelectElement).value)">
-          <option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
-            {{ kb.is_default ? "默认" : kb.name }}
-          </option>
-        </select>
-        <Icon name="chevron" />
-      </label>
+      <div class="top-tools">
+        <label class="kb-wrap" :title="kbFullName">
+          <Icon name="db" />
+          <span class="kb-short">{{ kbShortName }}</span>
+          <select class="kb-switch" :value="selectedKbId" @change="selectKb(($event.target as HTMLSelectElement).value)">
+            <option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
+              {{ kb.is_default ? "默认" : kb.name }}
+            </option>
+          </select>
+          <Icon name="chevron" />
+        </label>
+        <div v-if="me" class="who">
+          <span class="avatar" aria-hidden="true">{{ initial }}</span>
+          <span class="who-name">{{ me.name }}</span>
+        </div>
+      </div>
     </header>
     <RouterView />
     <footer class="footer-note">🔒 检索与问答时，文本片段会发往所配置的第三方 AI。</footer>

@@ -1,9 +1,8 @@
 # 知域
 
-个人本机知识库：导入文档、向量检索、RAG 问答。
+个人知识库：导入文档、向量检索、RAG 问答。
 
 代码仓库名：`knowledge_realm`  
-远程：https://gitee.com/echola/knowledge
 
 ## 技术栈
 

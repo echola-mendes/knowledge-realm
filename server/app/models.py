@@ -24,6 +24,18 @@ class Base(DeclarativeBase):
     pass
 
 
+class AppUser(Base):
+    __tablename__ = "app_user"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
+    phone: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class KnowledgeBase(Base):
     __tablename__ = "knowledge_base"
 

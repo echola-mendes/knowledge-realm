@@ -16,6 +16,7 @@
 | 解析 | 不上 MinerU。PDF = PyMuPDF 文本层；DOCX = python-docx；MD/TXT/笔记 = 直读；URL = 抓公开页正文 |
 | 检索 | 问答与搜索均为 **pgvector 余弦相似度**（方案 A）。全文检索与按时间/来源筛为方案 B，V1 不做 |
 | 知识库 | 可多个；启动时若不存在则创建名为 `默认知识库` 的记录。未传 `knowledge_base_id` 时只用默认库 |
+| 用户 | 占位一行 `app_user`（`name=echola`）。仍无登录。不给其它表加 `user_id`。顶栏最右侧显示名称与字母头像 |
 | 标签与收藏 | P0 必须实现 |
 | Word | 仅 `.docx` |
 | URL | 无需登录的公开页；失败则导入失败 |
@@ -124,6 +125,8 @@ LangChain 按标题切，过长再 **800 字符 / overlap 120**。表格尽量�
 
 ## 6. 数据模型（V1 表）
 
+**app_user：** id, name UNIQUE, phone UNIQUE 可空, timestamps。启动时空表插入 `name=echola`；已有行不改。  
+
 **knowledge_base：** id, name UNIQUE, is_default BOOL, timestamps  
 
 **document：** id, knowledge_base_id FK CASCADE, filename, ext, kind, source_url 可空, checksum, status, error_message, byte_size, timestamps。UNIQUE(knowledge_base_id, checksum) 对文件；笔记可无 checksum 或对正文哈希。  
@@ -145,6 +148,8 @@ LangChain 按标题切，过长再 **800 字符 / overlap 120**。表格尽量�
 ---
 
 ## 7. API（前缀 `/api`）
+
+当前用户：`GET /me`（`name=echola` 那一行；没有则 404）。无登录、无创建。  
 
 知识库：`GET/POST /knowledge-bases`，`GET/PUT/DELETE /knowledge-bases/{id}`  
 

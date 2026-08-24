@@ -41,6 +41,12 @@ export type Citation = {
 
 export type Conversation = { id: string; knowledge_base_id: string; title: string };
 
+export type AppUser = { id: string; name: string; phone: string | null };
+
+export function getMe() {
+  return api<AppUser>("/api/me");
+}
+
 export function messageFromErrorBody(text: string, fallback = "请求失败"): string {
   try {
     const body = JSON.parse(text) as { detail?: unknown };
