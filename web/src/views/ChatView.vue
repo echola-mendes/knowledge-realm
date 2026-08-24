@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { listMessages, messageFromErrorBody, type ChatMessage, type Citation } from "../api";
+import {
+  listConversations,
+  listMessages,
+  messageFromErrorBody,
+  type ChatMessage,
+  type Citation,
+  type Conversation,
+} from "../api";
+import Icon from "../components/Icon.vue";
 import { selectedKb, selectedKbId } from "../kb";
 
 const route = useRoute();
@@ -32,7 +40,23 @@ function rememberConversation(id: string) {
   if (id) query.c = id;
   router.replace({ path: "/chat", query });
 }
+const conversations = ref<Conversation[]>([]);
+const sidebarOpen = ref(true);
 const box = ref<HTMLElement | null>(null);
+
+async function refreshConversations() {
+  conversations.value = await listConversations(selectedKbId.value || undefined);
+}
+
+async function openConversation(id: string) {
+  if (streaming.value) return;
+  rememberConversation(id);
+  try {
+    await loadHistory();
+  } catch (e) {
+    error.value = String(e);
+  }
+}
 const CITE_LIMIT = 2;
 const citeOpen = ref<Record<string, boolean>>({});
 
@@ -115,6 +139,7 @@ async function ask() {
         scrollBottom();
       }
     }
+    await refreshConversations();
   } catch (e) {
     error.value = String(e);
   } finally {
@@ -141,6 +166,7 @@ onMounted(async () => {
     conversationId.value = chatMap()[selectedKbId.value] || "";
   }
   try {
+    await refreshConversations();
     await loadHistory();
   } catch (e) {
     error.value = String(e);
@@ -153,6 +179,7 @@ watch(selectedKbId, async (kb) => {
   conversationId.value = chatMap()[kb] || "";
   messages.value = [];
   try {
+    await refreshConversations();
     await loadHistory();
   } catch (e) {
     error.value = String(e);
@@ -168,6 +195,33 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
 
 <template>
   <main class="page chat-page">
+    <aside class="chat-side" :class="{ collapsed: !sidebarOpen }">
+      <button
+        class="fold"
+        type="button"
+        :class="{ open: sidebarOpen }"
+        :aria-expanded="sidebarOpen"
+        :title="sidebarOpen ? '折叠对话记录' : '展开对话记录'"
+        @click="sidebarOpen = !sidebarOpen"
+      >
+        <Icon :name="sidebarOpen ? 'chevron' : 'chat'" />
+      </button>
+      <div v-if="sidebarOpen" class="side-body">
+        <h2>对话记录</h2>
+        <button
+          v-for="c in conversations"
+          :key="c.id"
+          type="button"
+          class="side-item"
+          :class="{ on: c.id === conversationId }"
+          @click="openConversation(c.id)"
+        >
+          {{ c.title }}
+        </button>
+        <p v-if="!conversations.length" class="side-empty">暂无对话</p>
+      </div>
+    </aside>
+    <div class="chat-main">
     <div class="page-head">
       <div>
         <h1>对话</h1>
@@ -223,11 +277,101 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
         <button class="btn btn-primary" type="button" :disabled="streaming" @click="ask">发送</button>
       </div>
     </div>
+    </div>
   </main>
 </template>
 
 <style scoped>
 .chat-page {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0.9rem;
+  width: min(1280px, calc(100% - 1.5rem));
+  min-height: calc(100vh - 8rem);
+}
+.chat-side {
+  position: relative;
+  width: 15.5rem;
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.chat-side.collapsed {
+  width: auto;
+  align-self: center;
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+.fold {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin: 0;
+  transform: translate(50%, -50%);
+  border: none;
+  background: none;
+  color: #b0b8c0;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+.chat-side.collapsed .fold {
+  position: static;
+  transform: none;
+}
+.fold:hover {
+  color: #8b949e;
+}
+.fold :deep(.ico) {
+  width: 18px;
+  height: 18px;
+}
+.fold.open :deep(.ico) {
+  transform: rotate(90deg);
+}
+.side-body {
+  padding: 0.85rem 0.7rem 0.8rem;
+  overflow: auto;
+}
+.side-body h2 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+.side-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  border-top: 1px solid var(--line);
+  padding: 0.7rem 0.15rem;
+  cursor: pointer;
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-item.on {
+  color: var(--teal);
+  font-weight: 600;
+}
+.side-empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.chat-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: calc(100vh - 8rem);

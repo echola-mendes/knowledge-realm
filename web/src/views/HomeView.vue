@@ -2,11 +2,9 @@
 import { computed, onMounted, ref } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import {
-  listConversations,
   listDocuments,
   listKnowledgeBases,
   listTags,
-  type Conversation,
   type DocumentItem,
   type TagItem,
 } from "../api";
@@ -18,7 +16,6 @@ const kbCount = ref(0);
 const docCount = ref(0);
 const tagCount = ref(0);
 const recentDocs = ref<DocumentItem[]>([]);
-const recentChats = ref<Conversation[]>([]);
 const tags = ref<TagItem[]>([]);
 
 const kbLabel = computed(() => (selectedKb.value?.is_default ? "默认" : selectedKb.value?.name || "默认"));
@@ -38,7 +35,6 @@ onMounted(async () => {
     docCount.value = docs.length;
     recentDocs.value = docs.slice(0, 4);
   }
-  recentChats.value = (await listConversations(kbId || undefined)).slice(0, 4);
 });
 
 function goChat() {
@@ -78,7 +74,7 @@ function goChat() {
       </div>
     </section>
 
-    <section class="grid-2 lists">
+    <section class="lists">
       <div class="card list-card">
         <header>
           <h2>最近文档</h2>
@@ -90,21 +86,6 @@ function goChat() {
           <span class="kind">{{ d.kind }}</span>
         </RouterLink>
         <p v-if="!recentDocs.length" class="empty">暂无文档</p>
-      </div>
-      <div class="card list-card">
-        <header>
-          <h2>最近对话</h2>
-          <RouterLink to="/chat">查看全部 →</RouterLink>
-        </header>
-        <RouterLink
-          v-for="c in recentChats"
-          :key="c.id"
-          class="row"
-          :to="{ path: '/chat', query: { c: c.id } }"
-        >
-          <span class="name">{{ c.title }}</span>
-        </RouterLink>
-        <p v-if="!recentChats.length" class="empty">暂无对话</p>
       </div>
     </section>
   </main>

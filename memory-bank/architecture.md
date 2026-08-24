@@ -16,7 +16,7 @@
 | `server/app/kb.py` | 默认知识库 |
 | `server/app/routers/knowledge_bases.py` | 知识库 HTTP |
 | `server/app/routers/documents.py` | 上传、笔记、URL、列表、详情、`parsed.md`、删除、打标签、收藏、`/index`、`/reindex` |
-| `web/src/` | 库切换、文档导入/标签/收藏、搜索、对话流式、阅读定位、设置密钥状态、隐私说明 |
+| `web/src/` | 库切换、文档导入/标签/收藏、搜索、对话流式（左侧可折叠会话列表）、阅读定位、设置密钥状态、隐私说明 |
 | `web/src/styles.css` | 全局设计 token 与顶栏/页面自适应容器（不锁 1440×900） |
 | `server/app/routers/tags.py` | 标签创建/列表/删除 |
 | `server/app/search.py` | 余弦 TopK；只查 `ready`；低于 0.30 空列表；无第二套向量表 |
