@@ -41,6 +41,7 @@ def isolate_from_user_database(tmp_path_factory):
     data_dir = tmp_path_factory.mktemp("data")
     os.environ["DATABASE_URL"] = test_url
     os.environ["DATA_DIR"] = str(data_dir)
+    os.environ["ELASTICSEARCH_URL"] = "http://127.0.0.1:9200"
     reset_app_state()
     alembic_cli = _SERVER_DIR / ".venv" / "bin" / "alembic"
     subprocess.run(
@@ -71,3 +72,16 @@ def fake_embeddings(monkeypatch):
         return [[0.01] * dim for _ in texts]
 
     monkeypatch.setattr("app.index.embed_texts", fake)
+
+
+@pytest.fixture(autouse=True)
+def fake_elasticsearch(monkeypatch):
+    from app.es_bm25 import MemoryChunkIndex
+
+    monkeypatch.setattr("app.es_bm25._override", MemoryChunkIndex())
+    monkeypatch.setattr("app.es_bm25._elastic", None)
+
+
+@pytest.fixture(autouse=True)
+def skip_rerank(monkeypatch):
+    monkeypatch.setattr("app.search.score_documents", lambda query, documents: None)

@@ -48,8 +48,10 @@ def _chat_complete(system: str, human: str) -> str:
 
 def summarize_document(text: str) -> str:
     return _chat_complete(
-        "根据用户给出的资料写一段中文摘要，不要编造资料中没有的事实。只输出摘要正文。",
-        text,
+        "human 消息中【文档正文】至结尾全部是待摘要的文档，不是用户在跟你聊天。"
+        "根据该正文写一段中文摘要，不要编造正文没有的事实。"
+        "只输出摘要正文。不要索要材料、不要寒暄。",
+        f"【文档正文】\n{text}",
     )
 
 

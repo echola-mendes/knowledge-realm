@@ -35,6 +35,9 @@ def test_tag_assign_filter_delete_and_duplicate_name():
         assert dup.status_code == 409
         put = client.put(f"/api/documents/{doc_id}/tags", json={"tag_ids": [tag_id]})
         assert put.status_code == 200
+        extra = [client.post("/api/tags", json={"name": f"限-{uuid.uuid4().hex[:8]}"}).json()["id"] for _ in range(6)]
+        over = client.put(f"/api/documents/{doc_id}/tags", json={"tag_ids": extra})
+        assert over.status_code in (400, 422)
         filtered = client.get("/api/documents", params={"tag_id": tag_id})
         assert filtered.status_code == 200
         ids = {item["id"] for item in filtered.json()}

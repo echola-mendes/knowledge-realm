@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import MarkdownIt from "markdown-it";
-import { nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import {
   autoTagDocument,
+  createTag,
   extractDocumentGraph,
   getDocument,
   getKnowledgeGraph,
   getParsedMarkdown,
   listRelatedDocuments,
   listTags,
+  setDocumentTags,
   statusLabel,
   summarizeDocument,
   type DocumentItem,
@@ -37,6 +39,14 @@ const graph = ref<KnowledgeGraph>({ entities: [], links: [] });
 const related = ref<RelatedDocument[]>([]);
 const graphError = ref("");
 const relatedError = ref("");
+const tagPickOpen = ref(false);
+const newTag = ref("");
+const MAX_DOC_TAGS = 5;
+const unusedTags = computed(() => {
+  if (!doc.value) return [];
+  const used = new Set(doc.value.tag_ids);
+  return tags.value.filter((t) => !used.has(t.id));
+});
 
 const pageHint = () => {
   const m = /^#page-(\d+)/.exec(route.hash);
@@ -91,8 +101,64 @@ async function load() {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  load();
+  document.addEventListener("click", closeTagPick);
+});
+onUnmounted(() => {
+  document.removeEventListener("click", closeTagPick);
+});
 watch(() => [route.params.id, route.hash], load);
+
+function closeTagPick() {
+  tagPickOpen.value = false;
+}
+
+async function saveTags(ids: string[]) {
+  if (!doc.value) return;
+  error.value = "";
+  try {
+    doc.value = await setDocumentTags(doc.value.id, ids);
+  } catch (e) {
+    error.value = String(e);
+  }
+}
+
+async function addTag(id: string) {
+  if (!doc.value || doc.value.tag_ids.includes(id)) return;
+  if (doc.value.tag_ids.length >= MAX_DOC_TAGS) {
+    error.value = "一篇文档最多5个标签";
+    return;
+  }
+  await saveTags([...doc.value.tag_ids, id]);
+  tagPickOpen.value = false;
+}
+
+async function removeTag(id: string) {
+  if (!doc.value) return;
+  await saveTags(doc.value.tag_ids.filter((item) => item !== id));
+}
+
+async function createAndAttach() {
+  const name = newTag.value.trim();
+  if (!name || !doc.value) return;
+  if (doc.value.tag_ids.length >= MAX_DOC_TAGS) {
+    error.value = "一篇文档最多5个标签";
+    return;
+  }
+  error.value = "";
+  try {
+    const created = await createTag(name);
+    tags.value = await listTags();
+    newTag.value = "";
+    if (!doc.value.tag_ids.includes(created.id)) {
+      await saveTags([...doc.value.tag_ids, created.id]);
+    }
+    tagPickOpen.value = false;
+  } catch (e) {
+    error.value = String(e);
+  }
+}
 
 async function runSummarize() {
   if (!doc.value || busy.value) return;
@@ -147,10 +213,45 @@ async function runExtract() {
     <section v-if="doc" class="card meta">
       <div class="chips">
         <span>{{ doc.kind }}</span>
-        <span v-for="id in doc.tag_ids" :key="id">{{ tagName(id) }}</span>
         <span class="right">{{ statusLabel(doc.status) }}</span>
       </div>
       <h1>{{ doc.filename }}</h1>
+      <div class="tag-edit" @click.stop>
+        <span v-for="id in doc.tag_ids" :key="id" class="tag-chip">
+          {{ tagName(id) }}
+          <button class="tag-x" type="button" aria-label="移除标签" @click="removeTag(id)">×</button>
+        </span>
+        <span v-if="!doc.tag_ids.length" class="empty">暂无标签</span>
+        <div class="tag-more">
+          <button
+            class="btn"
+            type="button"
+            :disabled="doc.tag_ids.length >= MAX_DOC_TAGS || !!busy"
+            @click="tagPickOpen = !tagPickOpen"
+          >
+            + 标签
+          </button>
+          <div v-if="tagPickOpen" class="tag-pop">
+            <p v-if="!unusedTags.length" class="empty">没有更多已有标签</p>
+            <button
+              v-for="t in unusedTags"
+              :key="t.id"
+              class="tag-pop-item"
+              type="button"
+              @click="addTag(t.id)"
+            >
+              {{ t.name }}
+            </button>
+            <input
+              v-model="newTag"
+              class="new-tag"
+              placeholder="+ 新建标签"
+              :disabled="doc.tag_ids.length >= MAX_DOC_TAGS"
+              @keyup.enter="createAndAttach"
+            />
+          </div>
+        </div>
+      </div>
       <div class="p1-actions">
         <button class="btn" type="button" :disabled="doc.status !== 'ready' || !!busy" @click="runSummarize">
           {{ busy === "summary" ? "摘要生成中…" : "生成摘要" }}
@@ -280,6 +381,69 @@ async function runExtract() {
   margin-left: auto;
   background: var(--teal-soft);
   color: var(--teal);
+}
+.tag-edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  background: #eef1f4;
+  border-radius: 6px;
+  padding: 0.1rem 0.4rem 0.1rem 0.45rem;
+  font-size: 0.78rem;
+  color: #556;
+}
+.tag-x {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: #889;
+  padding: 0 0.1rem;
+  line-height: 1;
+}
+.tag-more {
+  position: relative;
+}
+.tag-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 11rem;
+  max-height: 16rem;
+  overflow: auto;
+  padding: 0.4rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.tag-pop-item {
+  border: none;
+  background: transparent;
+  text-align: left;
+  border-radius: 8px;
+  padding: 0.35rem 0.55rem;
+  cursor: pointer;
+}
+.tag-pop-item:hover {
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+.new-tag {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+  background: transparent;
 }
 .body {
   padding: 1.3rem 1.4rem;

@@ -117,7 +117,7 @@ class MessageOut(BaseModel):
 
 
 class DocumentTagsPut(BaseModel):
-    tag_ids: list[uuid.UUID]
+    tag_ids: list[uuid.UUID] = Field(max_length=5)
 
 
 class CompareRequest(BaseModel):

@@ -23,6 +23,7 @@ def test_settings_without_llm_key():
     assert s.ai_configured is False
     assert s.host == "127.0.0.1"
     assert s.embedding_dim == 1024
+    assert s.relevance_min_score == 0.5
 
 
 def test_health_without_llm_key(monkeypatch):

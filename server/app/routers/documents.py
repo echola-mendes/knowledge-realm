@@ -26,6 +26,7 @@ from app.schemas import (
 )
 from app.search import search_chunks
 from app import index as index_mod
+from app.es_bm25 import EsNotConfiguredError, delete_document_chunks
 from app.storage import original_path, parsed_dir, remove_document_files, write_original
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -204,6 +205,8 @@ def set_document_tags(
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
     unique_ids = list(dict.fromkeys(body.tag_ids))
+    if len(unique_ids) > 5:
+        raise HTTPException(status_code=400, detail="一篇文档最多5个标签")
     for tag_id in unique_ids:
         if session.get(Tag, tag_id) is None:
             raise HTTPException(status_code=404, detail="标签不存在")
@@ -314,6 +317,8 @@ def auto_tags(document_id: uuid.UUID, session: Session = Depends(get_db)):
             session.add(tag)
             session.flush()
         if tag.id not in existing_ids:
+            if len(existing_ids) >= 5:
+                break
             session.add(DocumentTag(document_id=document_id, tag_id=tag.id))
             existing_ids.add(tag.id)
     session.commit()
@@ -400,6 +405,10 @@ def delete_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
     remove_document_files(doc)
+    try:
+        delete_document_chunks(document_id)
+    except EsNotConfiguredError:
+        pass
     session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
     session.execute(delete(Favorite).where(Favorite.document_id == document_id))
     session.delete(doc)

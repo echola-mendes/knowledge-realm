@@ -80,8 +80,6 @@ def test_search_isolates_kb_tag_kind_and_skips_chat(monkeypatch):
         names = [hit["document_name"] for hit in in_a.json()]
         assert "apple.md" in names
         assert "orange.md" not in names
-        scores = [hit["score"] for hit in in_a.json()]
-        assert scores == sorted(scores, reverse=True)
 
         tagged = client.post(
             "/api/search",

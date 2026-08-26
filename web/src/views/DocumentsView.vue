@@ -1,18 +1,16 @@
 <script setup lang="ts">
 import MarkdownIt from "markdown-it";
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import {
   compareDocuments,
   createNote,
-  createTag,
   deleteDocument,
   favoriteDocument,
   importUrl,
   listDocuments,
   listTags,
   reindexDocument,
-  setDocumentTags,
   statusLabel,
   unfavoriteDocument,
   uploadFile,
@@ -27,13 +25,19 @@ const tags = ref<TagItem[]>([]);
 const error = ref("");
 const note = ref("");
 const url = ref("");
-const newTag = ref("");
 const onlyFav = ref(false);
 const filterTag = ref("");
+const tagMenuOpen = ref(false);
+const TAG_VISIBLE = 3;
+const visibleTags = computed(() => tags.value.slice(0, TAG_VISIBLE));
+const overflowTags = computed(() => tags.value.slice(TAG_VISIBLE));
+const overflowSelected = computed(() => overflowTags.value.some((t) => t.id === filterTag.value));
 const panel = ref<"" | "file" | "url" | "note">("");
 const picked = ref<string[]>([]);
+const pickMode = ref(false);
 const comparing = ref(false);
 const comparisonHtml = ref("");
+const canCompare = computed(() => docs.value.length >= 2);
 let timer: number | undefined;
 
 async function refresh() {
@@ -45,6 +49,11 @@ async function refresh() {
   tags.value = await listTags();
   const ids = new Set(docs.value.map((d) => d.id));
   picked.value = picked.value.filter((id) => ids.has(id));
+  if (docs.value.length < 2) {
+    pickMode.value = false;
+    picked.value = [];
+    comparisonHtml.value = "";
+  }
 }
 
 function busy(status: string) {
@@ -96,8 +105,18 @@ async function onUrl() {
   }
 }
 
+function closeTagMenu() {
+  tagMenuOpen.value = false;
+}
+
+function pickOverflowTag(id: string) {
+  filterTag.value = id;
+  tagMenuOpen.value = false;
+}
+
 onMounted(() => {
   refresh().catch((e) => (error.value = String(e)));
+  document.addEventListener("click", closeTagMenu);
   timer = window.setInterval(() => {
     if (docs.value.some((d) => busy(d.status))) {
       refresh().catch(() => undefined);
@@ -105,20 +124,14 @@ onMounted(() => {
   }, 2000);
 });
 onUnmounted(() => {
+  document.removeEventListener("click", closeTagMenu);
   if (timer) window.clearInterval(timer);
 });
 
-async function onCreateTag() {
-  if (!newTag.value.trim()) return;
-  await createTag(newTag.value.trim());
-  newTag.value = "";
-  await refresh();
-}
-
-function toggleTag(doc: DocumentItem, tagId: string, ev: Event) {
-  const on = (ev.target as HTMLInputElement).checked;
-  const next = on ? [...doc.tag_ids, tagId] : doc.tag_ids.filter((id) => id !== tagId);
-  setDocumentTags(doc.id, next).then(refresh);
+function docTagNames(doc: DocumentItem) {
+  return doc.tag_ids
+    .map((id) => tags.value.find((t) => t.id === id)?.name)
+    .filter((name): name is string => Boolean(name));
 }
 
 async function toggleFav(doc: DocumentItem) {
@@ -145,6 +158,19 @@ function pickName(id: string) {
   return docs.value.find((d) => d.id === id)?.filename || id;
 }
 
+function clickCompare() {
+  if (!pickMode.value) {
+    pickMode.value = true;
+    return;
+  }
+  if (picked.value.length === 0) {
+    pickMode.value = false;
+    comparisonHtml.value = "";
+    return;
+  }
+  onCompare();
+}
+
 async function onCompare() {
   if (picked.value.length !== 2 || comparing.value) return;
   error.value = "";
@@ -162,6 +188,7 @@ async function onCompare() {
 
 watch([selectedKbId, onlyFav, filterTag], () => {
   picked.value = [];
+  pickMode.value = false;
   comparisonHtml.value = "";
   refresh().catch((e) => (error.value = String(e)));
 });
@@ -205,27 +232,55 @@ watch([selectedKbId, onlyFav, filterTag], () => {
     </section>
 
     <div class="filters">
-      <button class="pill" :class="{ on: !filterTag }" type="button" @click="filterTag = ''">全部</button>
-      <button
-        v-for="t in tags"
-        :key="t.id"
-        class="pill"
-        :class="{ on: filterTag === t.id }"
-        type="button"
-        @click="filterTag = t.id"
-      >
-        {{ t.name }}
-      </button>
-      <input v-model="newTag" class="new-tag" placeholder="+ 新建标签" @keyup.enter="onCreateTag" />
-      <label class="fav"><input v-model="onlyFav" type="checkbox" /> 只看收藏</label>
-      <button
-        class="btn btn-primary"
-        type="button"
-        :disabled="picked.length !== 2 || comparing"
-        @click="onCompare"
-      >
-        {{ comparing ? "对比中…" : picked.length === 2 ? "对比所选" : `对比（已选 ${picked.length}/2）` }}
-      </button>
+      <div class="tag-row">
+        <button class="pill" :class="{ on: !filterTag }" type="button" @click="filterTag = ''">全部</button>
+        <button
+          v-for="t in visibleTags"
+          :key="t.id"
+          class="pill"
+          :class="{ on: filterTag === t.id }"
+          type="button"
+          @click="filterTag = t.id"
+        >
+          {{ t.name }}
+        </button>
+        <div v-if="overflowTags.length" class="tag-more">
+          <button
+            class="pill"
+            :class="{ on: overflowSelected }"
+            type="button"
+            aria-label="更多标签"
+            :aria-expanded="tagMenuOpen"
+            @click.stop="tagMenuOpen = !tagMenuOpen"
+          >
+            …
+          </button>
+          <div v-if="tagMenuOpen" class="tag-pop" @click.stop>
+            <button
+              v-for="t in overflowTags"
+              :key="t.id"
+              class="tag-pop-item"
+              :class="{ on: filterTag === t.id }"
+              type="button"
+              @click="pickOverflowTag(t.id)"
+            >
+              {{ t.name }}
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="filter-right">
+        <label class="fav"><input v-model="onlyFav" type="checkbox" /> 只看收藏</label>
+        <button
+          v-if="canCompare"
+          class="btn btn-primary"
+          type="button"
+          :disabled="comparing || (pickMode && picked.length === 1)"
+          @click="clickCompare"
+        >
+          {{ comparing ? "对比中…" : pickMode && picked.length === 2 ? "开始对比" : "对比" }}
+        </button>
+      </div>
     </div>
 
     <section v-if="comparisonHtml" class="card compare">
@@ -238,7 +293,10 @@ watch([selectedKbId, onlyFav, filterTag], () => {
       <table>
         <thead>
           <tr>
-            <th>对比</th>
+            <th v-if="pickMode" class="pick-h">
+              对比
+              <span class="pick-count">已选 {{ picked.length }}/2</span>
+            </th>
             <th>文件名</th>
             <th>类型</th>
             <th>状态</th>
@@ -250,7 +308,7 @@ watch([selectedKbId, onlyFav, filterTag], () => {
         </thead>
         <tbody>
           <tr v-for="doc in docs" :key="doc.id">
-            <td>
+            <td v-if="pickMode">
               <input
                 type="checkbox"
                 :disabled="doc.status !== 'ready'"
@@ -266,15 +324,9 @@ watch([selectedKbId, onlyFav, filterTag], () => {
               <span class="st" :class="statusClass(doc.status)">{{ statusLabel(doc.status) }}</span>
             </td>
             <td class="err">{{ doc.error_message || "" }}</td>
-            <td>
-              <label v-for="t in tags" :key="t.id" class="tag-ck">
-                <input
-                  type="checkbox"
-                  :checked="doc.tag_ids.includes(t.id)"
-                  @change="toggleTag(doc, t.id, $event)"
-                />
-                {{ t.name }}
-              </label>
+            <td class="tags-cell">
+              <span v-for="name in docTagNames(doc)" :key="name" class="tag-chip">{{ name }}</span>
+              <span v-if="!doc.tag_ids.length" class="muted">—</span>
             </td>
             <td>
               <button class="btn-link" type="button" @click="toggleFav(doc)">
@@ -330,18 +382,55 @@ watch([selectedKbId, onlyFav, filterTag], () => {
 .filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.45rem;
+  gap: 0.45rem 0.8rem;
   align-items: center;
   margin-bottom: 1rem;
 }
-.new-tag {
-  border: 1px dashed var(--line);
-  border-radius: 999px;
-  padding: 0.28rem 0.7rem;
+.tag-row,
+.filter-right {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+.filter-right {
+  margin-left: auto;
+}
+.tag-more {
+  position: relative;
+}
+.tag-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 9rem;
+  max-height: 16rem;
+  overflow: auto;
+  padding: 0.35rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.tag-pop-item {
+  border: none;
   background: transparent;
+  text-align: left;
+  border-radius: 8px;
+  padding: 0.35rem 0.55rem;
+  cursor: pointer;
+  color: var(--text);
+}
+.tag-pop-item:hover,
+.tag-pop-item.on {
+  background: var(--teal-soft);
+  color: var(--teal);
 }
 .fav {
-  margin-left: auto;
   color: var(--muted);
   font-size: 0.9rem;
 }
@@ -350,7 +439,8 @@ watch([selectedKbId, onlyFav, filterTag], () => {
 }
 table {
   border-collapse: collapse;
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
 }
 th,
 td {
@@ -358,6 +448,35 @@ td {
   text-align: left;
   border-bottom: 1px solid var(--line);
   font-size: 0.92rem;
+  white-space: nowrap;
+  word-break: keep-all;
+  vertical-align: middle;
+}
+.pick-h {
+  text-align: center;
+  white-space: nowrap;
+}
+.pick-count {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+.tags-cell {
+  white-space: nowrap;
+}
+.tag-chip {
+  display: inline-flex;
+  margin-right: 0.35rem;
+  background: #eef1f4;
+  border-radius: 6px;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.78rem;
+  color: #556;
+}
+.muted {
+  color: var(--muted);
 }
 .kind {
   background: #eef1f4;
@@ -373,11 +492,6 @@ td {
 }
 .st.busy {
   color: var(--warn);
-}
-.tag-ck {
-  margin-right: 0.5rem;
-  font-size: 0.8rem;
-  color: #556;
 }
 .ops {
   display: flex;

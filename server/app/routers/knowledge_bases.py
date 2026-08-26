@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db import session_scope
+from app.es_bm25 import EsNotConfiguredError, delete_knowledge_base_chunks
 from app.models import Document, KnowledgeBase
 from app.schemas import KnowledgeBaseCreate, KnowledgeBaseOut, KnowledgeBaseUpdate
 from app.storage import remove_knowledge_base_files
@@ -72,6 +73,10 @@ def delete_kb(kb_id: uuid.UUID, session: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="知识库不存在")
     docs = list(session.scalars(select(Document).where(Document.knowledge_base_id == kb_id)))
     remove_knowledge_base_files(docs)
+    try:
+        delete_knowledge_base_chunks(kb_id)
+    except EsNotConfiguredError:
+        pass
     session.delete(kb)
     session.commit()
     return None

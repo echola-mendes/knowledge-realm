@@ -241,15 +241,15 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
         <p class="sub">与「{{ kbName() }}」知识库对话，回答会标注引用来源</p>
       </div>
       <div class="head-actions">
-        <div class="mode-switch" role="group" aria-label="提问模式">
+        <div class="mode-switch" role="group" aria-label="Question mode">
           <button type="button" :class="{ on: mode === 'chat' }" :disabled="streaming" @click="mode = 'chat'">
-            对话
+            Chat
           </button>
           <button type="button" :class="{ on: mode === 'agent' }" :disabled="streaming" @click="mode = 'agent'">
             Agent
           </button>
           <button type="button" :class="{ on: mode === 'report' }" :disabled="streaming" @click="mode = 'report'">
-            报告
+            Report
           </button>
         </div>
         <button class="btn" type="button" @click="newChat">+ 新对话</button>

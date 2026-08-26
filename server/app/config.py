@@ -28,6 +28,11 @@ class Settings:
     embedding_model: str
     embedding_dim: int
     data_dir: Path
+    elasticsearch_url: str
+    rerank_api_key: str
+    rerank_base_url: str
+    rerank_model: str
+    relevance_min_score: float
     host: str = HOST
     port: int = PORT
 
@@ -42,6 +47,13 @@ def _positive_int(name: str, raw: str | None, default: int) -> int:
     value = default if raw is None or raw.strip() == "" else int(raw)
     if value <= 0:
         raise ConfigError(f"{name} must be a positive integer")
+    return value
+
+
+def _min_score(name: str, raw: str | None, default: float) -> float:
+    value = default if raw is None or raw.strip() == "" else float(raw)
+    if value < 0:
+        raise ConfigError(f"{name} must be >= 0")
     return value
 
 
@@ -74,6 +86,15 @@ def load_settings(environ: dict[str, str] | None = None, *, load_file: bool = Fa
         embedding_model=(env.get("EMBEDDING_MODEL") or "text-embedding-v3").strip(),
         embedding_dim=_positive_int("EMBEDDING_DIM", env.get("EMBEDDING_DIM"), 1024),
         data_dir=data_dir,
+        elasticsearch_url=(env.get("ELASTICSEARCH_URL") or "").strip(),
+        rerank_api_key=(env.get("RERANK_API_KEY") or "").strip(),
+        rerank_base_url=(
+            env.get("RERANK_BASE_URL")
+            or env.get("LLM_BASE_URL")
+            or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        ).strip().rstrip("/"),
+        rerank_model=(env.get("RERANK_MODEL") or "qwen3-rerank").strip(),
+        relevance_min_score=_min_score("RELEVANCE_MIN_SCORE", env.get("RELEVANCE_MIN_SCORE"), 0.5),
         host=HOST,
         port=PORT,
     )

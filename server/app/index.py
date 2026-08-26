@@ -3,11 +3,12 @@ from __future__ import annotations
 import uuid
 from time import sleep
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.chunk import split_markdown
 from app.config import get_settings
 from app.db import session_scope
+from app.es_bm25 import EsNotConfiguredError, delete_document_chunks, upsert_chunks
 from app.models import Document, DocumentChunk
 from app.parse import DOCX_KIND, PDF_KIND, TEXT_KINDS, URL_KIND, parse_docx_document, parse_pdf_document, parse_text_document
 from app.url_import import process_url_document
@@ -121,6 +122,13 @@ def index_document(document_id: uuid.UUID) -> None:
             doc.error_message = format_embed_error(exc)
             session.commit()
             return
+        try:
+            delete_document_chunks(doc.id)
+        except EsNotConfiguredError as exc:
+            doc.status = STATUS_INDEX_FAILED
+            doc.error_message = str(exc)
+            session.commit()
+            return
         session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc.id))
         for i, (piece, vec) in enumerate(zip(pieces, vectors, strict=True)):
             session.add(
@@ -137,6 +145,16 @@ def index_document(document_id: uuid.UUID) -> None:
         doc.status = STATUS_READY
         doc.error_message = None
         session.commit()
+        rows = session.scalars(select(DocumentChunk).where(DocumentChunk.document_id == doc.id)).all()
+        try:
+            upsert_chunks(
+                [(c.id, c.content, doc.knowledge_base_id, doc.id, doc.kind) for c in rows]
+            )
+        except EsNotConfiguredError as exc:
+            doc.status = STATUS_INDEX_FAILED
+            doc.error_message = str(exc)
+            session.commit()
+            return
     finally:
         session.close()
 
@@ -147,6 +165,10 @@ def reindex_document(document_id: uuid.UUID) -> None:
         doc = session.get(Document, document_id)
         if doc is None:
             return
+        try:
+            delete_document_chunks(document_id)
+        except EsNotConfiguredError:
+            pass
         session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
         doc.status = "pending"
         doc.error_message = None

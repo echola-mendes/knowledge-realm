@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from app.config import get_settings, reset_settings
 from app.db import reset_engine, session_scope
+from app.es_bm25 import EsNotConfiguredError
 from app.kb import ensure_default_knowledge_base
 from app.routers.chat import router as chat_router
 from app.routers.documents import router as documents_router
@@ -37,6 +39,10 @@ def create_app(*, load_file: bool = True, ensure_default: bool = True) -> FastAP
     app.include_router(search_router)
     app.include_router(chat_router)
     app.include_router(p1_router)
+
+    @app.exception_handler(EsNotConfiguredError)
+    def _es_not_configured(_request, exc: EsNotConfiguredError):
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
 
     @app.get("/health")
     def health():
