@@ -559,6 +559,10 @@ AI 分析
 
 # 18. 需求优先级
 
+P0 基础知识库：pgvector 检索 + Chat RAG
+P1 Agent 能力：Chain（摘要/标签/对比）+ Graph（Agent/报告）
+P2 能力增强：RAG 增强 + Agent 增强
+
 ## P0——V1 必须实现
 
 ```text
@@ -597,15 +601,64 @@ Agent
 ## P2——后续版本
 
 ```text
+RAG 检索增强
+Web Search
+关键词全文检索与按时间/来源筛选（方案 B）
+```
+
+### RAG 检索增强
+- Hybrid Search
+- RRF 多路召回融合
+- Rerank 重排序
+- 相关性判断
+- 关键词全文检索
+- 按时间 / 来源筛选（搜索方案 B）
+
+### Agent 会话与记忆
+- Short-term Memory（Agent 接入现有 conversation / message）
+- Conversation Summary（`conversation.summary`；压缩本场更早历史）
+- LangGraph State 扩展（本轮副本，不重建）
+- LangGraph Checkpoint（图快照，不是记忆；与 Summary 分步）
+- Long-term Memory（独立 `user_memory`）
+
+### Agent 能力扩展
+- Web Search
+- Tool Routing（统一 `reason`：DIRECT / RAG / WEB）
+- 轻量 Task Planning / Query Decomposition（≤3 子任务，同一 reason，无第二张图）
+
+
+## P3
+
+```text
+多 Agent|Multi-Agent
 知识冲突检测
 知识缺口分析
 自动知识整理
 主动知识推荐
-Web Search
-多 Agent
 知识库自动更新
-关键词全文检索与按时间/来源筛选（搜索方案 B）
 ```
+
+### Evaluation & Observability
+- Retrieval / Rerank 效果评估
+- RAG Answer Quality 评估
+- Agent 执行效果评估
+- Trace / Execution Log
+- Token / Latency 监控
+（注释：它是给开发和面试看的：检索/重排准不准、回答好不好、Agent 跑得怎样、一次请求花了多少 token/时间、中间步骤日志。属于效果评估和可观测，用来量你已经做的能力，而不是再做一个产品模块。）
+
+### 知识智能化
+- 知识冲突检测
+- 知识缺口分析
+- 自动知识整理
+- 主动知识推荐
+- 知识质量判断
+
+### 知识库自动化
+- 知识库自动更新
+- 增量更新
+- 知识去重
+- 知识版本管理
+- Metadata 管理
 
 ---
 

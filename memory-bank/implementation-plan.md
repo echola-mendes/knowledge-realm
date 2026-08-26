@@ -427,9 +427,108 @@
 
 ---
 
+## P2 — RAG 与 Agent 增强
+
+**依据：** `PRD-P2.md`、`design-document.md` 第 4.3 / 4.7 / 第 6 节 P2 表。  
+**规则：** 一次只做一步；禁止在本文件粘贴程序代码。测试库仅 `echola_kb_test`。不放宽 `max_loops=3`。不引入 Redis / 第二套向量表。关键词路为 **Elasticsearch BM25**，不是 `pg_trgm`。
+
+注意：天气问句误引用的验收在 **P2-RAG-3**。P2-RAG-1 只上 Hybrid+RRF，短中文仍可能过线。  
+Agent：Checkpoint 与 Summary 分步（Agent-2 / Agent-3）；`reason` 为唯一路由。细则见设计文档第 4.7 节。
+
+---
+
+## 步骤 P2-RAG-1 — Hybrid：向量 + 关键词 + RRF
+
+**指令：** 在现有 `search_chunks` 内增加关键词召回路：**Elasticsearch BM25**（环境变量 `ELASTICSEARCH_URL`）。索引文档与 `document_chunk` 同步：索引写入时 upsert ES 文档（含 content、knowledge_base_id、document_id、kind、chunk_id）；删文档时删除对应 ES 文档。向量路保持现有 pgvector 余弦 TopK。两路各取 k（默认 5，仍受 1～20 限制），用 RRF（`1/(60+rank)`）融合后截断为 k。过滤条件（库、ready、tag、kind、document_id）两路语义相同。调用方（Chat、`POST /api/search`、`search_knowledge`、相近文档）不改签名。本步**不**改 0.30 阈值语义、不得做 Rerank。禁止 Agent 另写检索。禁止把 embedding 写入 ES 当主向量检索。测试可 mock ES；禁止用 `pg_trgm` 代替 BM25。
+
+**验证：** pytest mock ES：关键词能召回对应 chunk 并进入 RRF 结果；库隔离仍成立；`search.py` 仍无第二套向量 SQL、无 `pg_trgm`。提出人确认后再 P2-RAG-2。
+
+---
+
+## 步骤 P2-RAG-2 — Rerank
+
+**指令：** 在 RRF 结果上对最多 20 条候选重排。优先 DashScope 兼容 rerank（新环境变量，无密钥则回退 LLM 打分）。输出仍为 `SearchHit.score`。不改 Chat 拒答语义。不做时间筛选。
+
+**验证：** pytest mock rerank：顺序按假分数变化；无 Key 时走回退且不 500。
+
+---
+
+## 步骤 P2-RAG-3 — 相关性判断（误引用收口）
+
+**指令：** 在 rerank（若已上）或 RRF 之后，用融合/重排分数决定是否整表清空。**逐条**低于阈值的 hit 丢弃；若清空则返回 `[]`。阈值写入配置，默认值须经提出人确认。无命中：Chat 仍闲聊、无 citations；Agent 不强制 Web Search。
+
+**验证：** 假检索：「今天天气不错」类无关查询 citations 为空；「echola是谁」类相关查询仍有命中。真实库手工点对话页确认天气问句无 `笔记.md` 引用。
+
+---
+
+## 步骤 P2-RAG-4 — 时间筛选（来源用 kind）
+
+**指令：** `search_chunks` 增加可选 `created_after` / `created_before`（文档 `created_at`）。`POST /api/search` 与搜索页可传。来源继续用现有 `kind`，不新增枚举。不改 Chat 默认（不传时间则全库）。
+
+**验证：** pytest：窗外文档不出现；kind 过滤仍可用。
+
+---
+
+## 步骤 P2-Agent-1 — Agent 短期记忆
+
+**指令：** `AgentRequest` 增加可选 `conversation_id`。无则新建 `conversation`（与 Chat 同表）。将最近 N=6 条 `message` 写入 `AgentState.messages` 再跑图。`generate` 把历史交给现有 `llm.chat`。落库本轮 user/assistant。图结构保持 P1：`reason` → search | generate。不引入 Summary、Checkpoint、LTM、WEB、PLAN。不改 `/api/chat` 进图。
+
+**验证：** pytest：第二轮带同一 `conversation_id` 时假 LLM 收到上轮内容；无第二套会话表。
+
+---
+
+## 步骤 P2-Agent-2 — Checkpoint
+
+**指令：** `graph.compile` 使用 Postgres checkpointer（同一数据库）。`thread_id` 为 `conversation_id`。Checkpoint **只**保存图快照（这一次执行到哪、当前 `AgentState`），**不**替代 STM。每次新 user 请求：从 `message` 表重新灌最近 6 条；`loop_count` 从 0；本轮 citations/tool 结果按上限裁剪或清空，避免与上一轮快照叠两份聊天、避免只增不减。禁止 Redis。禁止在本步做 Conversation Summary。
+
+**验证：** pytest 或可重复脚本：同一 `thread_id` 可第二次 invoke；prompt 所用近期消息与 DB 中最近消息一致，而不是未重置的上一轮 `messages` 全量。重启后仍能对同一 `conversation_id` invoke。
+
+---
+
+## 步骤 P2-Agent-3 — Conversation Summary
+
+**指令：** 与 Checkpoint 分家：`conversation.summary` 可空，这是摘要权威存储。消息超过 N=6 时，对更早消息生成中文摘要并**写入该列**；Agent 上下文 = `conversation.summary` + 最近 6 条。State 可带已加载的 `summary` 字符串，但不得只把摘要写进 checkpointer。Chat 本步可不改。
+
+**验证：** pytest 假 LLM：超过 6 条时 prompt 含摘要且不含被压缩的原文全量；`conversation.summary` 非空。
+
+---
+
+## 步骤 P2-Agent-4 — Long-term Memory 表
+
+**指令：** 迁移 `user_memory`（id、kind、content、timestamps），无 `user_id`。本轮读到的内容可放入 State 的 `ltm_hits`；表才是权威。读写由 `reason` 决定后走内部函数或 Tool，禁止 Tool 擅自在未路由时读写。禁止写入 `document_chunk`。禁止第二套知识库向量表。
+
+**验证：** pytest：写入后新会话（不同 conversation_id）仍能读到；源码无把 LTM 当 chunk 检索。
+
+---
+
+## 步骤 P2-Agent-5 — web_search 与统一路由
+
+**指令：** `p1/tools.py` 增加 `web_search`（httpx，超时有上限；配置搜索端点；禁止 Playwright）。扩展现有 `reason` 为唯一路由：`DIRECT`（generate）/ `RAG`（`search_knowledge`）/ `WEB`（`web_search`）。`run_tool` 只执行 `reason` 指定的那一个。禁止检索空结果时强制 WEB。禁止本步增加 PLAN / 子任务列表。`max_loops` 仍为 3。
+
+**验证：** pytest mock httpx：reason 指定 WEB 时调用；空 citations 不自动 web；未指定时 `web_search` 不被调用。
+
+---
+
+## 步骤 P2-Agent-6 — 轻量 Planning
+
+**指令：** 仍一张图、仍同一 `reason`。复杂问句可先写入最多 3 条有序子任务（与 `max_loops` 对齐）；之后每一圈 `reason` 仍只选 DIRECT / RAG / WEB 执行当前子任务，最后 generate 汇总。禁止第四张子图、禁止动态 DAG、禁止 Multi-Agent、不提高 loop 上限。
+
+**验证：** pytest：拆出的子任务数 ≤ 3；图仍一张；无第二套 Graph 模块。
+
+---
+
+## 步骤 P2-7 — 阶段文档收口
+
+**指令：** 更新 `architecture.md`、`progress.md`。不要开始 P3（冲突/缺口/多 Agent/库自动更新）、不要 `search_graph` 可视化。
+
+**验证：** 提出人确认 P2 结束。
+
+---
+
 ## 执行纪律
 
 - 每步结束后等待提出人确认，再开始下一步。  
 - 发现与设计不符：停止实现，先改设计文档并征得同意。  
 - 本计划含「验证」所述测试；步骤 20–22 允许以提出人手工验收为主，但 0–19 能自动化的必须自动化。  
-- **P1：** 只做上文已列出且尚未验证的那一步。
+- **P1：** 已收口。  
+- **P2：** 只做上文已列出且尚未验证的那一步。P2-RAG-1～2 已确认。P2-RAG-3 代码已写，待提出人确认后再 P2-RAG-4。

@@ -287,3 +287,35 @@
 - 状态：已执行并验证（提出人回复 1 确认阶段结束）
 - 结果：`architecture.md` 已记 P1.4 路径与边界。P1.4 通过。未开始 `search_graph` Tool，未开始下一版本可视化。
 - 下一步：无。须先改计划再开新阶段
+
+## P2 文档收口（提出人选择只写文档）
+
+- 状态：已执行，待提出人确认后才允许 P2-RAG-1 改代码
+- 结果：`PRD-P2.md` 为范围；关键词路已改为 **Elasticsearch BM25**（非 `pg_trgm`）。`design-document.md` / `tech-stack.md` / `implementation-plan.md` P2-RAG-1 已同步。未改 `search.py`。
+- 下一步：提出人确认计划后执行 **P2-RAG-1**
+
+## P2 Agent 分层补写（文档，无代码）
+
+- 状态：已执行（vibe-coding 完善文档）
+- 结果：Checkpoint 与 Summary 分家；Checkpoint 定为图快照而非 `AgentState` 字段。STM/Summary/LTM 权威在表。`reason` 为唯一路由（Agent-5：DIRECT/RAG/WEB；Agent-6：≤3 子任务仍同一张图）。已改 `PRD-P2.md`、`design-document.md` 第 4.7 节、`implementation-plan.md` P2-Agent-1～6、`tech-stack.md`、`architecture.md`、`PRD.md`、`AGENTS.md`。未改代码。
+- 下一步：仍待提出人确认后执行 **P2-RAG-1**
+
+## 步骤 P2-RAG-1 — Hybrid：向量 + 关键词 + RRF
+
+- 状态：已执行并验证（提出人回复继续）
+- 结果：`search_chunks` 内 pgvector + Elasticsearch BM25 + RRF `1/(60+rank)`，两路各取 k 再截成 k。未配 ES 则 503。索引与删除同步 ES。0.30 未改。本机 ES 曾因磁盘水位导致集群 red。
+- 下一步：P2-RAG-2 已落地，见下
+
+## 步骤 P2-RAG-2 — Rerank
+
+- 状态：已执行并验证（提出人回复继续）
+- 结果：RRF 后最多 20 条重排；硅基 `Qwen/Qwen3-Reranker-0.6B`；无 Key 回退 LLM 打分。0.30 未改。
+- 下一步：P2-RAG-3 已落地，见下
+
+## 步骤 P2-RAG-3 — 相关性判断
+
+- 状态：已执行，待提出人确认阈值
+- 结果：Rerank 后逐条 `score >= RELEVANCE_MIN_SCORE`（默认 0.5）。低于门槛不进 Context、无 Citation；Chat 仍回答。pytest 58 passed。
+- 下一步：提出人确认后再 P2-RAG-4
+
+

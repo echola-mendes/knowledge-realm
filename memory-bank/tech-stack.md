@@ -43,7 +43,10 @@
 
 - FastAPI + Pydantic v2 + python-dotenv  
 - LangChain：切块器用 `RecursiveCharacterTextSplitter` / Markdown 标题切分。P0 问答：`ChatOpenAI` 单链。P1 Agent（P1.3 起）可用 LangGraph，检索必须走现有 `search.py` 封装的 Tool，禁止第二套向量查询。  
-- 检索：自写 SQL `ORDER BY embedding <=> :q LIMIT k`（cosine 距离；与 HNSW `vector_cosine_ops` 一致），再在应用层换算分数并做 0.30 阈值  
+- 检索：P0/P1 为 SQL `ORDER BY embedding <=> :q LIMIT k` + 应用层 0.30。P2 在同一 `search_chunks` 内：pgvector + ES BM25 + RRF + 最多 20 条 Rerank，再按 `RELEVANCE_MIN_SCORE` 逐条过滤  
+- P2 Checkpoint：LangGraph 官方 Postgres checkpointer，同一 `DATABASE_URL`，禁止 Redis。Checkpoint 存 `AgentState` 快照，不替代 `message` / `conversation.summary` / `user_memory`。新 user 轮次从 DB 灌 STM，不以 checkpoint 旧消息为聊天权威。  
+- P2 Agent 路由：`p1/graph.py` 的 `reason` 为唯一决策点。P2-Agent-5 起 `DIRECT` / `RAG` / `WEB`；P2-Agent-6 可写 ≤3 子任务但仍走同一 reason，无第二张图。  
+- P2 关键词：本机 Elasticsearch（BM25）。应用仍绑 127.0.0.1；ES 为本机进程或**仅用于 ES 的** Docker，不把整个知域容器化。禁止 Meilisearch、禁止用 ES 存 embedding 做主向量检索   
 - 对话与向量：安装 PyPI 上的包 **`openai`**。这是通用客户端，**不是**「必须注册 OpenAI」。  
   指向阿里云兼容地址即可，例如：  
   `LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`  
@@ -91,6 +94,9 @@
 | `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | **DashScope** Key 与兼容 Base URL，不是 OpenAI |
 | `EMBEDDING_API_KEY` / `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL` / `EMBEDDING_DIM` | 向量；Key/URL 可与 LLM 相同 |
 | `DATA_DIR` | 默认仓库 `data/` |
+| `ELASTICSEARCH_URL` | P2 BM25；例 `http://127.0.0.1:9200`。未配则 Hybrid 关键词路不可用（见计划，禁止假装已 Hybrid） |
+| `RERANK_API_KEY` / `RERANK_BASE_URL` / `RERANK_MODEL` | P2-RAG-2 重排。硅基：`https://api.siliconflow.cn/v1/rerank` + `Qwen/Qwen3-Reranker-0.6B`。无 Key 则 LLM 打分 |
+| `RELEVANCE_MIN_SCORE` | P2-RAG-3 逐条门槛，默认 0.5（Rerank 分；未重排时仍是余弦分）。须可调 |
 
 `.env` gitignore；提供无密钥的 `.env.example`。
 
@@ -98,7 +104,7 @@
 
 ## 明确拒绝
 
-MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、全文检索引擎、浏览器自动化抓登录页。
+MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、Meilisearch、浏览器自动化抓登录页。P2 关键词检索用 Elasticsearch BM25，不用 Postgres `pg_trgm` 充当 BM25。
 
 ### LangGraph 使用边界
 
@@ -108,5 +114,8 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、全文检�
 2. P0 的 `/api/chat` 和 `/api/chat/stream` 保持现有 LangChain Chain 实现，不迁移到 LangGraph。
 3. P1 Agent 必须复用 P0 已有 RAG / Search 能力，不得重新实现 pgvector 检索。
 4. LangGraph 可以通过 Tool 调用 P0 Search/RAG 能力。
-5. 不得为了引入 LangGraph 而重构 P0。
-6. P1 中简单的摘要、自动标签、文档对比等线性任务继续使用 LangChain Chain，不强制 Graph 化。
+5. 不得为了引入 LangGraph 而重构 P0。  
+6. P1 中简单的摘要、自动标签、文档对比等线性任务继续使用 LangChain Chain，不强制 Graph 化。  
+7. P2 检索增强必须改现有 `search.py` 的 `search_chunks`，供 Chat、搜索 HTTP、Agent Tool 共用。  
+8. P2 不得把 `/api/chat` 迁到 LangGraph；不得无命中强制 Web Search；不得用 `document_chunk` 冒充 LTM。  
+9. P2 不得把 Checkpoint 当成 STM/Summary；`reason` 统一路由，禁止各 Tool 自行决定是否调用。

@@ -2,12 +2,12 @@
 
 代码仓库名：`knowledge_realm`。V1/P0 已落地。约定目录见 `tech-stack.md`。
 
-**阶段：** P0、P1.1、P1.2、P1.3、**P1.4 已落地**。未开始 `search_graph` Tool、未做力导向/ vis.js / D3 可视化。
+**阶段：** P0、P1.1–P1.4 已落地。**P2-RAG-1～2 已确认路径。P2-RAG-3 代码已写（待提出人验证阈值）。** 未开始 `search_graph` Tool、未做力导向可视化。
 
 | 路径 | 职责 |
 |---|---|
 | `PRD.md` | 产品需求（P0 名单；P1 指向 `PRD-P1.md`） |
-| `PRD-P1.md` | P1 架构、Agent/RAG 边界、阶段 |
+| `PRD-P2.md` | P2 范围与边界（Hybrid；STM/Summary/LTM 与 Checkpoint 分层；reason 统一路由；P3 名单） |
 | `memory-bank/design-document.md` | 实现规格 |
 | `memory-bank/tech-stack.md` | 技术选型 |
 | `AGENTS.md` | Agent 约束 |
@@ -24,7 +24,9 @@
 | `web/src/` | 库切换（最右侧占位用户名与字母头像）、文档导入/标签/收藏、搜索、对话流式（默认 `/api/chat/stream`；可切 Agent / 报告走 `/api/agent/stream`）、阅读定位、阅读页生成摘要/自动标签/抽取图谱与相近文档列表、文档页勾选对比、设置密钥状态、隐私说明 |
 | `web/src/styles.css` | 全局设计 token 与顶栏/页面自适应容器（不锁 1440×900） |
 | `server/app/routers/tags.py` | 标签创建/列表/删除 |
-| `server/app/search.py` | 余弦 TopK；只查 `ready`；低于 0.30 空列表；无第二套向量表 |
+| `server/app/search.py` | Hybrid + RRF + Rerank；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤 |
+| `server/app/rerank.py` | DashScope 兼容 `/reranks`；无 Key 则 LLM 打分；都没有则保持 RRF 顺序 |
+| `server/app/es_bm25.py` | BM25 索引与检索；chunk 与 PG 同步 upsert/删除；测试可替换为内存实现 |
 | `server/app/routers/search.py` | `POST /api/search` |
 | `server/app/llm.py` | LangChain 单链 Chat；无命中不调用 |
 | `server/app/chat.py` | 问答：检索只用当前句；最近 6 条历史给 LLM |
@@ -56,7 +58,7 @@
 - `/api/chat`、`/api/chat/stream` 仍为 P0 LangChain 单链，未进图。
 - Agent / 研究报告：同一张 `p1/graph.py`；`POST /api/agent` 与 `/api/agent/stream`；Tool 仅 `search_knowledge` → 内部 `search.py`（不是 HTTP `/api/search`）。
 - 摘要 / 自动标签 / 文档对比 / 图谱抽取：`p1/chains.py`，无 LangGraph。
-- 未做：Checkpoint、HITL、Subgraph、Multi-Agent、`search_graph` Tool、力导向可视化。
+- 未做：Checkpoint、HITL、Subgraph、Multi-Agent、`search_graph` Tool、力导向可视化。P2 计划中的 Checkpoint / Summary / LTM / WEB 见设计文档第 4.7 节，代码未开始。
 
 ## P1.4 已落地边界
 
@@ -65,3 +67,9 @@
 - 只读：`GET /api/graph`（可选 `knowledge_base_id`、`document_id`）；`GET /api/documents/{id}/related` 内部 `search_chunks`，排除本文、按文档去重最多 5 条。
 - 前端：阅读页列表/表格；禁止 vis.js/D3 关系图。
 - `/api/chat` 未改。Agent Tool 仍仅 `search_knowledge`，**没有** `search_graph`。
+
+## P2 计划中的 Agent 分层（代码未开始）
+
+- STM / Summary / LTM 是记忆，权威在表；Checkpoint 是图快照，不是 `AgentState` 字段。  
+- `reason` 唯一路由：Agent-5 为 DIRECT / RAG / WEB；Agent-6 子任务 ≤3，仍一张图。  
+- 细则：`design-document.md` 第 4.7 节；步骤：`implementation-plan.md` P2-Agent-1～6。
