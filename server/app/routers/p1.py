@@ -9,9 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import session_scope
-from app.kb import resolve_knowledge_base_id
+from app.deps import current_user
+from app.kb import KnowledgeBaseAccessError, owned_document, resolve_knowledge_base_id
 from app.llm import llm_keys_ready
-from app.models import Document, Entity, EntityLink
+from app.models import Document, Entity, EntityLink, User
 from app.p1.chains import compare_documents, gather_document_text
 from app.p1.graph import build_graph, initial_state
 from app.schemas import (
@@ -36,8 +37,8 @@ def get_db():
         session.close()
 
 
-def _load_ready(session: Session, document_id: uuid.UUID) -> Document:
-    doc = session.get(Document, document_id)
+def _load_ready(session: Session, document_id: uuid.UUID, user_id: uuid.UUID) -> Document:
+    doc = owned_document(session, document_id, user_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
     if doc.status != "ready":
@@ -46,13 +47,13 @@ def _load_ready(session: Session, document_id: uuid.UUID) -> Document:
 
 
 @router.post("/compare", response_model=CompareOut)
-def compare(body: CompareRequest, session: Session = Depends(get_db)):
+def compare(body: CompareRequest, session: Session = Depends(get_db), user: User = Depends(current_user)):
     if body.document_id_a == body.document_id_b:
         raise HTTPException(status_code=400, detail="须选择两篇不同文档")
     if not llm_keys_ready():
         raise HTTPException(status_code=503, detail="未配置 LLM API Key")
-    doc_a = _load_ready(session, body.document_id_a)
-    doc_b = _load_ready(session, body.document_id_b)
+    doc_a = _load_ready(session, body.document_id_a, user.id)
+    doc_b = _load_ready(session, body.document_id_b, user.id)
     if doc_a.knowledge_base_id != doc_b.knowledge_base_id:
         raise HTTPException(status_code=400, detail="两篇文档须属于同一知识库")
     text_a = gather_document_text(session, doc_a)
@@ -67,16 +68,19 @@ def compare(body: CompareRequest, session: Session = Depends(get_db)):
     )
 
 
-def _agent_out(body: AgentRequest, session: Session) -> AgentOut:
+def _agent_out(body: AgentRequest, session: Session, user_id: uuid.UUID) -> AgentOut:
     if body.task not in ("agent", "report"):
         raise HTTPException(status_code=400, detail="task 须为 agent 或 report")
     if not llm_keys_ready():
         raise HTTPException(status_code=503, detail="未配置 LLM API Key")
-    kb_id = resolve_knowledge_base_id(session, body.knowledge_base_id)
+    try:
+        kb_id = resolve_knowledge_base_id(session, body.knowledge_base_id, user_id)
+    except KnowledgeBaseAccessError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     task = "report" if body.task == "report" else "agent"
     out = build_graph().invoke(
-        initial_state(body.query, knowledge_base_id=kb_id, task=task),
-        config={"configurable": {"session": session}},
+        initial_state(body.query, knowledge_base_id=body.knowledge_base_id, task=task),
+        config={"configurable": {"session": session, "user_id": user_id}},
     )
     return AgentOut(
         task=task,
@@ -88,13 +92,15 @@ def _agent_out(body: AgentRequest, session: Session) -> AgentOut:
 
 
 @router.post("/agent", response_model=AgentOut)
-def agent_run(body: AgentRequest, session: Session = Depends(get_db)):
-    return _agent_out(body, session)
+def agent_run(body: AgentRequest, session: Session = Depends(get_db), user: User = Depends(current_user)):
+    return _agent_out(body, session, user.id)
 
 
 @router.post("/agent/stream")
-async def agent_stream(body: AgentRequest, request: Request, session: Session = Depends(get_db)):
-    result = _agent_out(body, session)
+async def agent_stream(
+    body: AgentRequest, request: Request, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    result = _agent_out(body, session, user.id)
 
     async def events():
         for char in result.answer:
@@ -122,10 +128,14 @@ def get_graph(
     knowledge_base_id: uuid.UUID | None = None,
     document_id: uuid.UUID | None = None,
     session: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
-    kb_id = resolve_knowledge_base_id(session, knowledge_base_id)
+    try:
+        kb_id = resolve_knowledge_base_id(session, knowledge_base_id, user.id)
+    except KnowledgeBaseAccessError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     if document_id is not None:
-        doc = session.get(Document, document_id)
+        doc = owned_document(session, document_id, user.id)
         if doc is None:
             raise HTTPException(status_code=404, detail="文档不存在")
         if doc.knowledge_base_id != kb_id:

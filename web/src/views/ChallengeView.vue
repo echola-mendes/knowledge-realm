@@ -34,7 +34,7 @@ const stem = ref("题目……");
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.95rem;
+  font-size: 0.78rem;
   cursor: pointer;
 }
 .switch input {
@@ -43,7 +43,7 @@ const stem = ref("题目……");
 }
 .q {
   margin: 1rem 0 0;
-  font-size: 1.05rem;
+  font-size: 0.88rem;
   line-height: 1.5;
   text-align: left;
 }

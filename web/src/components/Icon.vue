@@ -34,6 +34,28 @@ defineProps<{ name: string }>();
       <path d="M4.8 6.2v4.6c0 1.4 3.2 2.5 7.2 2.5s7.2-1.1 7.2-2.5V6.2" />
       <path d="M4.8 10.8v4.8c0 1.4 3.2 2.5 7.2 2.5s7.2-1.1 7.2-2.5v-4.8" />
     </template>
+    <template v-else-if="name === 'bug'">
+      <circle cx="12" cy="14" r="5.2" />
+      <path d="M12 8.8V5.5M8.2 6.2 10 8.2M15.8 6.2 14 8.2M4.8 12.2h2.4M16.8 12.2h2.4M5.5 17.5l2.2-1M18.5 17.5l-2.2-1" />
+    </template>
+    <template v-else-if="name === 'user'">
+      <circle cx="12" cy="8.2" r="3.2" />
+      <path d="M5.2 19.2c.8-3.4 3.4-5.2 6.8-5.2s6 1.8 6.8 5.2" />
+    </template>
+    <template v-else-if="name === 'lock'">
+      <rect x="6.2" y="10.5" width="11.6" height="9" rx="1.6" />
+      <path d="M8.4 10.5V8.2a3.6 3.6 0 0 1 7.2 0v2.3" />
+    </template>
+    <template v-else-if="name === 'eye'">
+      <path d="M2.8 12s3.2-6.2 9.2-6.2S21.2 12 21.2 12s-3.2 6.2-9.2 6.2S2.8 12 2.8 12Z" />
+      <circle cx="12" cy="12" r="2.6" />
+    </template>
+    <template v-else-if="name === 'eyeOff'">
+      <path d="m4 4 16 16" />
+      <path d="M9.1 9.2A3 3 0 0 0 12 15a3 3 0 0 0 2.7-1.6" />
+      <path d="M6.2 6.8C4.2 8.2 2.8 12 2.8 12s3.2 6.2 9.2 6.2c1.7 0 3.2-.4 4.5-1" />
+      <path d="M10.4 6C10.9 5.9 11.5 5.8 12 5.8c6 0 9.2 6.2 9.2 6.2a16 16 0 0 1-2.2 2.8" />
+    </template>
     <template v-else-if="name === 'chevron'">
       <path d="m7 9.5 5 5 5-5" />
     </template>

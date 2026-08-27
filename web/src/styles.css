@@ -1,17 +1,18 @@
 :root {
-  --bg: #f5f7fa;
-  --card: #fff;
-  --text: #1a1d21;
-  --muted: #6b7280;
-  --line: #e6e9ee;
-  --teal: #135d66;
-  --teal-soft: #e8f6f5;
-  --teal-mid: #d6eae7;
-  --danger: #c0392b;
-  --warn: #c47a12;
-  --ok: #2a8f5b;
+  --bg: #f8fafc;
+  --chrome: #eaeff3;
+  --card: #ffffff;
+  --text: #1e293b;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --teal: #2563eb;
+  --teal-soft: #dbeafe;
+  --teal-mid: #bfdbfe;
+  --danger: #dc2626;
+  --warn: #d97706;
+  --ok: #059669;
   --radius: 12px;
-  --shadow: 0 8px 24px rgba(19, 40, 50, 0.06);
+  --shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
   --page: min(1120px, calc(100% - 2rem));
 }
 
@@ -22,11 +23,13 @@
 html,
 body,
 #app {
-  min-height: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 body {
   margin: 0;
+  font-size: 14px;
   font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -49,9 +52,235 @@ textarea {
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  background: var(--bg);
+}
+
+.login-shell {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  background: var(--bg);
+  overflow: auto;
+}
+
+.sidenav {
+  --rail: 4.2rem;
+  position: relative;
+  width: max-content;
+  min-width: var(--rail);
+  max-width: 18rem;
+  flex-shrink: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  color: #4b5563;
+  background: #f9fafb;
+  border-right: 1px solid #e5e7eb;
+  padding: 0 0 0.85rem;
+}
+
+.sidenav.collapsed {
+  width: var(--rail);
+  max-width: var(--rail);
+}
+
+.sidenav.collapsed .brand-text,
+.sidenav.collapsed .nav-label,
+.sidenav.collapsed .who-name,
+.sidenav.collapsed .kb-short,
+.sidenav.collapsed .kb-wrap .ico:last-child {
+  display: none;
+}
+
+.sidenav-head {
+  flex-shrink: 0;
+  margin: 0 0 0.45rem;
+  padding: 0.55rem 0 0.5rem;
+  background: transparent;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.sidenav .brand {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  margin: 0;
+  padding: 0;
+  font-size: 1.12rem;
+  line-height: 1.3;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #111827;
+  gap: 0;
+  text-decoration: none;
+}
+
+.sidenav .brand:hover {
+  text-decoration: none;
+}
+
+.sidenav .brand:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.sidenav .mark {
+  width: 1.85rem;
+  height: 1.85rem;
+  position: relative;
+  flex-shrink: 0;
+  margin: 0 calc((var(--rail) - 1.85rem) / 2);
+}
+
+.sidenav .mark::before,
+.sidenav .mark::after {
+  content: "";
+  position: absolute;
+  width: 1.08rem;
+  height: 1.08rem;
+  border-radius: 3px;
+  background: #2563eb;
+}
+
+.sidenav .mark::before {
+  top: 0;
+  left: 0.42rem;
+  opacity: 0.4;
+}
+
+.sidenav .mark::after {
+  bottom: 0;
+  left: 0;
+}
+
+.sidenav .nav {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 0.55rem 0 0;
+}
+
+.sidenav-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem 0.55rem 0 0;
+  border-top: 1px solid #e5e7eb;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.sidenav .nav a {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  font-weight: 500;
+  border-left: none;
+  text-decoration: none;
+  cursor: pointer;
+  color: #4b5563;
+}
+
+.sidenav .nav a:hover {
+  background: #eff6ff;
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.sidenav .nav a:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.sidenav .nav a .ico {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  margin: 0 calc((var(--rail) - 22px) / 2);
+}
+
+.sidenav .nav-label,
+.sidenav .who-name {
+  display: inline-block;
+  transform: scale(1);
+  transform-origin: left center;
+  transition: transform 200ms ease;
+}
+
+.sidenav .who-name {
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #111827;
+  font-weight: 600;
+}
+
+.sidenav .nav-label {
+  padding: 0 0.85rem 0 0.1rem;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  color: inherit;
+}
+
+.sidenav .nav a:hover .nav-label,
+.sidenav .nav a.on .nav-label,
+.sidenav .who:hover .who-name {
+  transform: scale(1.2);
+}
+
+.sidenav .nav a.on {
+  background: #eff6ff;
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.sidenav .who {
+  min-height: 2.75rem;
+  padding: 0;
+}
+
+.sidenav .avatar {
+  margin: 0 calc((var(--rail) - 1.7rem) / 2);
+}
+
+.sidenav .kb-wrap {
+  width: auto;
+  min-height: 2.75rem;
+  margin: 0;
+  padding: 0 0.15rem 0 0;
+  border-radius: 8px;
+}
+
+.sidenav .kb-wrap .ico:first-child {
+  width: 22px;
+  height: 22px;
+  margin: 0 calc((var(--rail) - 22px) / 2);
 }
 
 .topbar {
@@ -90,7 +319,7 @@ textarea {
   gap: 0.35rem;
   padding: 0.4rem 0.75rem;
   border-radius: 999px;
-  color: #3a4048;
+  color: var(--text);
   text-decoration: none;
 }
 
@@ -101,8 +330,8 @@ textarea {
 }
 
 .ico {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
   stroke: currentColor;
   fill: none;
@@ -120,9 +349,24 @@ textarea {
 }
 
 .who {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.45rem;
+  padding: 0.15rem 0.2rem;
+  border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+
+.who:hover {
+  text-decoration: none;
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.who:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
 }
 
 .avatar {
@@ -136,11 +380,12 @@ textarea {
   justify-content: center;
   font-size: 0.78rem;
   font-weight: 700;
-  line-height: 1;
+  flex-shrink: 0;
 }
 
 .who-name {
-  font-size: 0.9rem;
+  font-size: 0.88rem;
+  line-height: 1.5;
   color: var(--text);
 }
 
@@ -153,7 +398,7 @@ textarea {
   background: #fff;
   border-radius: 999px;
   padding: 0.2rem 0.55rem 0.2rem 0.65rem;
-  color: #3a4048;
+  color: var(--muted);
 }
 
 .kb-wrap .ico {
@@ -182,22 +427,16 @@ textarea {
 }
 
 @media (max-width: 800px) {
-  .topbar {
-    padding: 0.55rem 0.75rem;
-    gap: 0.45rem;
-  }
-  .who-name {
-    display: none;
-  }
-  .top-tools {
-    gap: 0.45rem;
+  .sidenav:not(.pinned) {
+    width: 4.2rem;
+    padding: 0.7rem 0.4rem;
   }
 }
 
 .page {
   width: var(--page);
   margin: 0 auto;
-  padding: 1.5rem 0 2.5rem;
+  padding: 1.15rem 0 2rem;
   flex: 1;
 }
 
@@ -207,18 +446,18 @@ textarea {
   align-items: flex-start;
   gap: 1rem;
   flex-wrap: wrap;
-  margin-bottom: 1.25rem;
+  margin-bottom: 1rem;
 }
 
 .page-head h1 {
-  margin: 0 0 0.35rem;
-  font-size: clamp(1.4rem, 3vw, 1.8rem);
+  margin: 0 0 0.25rem;
+  font-size: 1.05rem;
 }
 
 .sub {
   margin: 0;
   color: var(--muted);
-  font-size: 0.92rem;
+  font-size: 0.75rem;
 }
 
 .card {
@@ -235,9 +474,10 @@ textarea {
   border: 1px solid var(--line);
   background: #fff;
   color: var(--text);
-  border-radius: 10px;
-  padding: 0.5rem 0.85rem;
+  border-radius: 8px;
+  padding: 0.32rem 0.7rem;
   cursor: pointer;
+  font-size: 0.78rem;
 }
 
 .btn-primary {
@@ -271,11 +511,12 @@ textarea {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  padding: 0.28rem 0.7rem;
+  padding: 0.2rem 0.55rem;
   background: #eef1f4;
-  color: #445;
+  color: var(--muted);
   border: none;
   cursor: pointer;
+  font-size: 0.72rem;
 }
 
 .pill.on {
@@ -288,11 +529,15 @@ textarea {
   color: var(--teal);
 }
 
+.page table th {
+  font-size: 0.85rem;
+}
+
 .footer-note {
   text-align: center;
   color: var(--muted);
-  font-size: 0.8rem;
-  padding: 0.8rem 1rem 1.2rem;
+  font-size: 0.72rem;
+  padding: 0.6rem 1rem 1rem;
 }
 
 .err {
@@ -318,7 +563,11 @@ textarea {
   .grid-2 {
     grid-template-columns: 1fr;
   }
-  .topbar {
-    justify-content: flex-start;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidenav .nav-label,
+  .sidenav .who-name {
+    transition: none;
   }
 }

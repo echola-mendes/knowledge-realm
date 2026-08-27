@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
+  getMe,
   listConversations,
   listMessages,
   messageFromErrorBody,
@@ -10,7 +11,8 @@ import {
   type Conversation,
 } from "../api";
 import Icon from "../components/Icon.vue";
-import { selectedKb, selectedKbId } from "../kb";
+import RetrievalDebugPanel from "../components/RetrievalDebugPanel.vue";
+import { debugEnabled, setDebugEnabled } from "../debugFlag";
 
 const route = useRoute();
 const router = useRouter();
@@ -20,33 +22,49 @@ const conversationId = ref<string>(typeof route.query.c === "string" ? route.que
 const error = ref("");
 const streaming = ref(false);
 const mode = ref<"chat" | "agent" | "report">("chat");
-const CHAT_MAP = "zhiyu-chat-by-kb";
-
-function chatMap(): Record<string, string> {
-  try {
-    return JSON.parse(localStorage.getItem(CHAT_MAP) || "{}") as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
+const debugQuery = ref("");
+const CHAT_KEY = "zhiyu-chat-id";
 
 function rememberConversation(id: string) {
   conversationId.value = id;
-  const kb = selectedKbId.value;
-  const map = chatMap();
-  if (id && kb) map[kb] = id;
-  else if (kb) delete map[kb];
-  localStorage.setItem(CHAT_MAP, JSON.stringify(map));
+  if (id) localStorage.setItem(CHAT_KEY, id);
+  else localStorage.removeItem(CHAT_KEY);
   const query: Record<string, string> = {};
   if (id) query.c = id;
   router.replace({ path: "/chat", query });
 }
-const conversations = ref<Conversation[]>([]);
-const sidebarOpen = ref(true);
+const username = ref("");
+const greeting = computed(
+  () =>
+    `您好${username.value ? `，${username.value}` : ""}。我是知域助手，可以帮您查已开启知识库里的资料，也可以直接问答。请问需要什么帮助？`,
+);
+const greetingMsg = computed<ChatMessage>(() => ({
+  id: "greet",
+  role: "assistant",
+  content: greeting.value,
+}));
+const threadMessages = computed(() => [greetingMsg.value, ...messages.value]);
+const sidebarOpen = ref(false);
 const box = ref<HTMLElement | null>(null);
+const activeCite = ref<string>("");
+const citeFocus = ref(false);
+
+const panelCites = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const m = messages.value[i];
+    if (m.role === "assistant" && m.citations?.length) return m.citations;
+  }
+  return [] as Citation[];
+});
+
+const shownCite = computed(() => {
+  const rows = panelCites.value;
+  if (!rows.length) return null;
+  return rows.find((c) => c.chunk_id === activeCite.value) || rows[0];
+});
 
 async function refreshConversations() {
-  conversations.value = await listConversations(selectedKbId.value || undefined);
+  conversations.value = await listConversations();
 }
 
 async function openConversation(id: string) {
@@ -73,6 +91,10 @@ function isThinking(m: ChatMessage) {
   return m.role === "assistant" && !m.content.trim() && streaming.value && last === m;
 }
 
+function formatScore(score: number | undefined) {
+  return typeof score === "number" && Number.isFinite(score) ? score.toFixed(3) : "—";
+}
+
 function hashFor(c: Citation) {
   if (c.page_start != null) return `#page-${c.page_start}`;
   return "";
@@ -94,6 +116,7 @@ async function loadHistory() {
 async function ask() {
   const q = draft.value.trim();
   if (!q || streaming.value) return;
+  debugQuery.value = q;
   error.value = "";
   messages.value.push({ id: "u-" + Date.now(), role: "user", content: q });
   const assistant: ChatMessage = { id: "a-" + Date.now(), role: "assistant", content: "" };
@@ -105,17 +128,16 @@ async function ask() {
   try {
     const res = await fetch(useGraph ? "/api/agent/stream" : "/api/chat/stream", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(
         useGraph
           ? {
               task: mode.value === "report" ? "report" : "agent",
               query: q,
-              knowledge_base_id: selectedKbId.value || undefined,
             }
           : {
               query: q,
-              knowledge_base_id: selectedKbId.value || undefined,
               conversation_id: conversationId.value || undefined,
             },
       ),
@@ -176,9 +198,11 @@ function newChat() {
 
 onMounted(async () => {
   if (!conversationId.value) {
-    conversationId.value = chatMap()[selectedKbId.value] || "";
+    conversationId.value = localStorage.getItem(CHAT_KEY) || "";
   }
   try {
+    const me = await getMe();
+    username.value = me.username;
     await refreshConversations();
     await loadHistory();
   } catch (e) {
@@ -187,28 +211,24 @@ onMounted(async () => {
   if (draft.value) ask();
 });
 
-watch(selectedKbId, async (kb) => {
-  if (streaming.value) return;
-  conversationId.value = chatMap()[kb] || "";
-  messages.value = [];
-  try {
-    await refreshConversations();
-    await loadHistory();
-  } catch (e) {
-    error.value = String(e);
-  }
+watch(panelCites, (rows) => {
+  citeFocus.value = false;
+  activeCite.value = rows[0]?.chunk_id || "";
 });
+
+function pickCite(id: string) {
+  activeCite.value = id;
+  citeFocus.value = true;
+}
 
 function openCite(c: Citation) {
   router.push({ path: `/documents/${c.document_id}`, hash: hashFor(c) });
 }
-
-const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value?.name || "默认");
 </script>
 
 <template>
   <main class="page chat-page">
-    <aside class="chat-side" :class="{ collapsed: !sidebarOpen }">
+    <aside class="chat-side card" :class="{ collapsed: !sidebarOpen }">
       <button
         class="fold"
         type="button"
@@ -220,6 +240,7 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
         <Icon :name="sidebarOpen ? 'chevron' : 'chat'" />
       </button>
       <div v-if="sidebarOpen" class="side-body">
+        <button class="btn new-chat" type="button" @click="newChat">+ 新对话</button>
         <h2>对话记录</h2>
         <button
           v-for="c in conversations"
@@ -238,27 +259,36 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
     <div class="page-head">
       <div>
         <h1>对话</h1>
-        <p class="sub">与「{{ kbName() }}」知识库对话，回答会标注引用来源</p>
+        <p class="sub hint">默认检索全部已开启的知识库，回答会标注引用来源</p>
       </div>
       <div class="head-actions">
         <div class="mode-switch" role="group" aria-label="Question mode">
-          <button type="button" :class="{ on: mode === 'chat' }" :disabled="streaming" @click="mode = 'chat'">
+          <button type="button" :class="{ on: mode === 'chat' }" :aria-pressed="mode === 'chat'" :disabled="streaming" @click="mode = 'chat'">
             Chat
           </button>
-          <button type="button" :class="{ on: mode === 'agent' }" :disabled="streaming" @click="mode = 'agent'">
+          <button type="button" :class="{ on: mode === 'agent' }" :aria-pressed="mode === 'agent'" :disabled="streaming" @click="mode = 'agent'">
             Agent
           </button>
-          <button type="button" :class="{ on: mode === 'report' }" :disabled="streaming" @click="mode = 'report'">
+          <button type="button" :class="{ on: mode === 'report' }" :aria-pressed="mode === 'report'" :disabled="streaming" @click="mode = 'report'">
             Report
           </button>
         </div>
-        <button class="btn" type="button" @click="newChat">+ 新对话</button>
+        <label class="debug-toggle">
+          <span>Debug</span>
+          <input
+            type="checkbox"
+            role="switch"
+            :checked="debugEnabled"
+            @change="setDebugEnabled(($event.target as HTMLInputElement).checked)"
+          />
+        </label>
       </div>
     </div>
-    <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="error" class="hint err">{{ error }}</p>
 
+    <div class="stage">
     <div ref="box" class="thread">
-      <div v-for="m in messages" :key="m.id" :class="['msg', m.role]">
+      <div v-for="m in threadMessages" :key="m.id" :class="['msg', m.role]">
         <div v-if="m.role === 'assistant'" class="who">知域</div>
         <div class="bubble">
           <div v-if="isThinking(m)" class="thinking">
@@ -273,10 +303,11 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
               :key="c.chunk_id"
               type="button"
               class="cite"
-              @click="openCite(c)"
+              :class="{ on: c.chunk_id === shownCite?.chunk_id }"
+              @click="pickCite(c.chunk_id)"
             >
               <span>{{ c.document_name }}</span>
-              <em v-if="c.page_start != null">第 {{ c.page_start }} 页</em>
+              <em v-if="debugEnabled">{{ formatScore(c.score) }}</em>
             </button>
             <button
               v-if="m.citations.length > CITE_LIMIT && !citeOpen[m.id]"
@@ -290,8 +321,40 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
         </div>
       </div>
     </div>
+    <aside v-if="panelCites.length" class="cite-side card" aria-label="引用文档">
+      <h2>引用文档</h2>
+      <label v-if="citeFocus" class="cite-pick">
+        <span>文档</span>
+        <select v-model="activeCite">
+          <option v-for="c in panelCites" :key="c.chunk_id" :value="c.chunk_id">
+            {{ c.document_name }}{{ c.page_start != null ? ` · 第 ${c.page_start} 页` : "" }}
+          </option>
+        </select>
+      </label>
+      <article v-if="citeFocus && shownCite" class="cite-body">
+        <p class="cite-meta">
+          <span>{{ shownCite.document_name }}</span>
+          <em v-if="shownCite.page_start != null">第 {{ shownCite.page_start }} 页</em>
+        </p>
+        <p v-if="debugEnabled" class="cite-score">分数 {{ formatScore(shownCite.score) }}</p>
+        <pre>{{ shownCite.content }}</pre>
+        <button class="btn-link" type="button" @click="openCite(shownCite)">打开全文</button>
+      </article>
+      <div v-else class="cite-list">
+        <article v-for="c in panelCites" :key="c.chunk_id" class="cite-body">
+          <p class="cite-meta">
+            <span>{{ c.document_name }}</span>
+            <em v-if="c.page_start != null">第 {{ c.page_start }} 页</em>
+          </p>
+          <p v-if="debugEnabled" class="cite-score">分数 {{ formatScore(c.score) }}</p>
+          <pre>{{ c.content }}</pre>
+          <button class="btn-link" type="button" @click="openCite(c)">打开全文</button>
+        </article>
+      </div>
+    </aside>
+    </div>
 
-    <div class="composer card">
+    <div class="composer card pad">
       <textarea
         v-model="draft"
         rows="3"
@@ -310,6 +373,7 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
       </div>
     </div>
     </div>
+    <RetrievalDebugPanel v-if="debugEnabled" :query="debugQuery" />
   </main>
 </template>
 
@@ -318,17 +382,34 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  gap: 0.9rem;
-  width: min(1280px, calc(100% - 1.5rem));
+  gap: 0.85rem;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 1rem 1.25rem 2rem;
   min-height: calc(100vh - 8rem);
+  font-size: 12.5px;
+  background: transparent;
+}
+.chat-page .btn {
+  padding: 0.5rem 0.85rem;
+  border-radius: 10px;
+  font-size: inherit;
+}
+.chat-page .page-head h1 {
+  font-size: 1.05rem;
+}
+.hint {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.hint.err {
+  color: var(--danger);
 }
 .chat-side {
   position: relative;
-  width: 15.5rem;
+  width: 14.5rem;
   flex-shrink: 0;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -338,6 +419,7 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
   align-self: center;
   background: none;
   border: none;
+  box-shadow: none;
   border-radius: 0;
 }
 .fold {
@@ -347,22 +429,29 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
   z-index: 1;
   display: inline-flex;
   align-items: center;
-  gap: 0.15rem;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
   margin: 0;
   transform: translate(50%, -50%);
   border: none;
   background: none;
-  color: #b0b8c0;
+  color: #94a3b8;
   cursor: pointer;
   line-height: 1;
   padding: 0;
+  border-radius: 6px;
+}
+.fold:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
 }
 .chat-side.collapsed .fold {
   position: static;
   transform: none;
 }
 .fold:hover {
-  color: #8b949e;
+  color: #64748b;
 }
 .fold :deep(.ico) {
   width: 18px;
@@ -372,12 +461,17 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
   transform: rotate(90deg);
 }
 .side-body {
-  padding: 0.85rem 0.7rem 0.8rem;
+  padding: 0.75rem 0.7rem 0.7rem;
   overflow: auto;
 }
+.new-chat {
+  width: 100%;
+  justify-content: center;
+  margin-bottom: 0.65rem;
+}
 .side-body h2 {
-  margin: 0 0 0.5rem;
-  font-size: 0.95rem;
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
 }
 .side-item {
   display: block;
@@ -386,9 +480,10 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
   border: none;
   background: none;
   border-top: 1px solid var(--line);
-  padding: 0.7rem 0.15rem;
+  padding: 0.55rem 0.15rem;
   cursor: pointer;
   color: inherit;
+  font-size: 0.72rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -396,25 +491,116 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
 .side-item.on {
   color: var(--teal);
   font-weight: 600;
+  background: #f0f7ff;
 }
 .side-empty {
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: 0.75rem;
 }
 .chat-main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 8rem);
+  min-height: 0;
+}
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0.75rem;
+}
+.cite-side {
+  width: min(22rem, 34vw);
+  flex-shrink: 0;
+  min-width: 14rem;
+  padding: 0.85rem 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.cite-side h2 {
+  margin: 0 0 0.45rem;
+  font-size: 0.78rem;
+}
+.cite-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.55rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.cite-pick select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.4rem 0.5rem;
+  background: #fff;
+  color: var(--text);
+  font-size: 0.72rem;
+}
+.cite-pick select:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+.cite-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.cite-list .cite-body {
+  flex: none;
+  overflow: visible;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--line);
+}
+.cite-list .cite-body:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.cite-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.cite-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  color: var(--text);
+}
+.cite-score {
+  margin: 0 0 0.4rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.cite-body pre {
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--text);
+  margin-bottom: 0.5rem;
+}
+@media (max-width: 900px) {
+  .cite-side {
+    display: none;
+  }
 }
 .thread {
   flex: 1;
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  padding-bottom: 1rem;
+  gap: 0.75rem;
+  padding-bottom: 0.75rem;
 }
 .msg.user {
   align-self: flex-end;
@@ -426,37 +612,39 @@ const kbName = () => (selectedKb.value?.is_default ? "默认" : selectedKb.value
 }
 .who {
   color: var(--muted);
-  font-size: 0.82rem;
-  margin-bottom: 0.35rem;
+  font-size: 0.72rem;
+  margin-bottom: 0.25rem;
 }
 .user .bubble {
-  background: var(--teal);
+  background: #2563eb;
   color: #fff;
-  border-radius: 14px;
-  padding: 0.75rem 0.95rem;
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
 }
 .assistant .bubble {
   background: #fff;
   border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 0.65rem 0.9rem;
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
 }
 pre {
   margin: 0;
   padding: 0;
   white-space: pre-wrap;
   font: inherit;
-  line-height: 1.55;
+  font-size: 0.78rem;
+  line-height: 1.5;
 }
 .thinking {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
   color: var(--muted);
+  font-size: 0.75rem;
 }
 .spin {
-  width: 0.95rem;
-  height: 0.95rem;
+  width: 0.85rem;
+  height: 0.85rem;
   border: 2px solid var(--line);
   border-top-color: var(--teal);
   border-radius: 50%;
@@ -467,28 +655,44 @@ pre {
     transform: rotate(360deg);
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
 .cites {
-  margin-top: 0.8rem;
-  padding-top: 0.7rem;
+  margin-top: 0.55rem;
+  padding-top: 0.5rem;
   border-top: 1px solid var(--line);
 }
 .cites p {
-  margin: 0 0 0.45rem;
+  margin: 0 0 0.35rem;
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: 0.68rem;
 }
 .cite {
   width: 100%;
   display: flex;
   justify-content: space-between;
-  gap: 1rem;
-  background: #f3f5f7;
-  border: none;
+  gap: 0.6rem;
+  background: #f0f7ff;
+  border: 1px solid #e0edff;
   border-radius: 8px;
-  padding: 0.5rem 0.7rem;
-  margin-bottom: 0.4rem;
+  padding: 0.4rem 0.55rem;
+  margin-bottom: 0.3rem;
   cursor: pointer;
   text-align: left;
+  font-size: 0.72rem;
+  min-height: 24px;
+}
+.cite:hover,
+.cite.on {
+  background: var(--teal-soft);
+  border-color: #bfdbfe;
+}
+.cite:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
 }
 .cite span {
   overflow: hidden;
@@ -499,6 +703,7 @@ pre {
   font-style: normal;
   color: var(--muted);
   white-space: nowrap;
+  font-size: 0.68rem;
 }
 .more {
   width: 100%;
@@ -508,46 +713,79 @@ pre {
   letter-spacing: 0.2em;
   padding: 0.2rem 0;
   cursor: pointer;
+  min-height: 24px;
+}
+.pad {
+  padding: 0.75rem 0.85rem;
 }
 .composer {
-  padding: 0.8rem 0.9rem;
+  margin-top: 0.35rem;
 }
 .composer textarea {
   width: 100%;
-  border: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.4rem 0.5rem;
   resize: vertical;
-  outline: none;
+  font-size: inherit;
+}
+.composer textarea:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
 }
 .composer-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: 0.72rem;
+  margin-top: 0.45rem;
 }
 .head-actions {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.4rem;
   flex-wrap: wrap;
+}
+.debug-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin: 0;
+}
+.debug-toggle input {
+  accent-color: var(--teal);
 }
 .mode-switch {
   display: inline-flex;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  overflow: hidden;
-  background: #fff;
+  flex-wrap: nowrap;
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+  background: none;
 }
 .mode-switch button {
   border: none;
   background: none;
-  padding: 0.45rem 0.8rem;
+  border-radius: 0;
+  padding: 0.35rem 0.7rem 0.45rem;
   cursor: pointer;
   color: var(--muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
 }
 .mode-switch button.on {
-  background: var(--teal);
-  color: #fff;
+  background: none;
+  color: var(--teal);
+  font-weight: 600;
+  border-bottom-color: var(--teal);
+}
+.mode-switch button:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
 }
 .mode-switch button:disabled {
   cursor: not-allowed;

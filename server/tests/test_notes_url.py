@@ -16,7 +16,8 @@ from app.storage import parsed_dir
 def _client() -> TestClient:
     reset_app_state()
     get_settings(load_file=True)
-    return TestClient(create_app(load_file=True, ensure_default=True))
+    from http_client import api_client
+    return api_client()
 
 
 SAMPLE_HTML = """

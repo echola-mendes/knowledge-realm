@@ -2,10 +2,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, func, select
 
 from app.config import get_settings
-from app.db import reset_engine, session_scope
+from app.db import session_scope
 from app.kb import DEFAULT_KB_NAME, ensure_default_knowledge_base
 from app.main import create_app, reset_app_state
 from app.models import KnowledgeBase
+from app.user import ensure_default_user
 
 
 def _wipe_kbs() -> None:
@@ -31,8 +32,9 @@ def test_ensure_default_once_then_idempotent():
     _wipe_kbs()
     session = session_scope()
     try:
-        first = ensure_default_knowledge_base(session)
-        second = ensure_default_knowledge_base(session)
+        uid = ensure_default_user(session).id
+        first = ensure_default_knowledge_base(session, uid)
+        second = ensure_default_knowledge_base(session, uid)
         assert first.id == second.id
         assert first.name == DEFAULT_KB_NAME
         assert first.is_default is True

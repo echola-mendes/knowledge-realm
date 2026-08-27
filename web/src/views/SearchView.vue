@@ -3,11 +3,21 @@ import { ref } from "vue";
 import { RouterLink } from "vue-router";
 import Icon from "../components/Icon.vue";
 import { listTags, searchChunks, type SearchHit, type TagItem } from "../api";
-import { selectedKbId } from "../kb";
 
 const query = ref("");
 const tagId = ref("");
 const kind = ref("");
+const createdAfter = ref("");
+const createdBefore = ref("");
+
+function toIso(local: string, endOfMinute = false) {
+  if (!local.trim()) return undefined;
+  const raw = local.length === 16 ? `${local}:00` : local;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return undefined;
+  if (endOfMinute) d.setSeconds(59, 999);
+  return d.toISOString();
+}
 const hits = ref<SearchHit[]>([]);
 const tags = ref<TagItem[]>([]);
 const error = ref("");
@@ -24,9 +34,10 @@ async function run() {
   try {
     hits.value = await searchChunks({
       query: query.value,
-      knowledge_base_id: selectedKbId.value || undefined,
       tag_id: tagId.value || undefined,
       kind: kind.value || undefined,
+      created_after: toIso(createdAfter.value),
+      created_before: toIso(createdBefore.value, true),
     });
   } catch (e) {
     error.value = String(e);
@@ -48,7 +59,7 @@ function pct(score: number) {
   <main class="page">
     <section class="card search-card">
       <h1>搜索知识库</h1>
-      <p class="sub">只返回相似片段，不生成长答案。点击文档名进入阅读页，可携带页锚点。</p>
+        <p class="sub">只返回已开启知识库中的相似片段，不生成长答案。点击文档名进入阅读页，可携带页锚点。</p>
       <p v-if="error" class="err">{{ error }}</p>
       <div class="bar">
         <div class="bar-field">
@@ -87,6 +98,12 @@ function pct(score: number) {
         >
           {{ k }}
         </button>
+      </div>
+      <div class="row">
+        <span>时间</span>
+        <input v-model="createdAfter" type="datetime-local" aria-label="起始时间" />
+        <input v-model="createdBefore" type="datetime-local" aria-label="结束时间" />
+        <button class="pill" type="button" @click="createdAfter = ''; createdBefore = ''">不限时间</button>
       </div>
     </section>
 
@@ -163,6 +180,14 @@ function pct(score: number) {
   color: var(--muted);
   font-size: 0.85rem;
 }
+.row input[type="datetime-local"] {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  background: #fff;
+  color: var(--text);
+  font-size: 0.8rem;
+}
 .meta {
   color: var(--muted);
   font-size: 0.88rem;
@@ -183,7 +208,7 @@ function pct(score: number) {
 .score strong {
   display: block;
   color: var(--teal);
-  font-size: 1.25rem;
+  font-size: 1.05rem;
 }
 .score span {
   color: var(--muted);
@@ -203,7 +228,7 @@ function pct(score: number) {
   font-weight: 700;
 }
 .body p {
-  color: #4b5563;
+  color: var(--muted);
   margin: 0.45rem 0 0.6rem;
   line-height: 1.55;
 }

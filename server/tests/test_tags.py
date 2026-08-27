@@ -12,7 +12,8 @@ from app.models import DocumentTag
 def _client() -> TestClient:
     reset_app_state()
     get_settings(load_file=True)
-    return TestClient(create_app(load_file=True, ensure_default=True))
+    from http_client import api_client
+    return api_client()
 
 
 def test_tag_assign_filter_delete_and_duplicate_name():
@@ -46,7 +47,7 @@ def test_tag_assign_filter_delete_and_duplicate_name():
         gone = client.delete(f"/api/tags/{tag_id}")
         assert gone.status_code == 200
         empty = client.get("/api/documents", params={"tag_id": tag_id})
-        assert empty.json() == []
+        assert empty.status_code == 404
         session = session_scope()
         try:
             n = session.scalar(

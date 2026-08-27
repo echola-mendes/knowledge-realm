@@ -14,7 +14,8 @@ from app.storage import files_dir, parsed_dir
 def _client() -> TestClient:
     reset_app_state()
     get_settings(load_file=True)
-    return TestClient(create_app(load_file=True, ensure_default=True))
+    from http_client import api_client
+    return api_client()
 
 
 def test_list_contains_default_and_created():
@@ -28,6 +29,15 @@ def test_list_contains_default_and_created():
         assert DEFAULT_KB_NAME in names
         assert n1 in names
         assert n2 in names
+
+
+def test_toggle_enabled():
+    with _client() as client:
+        created = client.post("/api/knowledge-bases", json={"name": f"开关-{uuid.uuid4().hex[:8]}"}).json()
+        assert created["is_enabled"] is True
+        off = client.put(f"/api/knowledge-bases/{created['id']}", json={"is_enabled": False})
+        assert off.status_code == 200
+        assert off.json()["is_enabled"] is False
 
 
 def test_rename_and_duplicate_name():

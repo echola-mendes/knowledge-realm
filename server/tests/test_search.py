@@ -13,7 +13,8 @@ import app.llm as llm_mod
 def _client() -> TestClient:
     reset_app_state()
     get_settings(load_file=True)
-    return TestClient(create_app(load_file=True, ensure_default=True))
+    from http_client import api_client
+    return api_client()
 
 
 def _directional_embed(texts: list[str]) -> list[list[float]]:
@@ -100,9 +101,67 @@ def test_search_isolates_kb_tag_kind_and_skips_chat(monkeypatch):
 
         default_hits = client.post("/api/search", json={"query": "苹果"})
         default_names = {hit["document_name"] for hit in default_hits.json()}
+        assert "apple.md" in default_names
         assert "orange.md" not in default_names
-        assert "apple.md" not in default_names
+
+        off = client.put(f"/api/knowledge-bases/{kb_a['id']}", json={"is_enabled": False})
+        assert off.status_code == 200
+        assert off.json()["is_enabled"] is False
+        after_off = client.post("/api/search", json={"query": "苹果"})
+        after_names = {hit["document_name"] for hit in after_off.json()}
+        assert "apple.md" not in after_names
 
         assert llm_mod.CHAT_CALLS == 0
         assert CHAT_CALLS == 0
+    reset_app_state()
+
+
+def test_search_time_window_excludes_old_docs(monkeypatch):
+    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.search.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.index.embed_texts", _directional_embed)
+    from datetime import datetime, timedelta, timezone
+
+    from app.db import session_scope
+    from app.models import Document
+
+    with _client() as client:
+        kb = client.post("/api/knowledge-bases", json={"name": f"时窗-{uuid.uuid4().hex[:8]}"}).json()
+        old = client.post(
+            "/api/documents/notes",
+            json={"content": "文档讲苹果很久以前", "filename": "old-apple.md", "knowledge_base_id": kb["id"]},
+        )
+        new = client.post(
+            "/api/documents/notes",
+            json={"content": "文档讲苹果就在今天", "filename": "new-apple.md", "knowledge_base_id": kb["id"]},
+        )
+        old_id = uuid.UUID(old.json()["id"])
+        new_id = uuid.UUID(new.json()["id"])
+        parse_text_document(old_id)
+        parse_text_document(new_id)
+        index_document(old_id)
+        index_document(new_id)
+        session = session_scope()
+        try:
+            row = session.get(Document, old_id)
+            assert row is not None
+            row.created_at = datetime.now(timezone.utc) - timedelta(days=20)
+            session.commit()
+        finally:
+            session.close()
+        after = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        windowed = client.post(
+            "/api/search",
+            json={"query": "苹果", "knowledge_base_id": kb["id"], "created_after": after},
+        )
+        assert windowed.status_code == 200, windowed.text
+        names = {hit["document_name"] for hit in windowed.json()}
+        assert "new-apple.md" in names
+        assert "old-apple.md" not in names
+        notes = client.post(
+            "/api/search",
+            json={"query": "苹果", "knowledge_base_id": kb["id"], "kind": "note", "created_after": after},
+        )
+        assert {hit["kind"] for hit in notes.json()} <= {"note"}
+        assert "old-apple.md" not in {hit["document_name"] for hit in notes.json()}
     reset_app_state()

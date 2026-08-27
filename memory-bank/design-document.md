@@ -3,7 +3,7 @@
 **状态：** 可执行  
 **依据：** 仓库 `PRD.md`（P0 已确认）；P1 见 `PRD-P1.md`；P2 范围见 `PRD-P2.md`（提出人已确认边界修正）  
 **产品名称：** 知域  
-**用户：** 单人；Web；本机为主  
+**用户：** 本机 Web；基础登录 + 按用户数据隔离（非企业 RBAC）  
 
 ---
 
@@ -15,8 +15,8 @@
 | 编排 | **P0：** LangChain 单链 RAG；`/api/chat` 不进图。**P1 Agent：** 允许 LangGraph，且必须经 Tool 调用 P0 检索。摘要/标签/对比只用 Chain。不上 LlamaIndex |
 | 解析 | 不上 MinerU。PDF = PyMuPDF 文本层；DOCX = python-docx；MD/TXT/笔记 = 直读；URL = 抓公开页正文 |
 | 检索 | **P0/P1：** pgvector 余弦（方案 A），`search_chunks` 最高分 &lt; 0.30 整次为空（只卡第一名）。**P2：** 同一入口内 Hybrid（向量 + **Elasticsearch BM25 关键词**）→ RRF →（后阶段）Rerank → 相关性判断；无相关不引用、Chat 不拒答。向量仍只在一张 `document_chunk`；ES **只做关键词 BM25**，禁止把 ES 当第二套向量库 |
-| 知识库 | 可多个；启动时若不存在则创建名为 `默认知识库` 的记录。未传 `knowledge_base_id` 时只用默认库 |
-| 用户 | 占位一行 `app_user`（`name=echola`）。仍无登录。不给其它表加 `user_id`。顶栏最右侧显示名称与字母头像 |
+| 知识库 | 可多个；启动时若不存在则创建名为 `默认知识库` 的记录。每库有 `is_enabled`（新建默认开启）。**导入/文档列表**仍可指定单个库（缺省默认库）。**搜索 / 对话 / Agent** 未传 `knowledge_base_id` 时检索**当前用户所有已开启库**；传了 id 则只打该库（须属于本人） |
+| 用户 | 表 `users`（username、password_hash）。HttpOnly Session Cookie。身份只来自 Session，禁止请求参数 `user_id`。知识库/会话/标签/收藏带 `user_id`；文档与切片经库继承。不做 RBAC/租户/OAuth |
 | 标签与收藏 | P0 必须实现 |
 | Word | 仅 `.docx` |
 | URL | 无需登录的公开页；失败则导入失败 |
@@ -43,7 +43,7 @@
 
 ### 2.2 非目标
 
-MinerU、LlamaIndex、Ollama、Milvus、多用户、扫描件 OCR、`.doc`、登录墙网页、Meilisearch。P0 路径不上 LangGraph。知识冲突/缺口/整理/推荐、Multi-Agent、知识库自动更新属 **P3**。Web Search、Checkpoint、**Elasticsearch BM25 关键词**属 **P2**（见 `PRD-P2.md`）。
+MinerU、LlamaIndex、Ollama、Milvus、RBAC/组织/租户/OAuth/JWT、扫描件 OCR、`.doc`、登录墙网页、Meilisearch。P0 路径不上 LangGraph。知识冲突/缺口/整理/推荐、Multi-Agent、知识库自动更新属 **P3**。Web Search、Checkpoint、**Elasticsearch BM25 关键词**属 **P2**（见 `PRD-P2.md`）。登录为独立页，不是 Chat/Agent/Report/Debug 业务 Tab。
 
 **收藏片段：** V1 只收藏文档。
 
@@ -57,9 +57,11 @@ MinerU、LlamaIndex、Ollama、Milvus、多用户、扫描件 OCR、`.doc`、登
 
 打开 Web → 见隐私说明 → 向默认库上传带文本层的 PDF → 状态至「已完成」→ 提问 → 回答带文件名与页码 → 点引用打开解析页。
 
-### 3.2 默认库
+### 3.2 知识库范围
 
-不选库时问答与搜索只命中默认知识库。选「Java」库则只命中该库。
+导入落点：未指定库时写入默认知识库。侧栏切换器只影响导入与文档列表。
+
+检索：知识库管理页可开关每个库；问答与搜索默认命中全部已开启库。关闭的库不参与检索。需要单库时接口仍可传 `knowledge_base_id`。
 
 ### 3.3 URL
 
@@ -98,6 +100,8 @@ LangChain 按标题切，过长再 **800 字符 / overlap 120**。表格尽量�
   2. 其后阶段：Rerank（模型/接口在该步计划写明，默认走 DashScope 兼容 rerank，未配置则用 LLM 对候选打分，候选上限 20）。  
   3. 相关性判断：决定是否进入 Context / 是否生成 citations；**不**决定 LLM 是否回答。无相关：Chat 闲聊、Agent 继续、无 Citation。验收锚点：「今天天气不错」对仅有自我介绍笔记的库 **不得**出现 `笔记.md` 引用。逐条门槛环境变量 `RELEVANCE_MIN_SCORE`，暂定默认 **0.5**（Rerank 分），提出人可改。  
   4. 筛选：现有库/标签/`kind`；P2 可加 `created_at` 时间窗。来源用现有 `kind`（`pdf|docx|md|txt|url|note`），不新造 upload/manual/web。  
+- **P2 Debug UI（演示页）：** 全站主导航为左侧栏。独立路由 `/debug` 可用演示数据；**不改** Chat/Agent/Report 返回体。  
+- **P2 Retrieval Debug（对话页旁路）：** 右上角 Debug 开关（`localStorage`）。不新增 Chat/Agent/Report 一级 Tab，不跳转新页。开则在对话页右侧抽屉展示一次 Query 的向量 / BM25 / RRF / Rerank / Final。`POST /api/retrieval-debug` 单独返回各阶段 Rank/Score；线上 `search_chunks` 与 Chat JSON 不变。可调参数只作用于该请求。Ground Truth 文档级、0–3 分，表 `retrieval_label`（含 `user_id`），评测只认 GT≥2，不算检索分。重新检索不重跑 LLM。  
 - 对话页仅在有引用时于气泡下方列出；超过 2 条先显示省略。 
 
 - 多轮：最近 **6 条** 消息给 LLM；**检索只用当前句**，不改写。  
@@ -106,12 +110,12 @@ LangChain 按标题切，过长再 **800 字符 / overlap 120**。表格尽量�
 
 ### 4.4 搜索 API
 
-`POST /api/search`：走同一 `search_chunks`（P2 起含 Hybrid 内部阶段）。可选 `knowledge_base_id`、`tag_id`、`kind`。P2 可增加时间窗参数（`created_at`）。不调 Chat。
+`POST /api/search`：走同一 `search_chunks`（P2 起含 Hybrid 内部阶段）。可选 `knowledge_base_id`、`tag_id`、`kind`、`created_after` / `created_before`（文档 `created_at`）。不调 Chat。不传时间则不按时间裁。
 
 ### 4.5 标签与收藏
 
-- 标签名全局唯一（个人单用户）。文档与标签多对多。  
-- 收藏：用户-文档，唯一约束。列表接口可 `?favorite=true`。
+- 标签名在同一 `user_id` 下唯一。文档与标签多对多。  
+- 收藏：(`user_id`, `document_id`) 唯一。列表接口可 `?favorite=true`。
 
 ### 4.6 笔记
 
@@ -129,7 +133,7 @@ LangChain 按标题切，过长再 **800 字符 / overlap 120**。表格尽量�
 |---|---|---|
 | STM | 本场最近 N=6 条消息 | 现有 `conversation` / `message` |
 | Summary | 窗口外历史的中文压缩 | `conversation.summary`（可空） |
-| LTM | 跨会话用户事实（背景/偏好/目标） | 独立表 `user_memory`，不是 `message`、不是 `document_chunk` |
+| LTM | 跨会话用户事实（背景/偏好/目标） | 独立表 `user_memory`（须含 `user_id`），不是 `message`、不是 `document_chunk` |
 | Checkpoint | 某一时刻整份 `AgentState` 快照（图执行到哪、字段是什么） | LangGraph Postgres checkpointer，同一 `DATABASE_URL`；`thread_id` = `conversation_id` 字符串。禁止 Redis |
 
 图内 `AgentState`（本轮给图用的副本）：
@@ -172,21 +176,21 @@ P2-Agent-6          复杂问句可先写入 ≤3 条子任务；
 
 ## 6. 数据模型（V1 表）
 
-**app_user：** id, name UNIQUE, phone UNIQUE 可空, timestamps。启动时空表插入 `name=echola`；已有行不改。  
+**users：** id UUID, username UNIQUE, password_hash（Argon2，禁止明文）, timestamps。空表时用 `INITIAL_USERNAME`（默认 echola）与 `INITIAL_PASSWORD`（仅环境变量）创建；已有行不改密码。删除 `app_user`。  
 
-**knowledge_base：** id, name UNIQUE, is_default BOOL, timestamps  
+**knowledge_base：** id, user_id FK CASCADE, name, is_default BOOL, is_enabled BOOL（默认真）, timestamps。UNIQUE(user_id, name)。每用户至多一个 is_default。  
 
 **document：** id, knowledge_base_id FK CASCADE, filename, ext, kind, source_url 可空, checksum, status, error_message, byte_size, summary 可空, timestamps。UNIQUE(knowledge_base_id, checksum) 对文件；笔记可无 checksum 或对正文哈希。  
 
 **document_chunk：** id, document_id FK CASCADE, chunk_index, content, page 可空, heading 可空, metadata JSONB, embedding vector(N)。HNSW cosine。  
 
-**tag：** id, name UNIQUE  
+**tag：** id, user_id FK CASCADE, name。UNIQUE(user_id, name)  
 
 **document_tag：** document_id, tag_id, PK 复合  
 
-**favorite：** document_id UNIQUE（单用户）  
+**favorite：** PK(user_id, document_id)  
 
-**conversation：** id, knowledge_base_id, title, timestamps  
+**conversation：** id, user_id FK CASCADE, knowledge_base_id, title, timestamps  
 
 **message：** id, conversation_id, role, content, citations JSONB, created_at  
 
@@ -198,7 +202,9 @@ P2-Agent-6          复杂问句可先写入 ≤3 条子任务；
 
 **P2 Checkpoint：** LangGraph checkpointer 落**同一** Postgres（禁止 Redis）。`thread_id` = `conversation_id` 字符串。只存 `AgentState` 快照；不替代 `message` / `conversation.summary` / `user_memory`。  
 
-**P2 user_memory（LTM）：** 独立表，**不是** `document_chunk`。建议字段：id、kind（短字符串如 profile/preference/goal）、content TEXT、timestamps。单用户仍不给 `user_id`。禁止第二套知识库向量集合。读写由 reason 决定后调用内部函数或 Tool；细则在 LTM 那一步计划写死。  
+**P2 user_memory（LTM）：** 独立表，**不是** `document_chunk`。字段：id、**user_id**、kind、content TEXT、timestamps。禁止第二套知识库向量集合。读写由 reason 决定后调用内部函数或 Tool；细则在 LTM 那一步计划写死。  
+
+**P2 retrieval_label：** id, user_id FK CASCADE, query_norm, knowledge_base_id 可空 FK SET NULL, document_id FK CASCADE, relevance INT 0–3, timestamps。UNIQUE(user_id, query_norm, knowledge_base_id, document_id)。文档级标注。  
 
 不建：fragment_favorite、Neo4j、第二套 **向量** 表。P2 允许本机 Elasticsearch 仅作 BM25 关键词索引。  
 
@@ -206,7 +212,7 @@ P2-Agent-6          复杂问句可先写入 ≤3 条子任务；
 
 ## 7. API（前缀 `/api`）
 
-当前用户：`GET /me`（`name=echola` 那一行；没有则 404）。无登录、无创建。  
+认证：`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/auth/me`。HttpOnly Session Cookie。除 `/health` 与 login 外 `/api/*` 未登录 401。业务查询只用 Session 中的 user_id。`GET /api/me` 删除。无注册接口。  
 
 知识库：`GET/POST /knowledge-bases`，`GET/PUT/DELETE /knowledge-bases/{id}`  
 
@@ -218,6 +224,8 @@ P2-Agent-6          复杂问句可先写入 ≤3 条子任务；
 
 搜索：`POST /search`  
 
+Retrieval Debug：`POST /retrieval-debug`；`GET/PUT /retrieval-debug/labels`。不改变 Chat/Agent 响应字段。  
+
 Chat：`POST /chat`，`POST /chat/stream`，会话 CRUD  
 
 P1.4 图谱：`POST /documents/{id}/graph` 抽取并落库；`GET /graph?knowledge_base_id=` 返回该库实体与边的 JSON；`GET /documents/{id}/related` 用 P0 `search_chunks` 给出相近文档（排除本文，不进 LangGraph）。  
@@ -226,7 +234,7 @@ P1.4 图谱：`POST /documents/{id}/graph` 抽取并落库；`GET /graph?knowled
 
 ## 8. 非功能
 
-本机 Postgres+pgvector（已安装，不 Docker）。上传 &lt;1s 返回。检索 &lt;2s。绑定 127.0.0.1。无登录。密钥 `.env`。
+本机 Postgres+pgvector（已安装，不 Docker）。上传 &lt;1s 返回。检索 &lt;2s。绑定 127.0.0.1。Session 登录。密钥 `.env`。检索 JOIN `knowledge_base.user_id`，禁止全库召回后再在 Python 滤用户。
 
 ---
 

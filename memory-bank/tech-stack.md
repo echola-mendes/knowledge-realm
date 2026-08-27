@@ -20,7 +20,7 @@
 | ORM / 迁移 | SQLAlchemy 2 + Alembic | 表演进可重复 | 纯手写 SQL |
 | 任务 | FastAPI BackgroundTasks | 设计允许进程内；个人单机 | Celery、Redis |
 | LLM / Embedding | Python 包 `openai`（仅作 HTTP 客户端）打 **DashScope 兼容模式** | 你不需要 OpenAI 账号；用阿里云 DashScope Key。协议碰巧和 OpenAI 一样 | 直连各家五花八门 SDK；Ollama |
-| 认证 | 无 | 单用户本机；占位表 `app_user` 一行 | JWT |
+| 认证 | FastAPI Session Cookie + Argon2 | 最小多用户隔离；身份只来自 Session | JWT / OAuth / RBAC |
 | 部署 | 本机 `server/.venv` + npm；无 Docker | 设计明确 | conda 新建环境；K8s |
 | 测试 | pytest + httpx | 测 API 与隔离检索 | 强制 E2E |
 
@@ -74,7 +74,7 @@
 
 ## 认证与部署
 
-- 无登录；仅有占位用户行；监听 `127.0.0.1`  
+- HttpOnly Session；表 `users`；监听 `127.0.0.1`  
 - 不使用 Docker  
 
 ---
@@ -97,6 +97,9 @@
 | `ELASTICSEARCH_URL` | P2 BM25；例 `http://127.0.0.1:9200`。未配则 Hybrid 关键词路不可用（见计划，禁止假装已 Hybrid） |
 | `RERANK_API_KEY` / `RERANK_BASE_URL` / `RERANK_MODEL` | P2-RAG-2 重排。硅基：`https://api.siliconflow.cn/v1/rerank` + `Qwen/Qwen3-Reranker-0.6B`。无 Key 则 LLM 打分 |
 | `RELEVANCE_MIN_SCORE` | P2-RAG-3 逐条门槛，默认 0.5（Rerank 分；未重排时仍是余弦分）。须可调 |
+| `SESSION_SECRET` | Session 签名，至少 32 字符 |
+| `INITIAL_USERNAME` | 空库引导用户名，默认 `echola` |
+| `INITIAL_PASSWORD` | 空库引导密码，只放本机 `.env`，哈希入库 |
 
 `.env` gitignore；提供无密钥的 `.env.example`。
 

@@ -12,7 +12,8 @@ from app.models import Favorite
 def _client() -> TestClient:
     reset_app_state()
     get_settings(load_file=True)
-    return TestClient(create_app(load_file=True, ensure_default=True))
+    from http_client import api_client
+    return api_client()
 
 
 def test_favorite_list_idempotent_unfavorite_and_delete_clears_row():

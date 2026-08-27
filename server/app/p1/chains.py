@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import uuid
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Document, DocumentChunk
+from app.models import Document, DocumentChunk, DocumentTag, KnowledgeBase, Tag
 from app.storage import parsed_dir
 
 TEXT_LIMIT = 12000
@@ -53,6 +54,53 @@ def summarize_document(text: str) -> str:
         "只输出摘要正文。不要索要材料、不要寒暄。",
         f"【文档正文】\n{text}",
     )
+
+
+def enrich_document_after_ready(document_id: uuid.UUID) -> None:
+    from app.db import session_scope
+    from app.llm import llm_keys_ready
+
+    if not llm_keys_ready():
+        return
+    session = session_scope()
+    try:
+        doc = session.get(Document, document_id)
+        if doc is None or doc.status != "ready":
+            return
+        text = gather_document_text(session, doc)
+        if not text:
+            return
+        try:
+            doc.summary = summarize_document(text)
+        except Exception:
+            pass
+        kb = session.get(KnowledgeBase, doc.knowledge_base_id)
+        if kb is None:
+            session.commit()
+            return
+        existing_ids = set(
+            session.scalars(select(DocumentTag.tag_id).where(DocumentTag.document_id == document_id))
+        )
+        try:
+            names = suggest_tag_names(text)
+        except Exception:
+            names = []
+        for name in names:
+            tag = session.scalar(select(Tag).where(Tag.user_id == kb.user_id, Tag.name == name))
+            if tag is None:
+                tag = Tag(user_id=kb.user_id, name=name)
+                session.add(tag)
+                session.flush()
+            if tag.id not in existing_ids:
+                if len(existing_ids) >= 5:
+                    break
+                session.add(DocumentTag(document_id=document_id, tag_id=tag.id))
+                existing_ids.add(tag.id)
+        session.commit()
+    except Exception:
+        session.rollback()
+    finally:
+        session.close()
 
 
 def suggest_tag_names(text: str) -> list[str]:

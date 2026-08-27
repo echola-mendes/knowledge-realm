@@ -461,6 +461,30 @@ Agent：Checkpoint 与 Summary 分步（Agent-2 / Agent-3）；`reason` 为唯�
 
 ---
 
+## 步骤 P2-DEBUG-UI — Debug 页与左侧导航
+
+**指令：** 全站顶栏导航改为左侧栏（首页/文档/搜索/对话/Debug/设置）。新增 `DebugView` 对照 RAG Studio 布局：Query、Evaluation K、Vector/BM25/RRF/Rerank 卡片、流水线、结果表、指标表。向量与 BM25 的 TopK 绑定同一 `K`；RRF 为独立 N；Rerank 为独立 M。本步不接真实检索、不改 Chat API。
+
+**验证：** 浏览器打开 `/debug`：左侧可进各页；Debug 页可改 K/N/M、点运行后表格与指标有演示数据。对话页 Chat/Agent/Report 仍在页内。
+
+---
+
+## 步骤 P2-DEBUG-1 — Retrieval Debug（对话页旁路）
+
+**指令：** 不改 Chat/Agent/Report 返回体。扩展 ES/Memory 检索带出 BM25 分数。新增 `search_debug` 与 `POST /api/retrieval-debug`（可调 vector/bm25/rrf/rerank TopK、向量阈值、RRF 常数）。向量第一名低于阈值仍记录向量阶段。表 `retrieval_label`（user_id、规范化 query、knowledge_base_id、document_id、relevance 0–3）。`GET/PUT /api/retrieval-debug/labels`。前端：对话页 Debug 开关 + 可折叠 Retrieval Debug 抽屉；OFF 不展示内部 score 与 GT。评测 Recall@K / Precision@K 按 Final 文档去重序、只认 GT≥2。
+
+**验证：** pytest：chat JSON 字段不变；debug 含四阶段 + Final；假 GT 下指标正确。浏览器：开 Debug 提问可见各阶段；改 TopK 重新检索不改气泡；关 Debug UI 复原。
+
+---
+
+## 步骤 AUTH-1 — 基础登录与用户数据隔离
+
+**指令：** 按设计文档：表 `users`（Argon2）；HttpOnly Session；`POST /api/auth/login|logout`、`GET /api/auth/me`。`knowledge_base`/`conversation`/`tag`/`favorite` 加 `user_id`；文档与切片经库继承。历史数据归初始用户。禁止 query `user_id`。`search_chunks` 必参 `user_id` 并 JOIN `knowledge_base`。独立 `/login` 页。无 RBAC/OAuth/JWT。密码只来自 `INITIAL_PASSWORD`。
+
+**验证：** 未登录 `/api/*` 401；登录后只见本人库；检索 JOIN 过滤，跨用户文档 404。pytest 覆盖。
+
+---
+
 ## 步骤 P2-RAG-4 — 时间筛选（来源用 kind）
 
 **指令：** `search_chunks` 增加可选 `created_after` / `created_before`（文档 `created_at`）。`POST /api/search` 与搜索页可传。来源继续用现有 `kind`，不新增枚举。不改 Chat 默认（不传时间则全库）。
@@ -495,7 +519,7 @@ Agent：Checkpoint 与 Summary 分步（Agent-2 / Agent-3）；`reason` 为唯�
 
 ## 步骤 P2-Agent-4 — Long-term Memory 表
 
-**指令：** 迁移 `user_memory`（id、kind、content、timestamps），无 `user_id`。本轮读到的内容可放入 State 的 `ltm_hits`；表才是权威。读写由 `reason` 决定后走内部函数或 Tool，禁止 Tool 擅自在未路由时读写。禁止写入 `document_chunk`。禁止第二套知识库向量表。
+**指令：** 迁移 `user_memory`（id、**user_id**、kind、content、timestamps）。本轮读到的内容可放入 State 的 `ltm_hits`；表才是权威。读写由 `reason` 决定后走内部函数或 Tool，禁止 Tool 擅自在未路由时读写。禁止写入 `document_chunk`。禁止第二套知识库向量表。
 
 **验证：** pytest：写入后新会话（不同 conversation_id）仍能读到；源码无把 LTM 当 chunk 检索。
 
@@ -525,10 +549,18 @@ Agent：Checkpoint 与 Summary 分步（Agent-2 / Agent-3）；`reason` 为唯�
 
 ---
 
+## 步骤 KB-ENABLE — 检索默认已开启库
+
+**指令：** `knowledge_base` 增加 `is_enabled`（默认 true）。知识库管理可开关。未传 `knowledge_base_id` 时搜索/对话/Agent 只打当前用户已开启库；传了 id 仍单库。导入与文档列表仍用指定库或默认库。ES 关键词过滤与向量路同一组库 id。
+
+**验证：** pytest：两库都开启、不传 id 可跨库命中；关闭一库后该库不再被无 id 检索命中；传 id 仍隔离。
+
+---
+
 ## 执行纪律
 
 - 每步结束后等待提出人确认，再开始下一步。  
 - 发现与设计不符：停止实现，先改设计文档并征得同意。  
 - 本计划含「验证」所述测试；步骤 20–22 允许以提出人手工验收为主，但 0–19 能自动化的必须自动化。  
 - **P1：** 已收口。  
-- **P2：** 只做上文已列出且尚未验证的那一步。P2-RAG-1～2 已确认。P2-RAG-3 代码已写，待提出人确认后再 P2-RAG-4。
+- **P2：** 只做上文已列出且尚未验证的那一步。当前：**P2-RAG-4**。P2-DEBUG-1 代码已写。AUTH-1 代码已写。P2-RAG-3 待提出人确认阈值。

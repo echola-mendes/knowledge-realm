@@ -6,9 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.index import STATUS_READY
-from app.kb import resolve_knowledge_base_id
+from app.kb import owned_document, resolve_knowledge_base_id
 from app import llm as llm_mod
-from app.models import Conversation, Document, Message
+from app.models import Conversation, Message
 from app.search import SearchHit, search_chunks
 
 HISTORY_LIMIT = 6
@@ -40,35 +40,37 @@ def run_chat(
     session: Session,
     query: str,
     *,
+    user_id: uuid.UUID,
     knowledge_base_id: uuid.UUID | None = None,
     document_id: uuid.UUID | None = None,
     conversation_id: uuid.UUID | None = None,
     k: int = 5,
 ) -> tuple[Conversation, str, list[dict]]:
-    kb_id = resolve_knowledge_base_id(session, knowledge_base_id)
+    kb_id = resolve_knowledge_base_id(session, knowledge_base_id, user_id)
     if document_id is not None:
-        doc = session.get(Document, document_id)
+        doc = owned_document(session, document_id, user_id)
         if doc is None:
             raise LookupError("文档不存在")
         if doc.status != STATUS_READY:
             raise ValueError("文档未完成")
-        if doc.knowledge_base_id != kb_id:
+        if knowledge_base_id is not None and doc.knowledge_base_id != kb_id:
             raise ValueError("文档不属于该知识库")
     hits = search_chunks(
         session,
         query,
-        knowledge_base_id=kb_id,
+        user_id=user_id,
+        knowledge_base_id=knowledge_base_id,
         document_id=document_id,
         k=k,
     )
     if conversation_id is None:
-        convo = Conversation(knowledge_base_id=kb_id, title=query[:40])
+        convo = Conversation(user_id=user_id, knowledge_base_id=kb_id, title=query[:40])
         session.add(convo)
         session.flush()
         history: list[tuple[str, str]] = []
     else:
         convo = session.get(Conversation, conversation_id)
-        if convo is None:
+        if convo is None or convo.user_id != user_id:
             raise LookupError("会话不存在")
         history = _history(session, convo.id)
     if not llm_mod.llm_keys_ready():

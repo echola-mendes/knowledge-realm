@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from app.config import get_settings
 from app.db import session_scope
 from app.kb import resolve_knowledge_base_id
+from app.user import ensure_default_user
 from app.main import create_app, reset_app_state
 from app.models import Document
 from app.routers import documents as documents_mod
@@ -14,7 +15,8 @@ from sqlalchemy import func, select
 def _client() -> TestClient:
     reset_app_state()
     get_settings(load_file=True)
-    return TestClient(create_app(load_file=True, ensure_default=True))
+    from http_client import api_client
+    return api_client()
 
 
 def test_upload_txt_saves_file_and_defaults_kb():
@@ -42,7 +44,7 @@ def test_upload_txt_saves_file_and_defaults_kb():
         assert path.read_bytes() == payload
         session = session_scope()
         try:
-            default_id = resolve_knowledge_base_id(session, None)
+            default_id = resolve_knowledge_base_id(session, None, ensure_default_user(session).id)
             assert uuid.UUID(body["knowledge_base_id"]) == default_id
         finally:
             session.close()

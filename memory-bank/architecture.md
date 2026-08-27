@@ -14,14 +14,18 @@
 | `server/.venv` | Python 3.12 虚拟环境（不用 conda） |
 | `server/requirements.txt` | 后端依赖 |
 | `server/app/config.py` | 环境变量与 Settings |
-| `server/app/main.py` | FastAPI 入口、`/health`、启动时确保默认库与占位用户 |
-| `server/app/db.py` | 引擎与会话 |
-| `server/app/kb.py` | 默认知识库 |
-| `server/app/user.py` | 占位用户 `echola`；空表插入，已有行不改 |
-| `server/app/routers/me.py` | `GET /api/me` |
+| `server/app/main.py` | FastAPI 入口、`/health`、Session、启动时确保用户与默认库 |
+| `server/app/user.py` | `users` 表引导用户（环境变量密码哈希） |
+| `server/app/passwords.py` | Argon2 |
+| `server/app/deps.py` | Session 当前用户 |
+| `server/app/routers/auth.py` | login/logout/me |
 | `server/app/routers/knowledge_bases.py` | 知识库 HTTP |
 | `server/app/routers/documents.py` | 上传、笔记、URL、列表、详情、`parsed.md`、删除、打标签、收藏、`/index`、`/reindex`、P1.1 `POST .../summarize` 与 `POST .../auto-tags`、P1.4 `POST .../graph` 与 `GET .../related` |
-| `web/src/` | 库切换（最右侧占位用户名与字母头像）、文档导入/标签/收藏、搜索、对话流式（默认 `/api/chat/stream`；可切 Agent / 报告走 `/api/agent/stream`）、阅读定位、阅读页生成摘要/自动标签/抽取图谱与相近文档列表、文档页勾选对比、设置密钥状态、隐私说明 |
+| `web/src/App.vue` | 左侧主导航；库切换与用户在侧栏底部 |
+| `web/src/views/DebugView.vue` | 调试模式页（演示数据） |
+| `web/src/components/RetrievalDebugPanel.vue` | 对话页 Retrieval Debug 抽屉 |
+| `server/app/routers/retrieval_debug.py` | `POST /api/retrieval-debug` 与 labels |
+| `server/alembic/` | 迁移；当前 `20260827_0007` |
 | `web/src/styles.css` | 全局设计 token 与顶栏/页面自适应容器（不锁 1440×900） |
 | `server/app/routers/tags.py` | 标签创建/列表/删除 |
 | `server/app/search.py` | Hybrid + RRF + Rerank；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤 |
@@ -38,14 +42,14 @@
 | `server/app/storage.py` | 本地文件路径与清理 |
 | `server/app/schemas.py` | Pydantic 模型 |
 | `server/app/models.py` | SQLAlchemy 表 |
-| `server/alembic/` | 迁移；当前 `20260824_0004` |
+| `web/src/views/LoginView.vue` | 独立登录页 |
 | `server/app/p1/chains.py` | P1.1/P1.2/P1.4 摘要、自动标签、文档对比、图谱抽取 Chain；禁止 import LangGraph |
 | `server/app/routers/p1.py` | P1.2 `POST /api/compare`；P1.3 `POST /api/agent` 与 `/api/agent/stream`（`task=agent|report`，走 Graph，不经过 `/api/chat`）；P1.4 `GET /api/graph` |
 | `server/app/p1/tools.py` | P1.3 `search_knowledge`：内部调用 `search_chunks`；禁止 HTTP `/api/search` |
 | `server/app/p1/graph.py` | P1.3 一张 StateGraph：reason 只决策、run_tool 执行 search_knowledge、generate 成文；`task=agent|report` 同图；max_loops=3；无 Checkpoint |
 | `web/src/views/ChatView.vue` | 默认 `/api/chat/stream`；「Agent / 报告」走 `/api/agent/stream` |
 | `web/src/views/ReaderView.vue` | 阅读页：摘要/自动标签；P1.4「抽取图谱」+ 实体/关系列表 + 相近文档（无 vis.js/D3） |
-| `web/` | Vite + Vue 3 + TS；路由首页/文档/搜索/对话/阅读/设置；`/api` 代理 `127.0.0.1:8000` |
+| `web/` | Vite + Vue 3 + TS；左侧栏 + 首页/文档/搜索/对话/Debug/阅读/设置 |
 | `data/files/`、`data/parsed/` | 原件与解析稿；内容被 gitignore |
 | `.env.example` | 环境变量模板（DashScope，无真实密钥） |
 | `.gitignore` | 忽略 `.env`、venv、node_modules、用户 data |

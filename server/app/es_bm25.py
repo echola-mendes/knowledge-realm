@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 import uuid
 from typing import Protocol
 
@@ -31,12 +32,12 @@ class ChunkIndex(Protocol):
         self,
         query: str,
         *,
-        knowledge_base_id: uuid.UUID,
+        knowledge_base_ids: Sequence[uuid.UUID],
         k: int,
         kind: str | None = None,
         document_id: uuid.UUID | None = None,
         document_ids: frozenset[uuid.UUID] | None = None,
-    ) -> list[uuid.UUID]: ...
+    ) -> list[tuple[uuid.UUID, float]]: ...
 
 
 class MemoryChunkIndex:
@@ -72,20 +73,22 @@ class MemoryChunkIndex:
         self,
         query: str,
         *,
-        knowledge_base_id: uuid.UUID,
+        knowledge_base_ids: Sequence[uuid.UUID],
         k: int,
         kind: str | None = None,
         document_id: uuid.UUID | None = None,
         document_ids: frozenset[uuid.UUID] | None = None,
     ) -> list[uuid.UUID]:
+        if not knowledge_base_ids:
+            return []
         if document_ids is not None and not document_ids:
             return []
-        kb = str(knowledge_base_id)
+        allowed_kb = {str(i) for i in knowledge_base_ids}
         allowed = {str(i) for i in document_ids} if document_ids is not None else None
         scored: list[tuple[float, str]] = []
         q = query.strip()
         for item in self._docs.values():
-            if item["knowledge_base_id"] != kb:
+            if item["knowledge_base_id"] not in allowed_kb:
                 continue
             if kind is not None and item["kind"] != kind:
                 continue
@@ -98,7 +101,7 @@ class MemoryChunkIndex:
                 continue
             scored.append((score, item["chunk_id"]))
         scored.sort(key=lambda pair: (-pair[0], pair[1]))
-        return [uuid.UUID(cid) for _, cid in scored[:k]]
+        return [(uuid.UUID(cid), score) for score, cid in scored[:k]]
 
 
 class ElasticChunkIndex:
@@ -177,16 +180,18 @@ class ElasticChunkIndex:
         self,
         query: str,
         *,
-        knowledge_base_id: uuid.UUID,
+        knowledge_base_ids: Sequence[uuid.UUID],
         k: int,
         kind: str | None = None,
         document_id: uuid.UUID | None = None,
         document_ids: frozenset[uuid.UUID] | None = None,
     ) -> list[uuid.UUID]:
+        if not knowledge_base_ids:
+            return []
         if document_ids is not None and not document_ids:
             return []
         self._ensure()
-        filters: list[dict] = [{"term": {"knowledge_base_id": str(knowledge_base_id)}}]
+        filters: list[dict] = [{"terms": {"knowledge_base_id": [str(i) for i in knowledge_base_ids]}}]
         if kind is not None:
             filters.append({"term": {"kind": kind}})
         if document_id is not None:
@@ -203,10 +208,10 @@ class ElasticChunkIndex:
                 }
             },
         )
-        ids: list[uuid.UUID] = []
+        rows: list[tuple[uuid.UUID, float]] = []
         for hit in resp["hits"]["hits"]:
-            ids.append(uuid.UUID(hit["_id"]))
-        return ids
+            rows.append((uuid.UUID(hit["_id"]), float(hit.get("_score") or 0.0)))
+        return rows
 
 
 _override: ChunkIndex | None = None
@@ -255,15 +260,34 @@ def delete_knowledge_base_chunks(knowledge_base_id: uuid.UUID) -> None:
 def search_chunk_ids(
     query: str,
     *,
-    knowledge_base_id: uuid.UUID,
+    knowledge_base_ids: Sequence[uuid.UUID],
     k: int,
     kind: str | None = None,
     document_id: uuid.UUID | None = None,
     document_ids: frozenset[uuid.UUID] | None = None,
 ) -> list[uuid.UUID]:
+    return [cid for cid, _ in search_chunk_scores(
+        query,
+        knowledge_base_ids=knowledge_base_ids,
+        k=k,
+        kind=kind,
+        document_id=document_id,
+        document_ids=document_ids,
+    )]
+
+
+def search_chunk_scores(
+    query: str,
+    *,
+    knowledge_base_ids: Sequence[uuid.UUID],
+    k: int,
+    kind: str | None = None,
+    document_id: uuid.UUID | None = None,
+    document_ids: frozenset[uuid.UUID] | None = None,
+) -> list[tuple[uuid.UUID, float]]:
     return get_chunk_index().search(
         query,
-        knowledge_base_id=knowledge_base_id,
+        knowledge_base_ids=knowledge_base_ids,
         k=k,
         kind=kind,
         document_id=document_id,

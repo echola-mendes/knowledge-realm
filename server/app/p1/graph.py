@@ -95,9 +95,10 @@ def node_reason(state: AgentState) -> dict[str, Any]:
 
 def node_run_tool(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     session = (config.get("configurable") or {}).get("session")
+    user_id = (config.get("configurable") or {}).get("user_id")
     kb_raw = state.get("knowledge_base_id")
     kb_id = uuid.UUID(kb_raw) if kb_raw else None
-    hits = search_knowledge(session, state.get("search_query") or "", knowledge_base_id=kb_id)
+    hits = search_knowledge(session, state.get("search_query") or "", user_id=user_id, knowledge_base_id=kb_id)
     cites = list(state.get("citations") or [])
     cites.extend(_hit_to_citation(hit) for hit in hits)
     return {"citations": cites, "loop_count": int(state.get("loop_count") or 0) + 1}

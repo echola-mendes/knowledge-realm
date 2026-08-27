@@ -10,25 +10,30 @@ from sqlalchemy.orm import Session
 
 from app import index as index_mod
 from app.chat import run_chat
-from app.models import Conversation, Message
+from app.deps import current_user
+from app.kb import KnowledgeBaseAccessError
+from app.models import Conversation, Message, User
 from app.routers.documents import get_db
 from app.schemas import ChatRequest, ChatResponse, CitationOut, ConversationOut, MessageOut
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
 
-def _http_chat(body: ChatRequest, session: Session) -> ChatResponse:
+def _http_chat(body: ChatRequest, session: Session, user_id: uuid.UUID) -> ChatResponse:
     if not index_mod.embedding_keys_ready():
         raise HTTPException(status_code=503, detail="未配置 Embedding API Key")
     try:
         convo, answer, cites = run_chat(
             session,
             body.query,
+            user_id=user_id,
             knowledge_base_id=body.knowledge_base_id,
             document_id=body.document_id,
             conversation_id=body.conversation_id,
             k=body.k,
         )
+    except KnowledgeBaseAccessError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LookupError as exc:
@@ -43,13 +48,15 @@ def _http_chat(body: ChatRequest, session: Session) -> ChatResponse:
 
 
 @router.post("/chat", response_model=ChatResponse)
-def chat_api(body: ChatRequest, session: Session = Depends(get_db)):
-    return _http_chat(body, session)
+def chat_api(body: ChatRequest, session: Session = Depends(get_db), user: User = Depends(current_user)):
+    return _http_chat(body, session, user.id)
 
 
 @router.post("/chat/stream")
-async def chat_stream(body: ChatRequest, request: Request, session: Session = Depends(get_db)):
-    result = _http_chat(body, session)
+async def chat_stream(
+    body: ChatRequest, request: Request, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    result = _http_chat(body, session, user.id)
 
     async def events():
         for char in result.answer:
@@ -71,17 +78,20 @@ async def chat_stream(body: ChatRequest, request: Request, session: Session = De
 def list_conversations(
     knowledge_base_id: uuid.UUID | None = None,
     session: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
-    stmt = select(Conversation).order_by(Conversation.updated_at.desc())
+    stmt = select(Conversation).where(Conversation.user_id == user.id).order_by(Conversation.updated_at.desc())
     if knowledge_base_id is not None:
         stmt = stmt.where(Conversation.knowledge_base_id == knowledge_base_id)
     return session.scalars(stmt).all()
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageOut])
-def list_messages(conversation_id: uuid.UUID, session: Session = Depends(get_db)):
+def list_messages(
+    conversation_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
     convo = session.get(Conversation, conversation_id)
-    if convo is None:
+    if convo is None or convo.user_id != user.id:
         raise HTTPException(status_code=404, detail="会话不存在")
     return session.scalars(
         select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at)
@@ -89,9 +99,11 @@ def list_messages(conversation_id: uuid.UUID, session: Session = Depends(get_db)
 
 
 @router.delete("/conversations/{conversation_id}")
-def delete_conversation(conversation_id: uuid.UUID, session: Session = Depends(get_db)):
+def delete_conversation(
+    conversation_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
     convo = session.get(Conversation, conversation_id)
-    if convo is None:
+    if convo is None or convo.user_id != user.id:
         raise HTTPException(status_code=404, detail="会话不存在")
     session.execute(delete(Message).where(Message.conversation_id == conversation_id))
     session.delete(convo)

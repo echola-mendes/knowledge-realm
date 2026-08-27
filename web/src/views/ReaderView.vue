@@ -319,7 +319,7 @@ async function runExtract() {
 }
 .meta h1 {
   margin: 0.5rem 0 0;
-  font-size: clamp(1.3rem, 3vw, 1.7rem);
+  font-size: 1.1rem;
 }
 .p1-actions {
   display: flex;
@@ -338,7 +338,7 @@ async function runExtract() {
 }
 .graph-panel h2 {
   margin: 0.85rem 0 0.4rem;
-  font-size: 0.95rem;
+  font-size: 0.82rem;
 }
 .graph-panel h2:first-child {
   margin-top: 0;
@@ -375,7 +375,7 @@ async function runExtract() {
   border-radius: 6px;
   padding: 0.1rem 0.45rem;
   font-size: 0.78rem;
-  color: #556;
+  color: var(--muted);
 }
 .chips .right {
   margin-left: auto;
@@ -397,13 +397,13 @@ async function runExtract() {
   border-radius: 6px;
   padding: 0.1rem 0.4rem 0.1rem 0.45rem;
   font-size: 0.78rem;
-  color: #556;
+  color: var(--muted);
 }
 .tag-x {
   border: none;
   background: none;
   cursor: pointer;
-  color: #889;
+  color: var(--muted);
   padding: 0 0.1rem;
   line-height: 1;
 }

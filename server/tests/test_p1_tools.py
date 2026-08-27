@@ -1,4 +1,5 @@
 import inspect
+import uuid
 
 from app.p1 import tools
 from app.p1.tools import search_knowledge
@@ -20,7 +21,8 @@ def test_search_knowledge_wraps_search_chunks_not_http(monkeypatch):
 
     monkeypatch.setattr("app.p1.tools.search_chunks", fake_search)
     marker = object()
-    hits = search_knowledge(marker, "苹果", knowledge_base_id=None, k=5)
+    uid = uuid.UUID("00000000-0000-0000-0000-000000000001")
+    hits = search_knowledge(marker, "苹果", user_id=uid, knowledge_base_id=None, k=5)
     assert hits == []
     assert called["session"] is marker
     assert called["query"] == "苹果"

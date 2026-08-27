@@ -33,6 +33,9 @@ class Settings:
     rerank_base_url: str
     rerank_model: str
     relevance_min_score: float
+    session_secret: str
+    initial_username: str
+    initial_password: str
     host: str = HOST
     port: int = PORT
 
@@ -95,6 +98,9 @@ def load_settings(environ: dict[str, str] | None = None, *, load_file: bool = Fa
         ).strip().rstrip("/"),
         rerank_model=(env.get("RERANK_MODEL") or "qwen3-rerank").strip(),
         relevance_min_score=_min_score("RELEVANCE_MIN_SCORE", env.get("RELEVANCE_MIN_SCORE"), 0.5),
+        session_secret=(env.get("SESSION_SECRET") or "local-dev-session-secret-min-32-chars").strip(),
+        initial_username=(env.get("INITIAL_USERNAME") or "echola").strip() or "echola",
+        initial_password=(env.get("INITIAL_PASSWORD") or "").strip(),
         host=HOST,
         port=PORT,
     )

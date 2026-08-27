@@ -19,11 +19,11 @@
 - LLM / Embedding：DashScope 兼容接口。PyPI 包 `openai` / `langchain-openai` 只是客户端，**不需要 OpenAI 账号**；Key 用 DashScope。  
 - 解析：pymupdf、python-docx、trafilatura（公开 URL）。无 OCR。  
 - 任务：BackgroundTasks。无 Redis/Celery。应用本身无 Docker；**P2 允许本机 Elasticsearch（或仅跑 ES 的 Docker）做 BM25**。  
-- 无登录；绑定本机。
+- 绑定本机 `127.0.0.1`。基础 Session 登录；身份只来自 Session，禁止用请求参数指定 `user_id`。不做 RBAC/OAuth/JWT。
 
 ## 范围
 
-只做当前计划步骤。P0 / P1.1–P1.4 已收口。**P2-RAG-3 代码已写，待提出人确认阈值与验收。** 未在 `implementation-plan.md` 列出的功能不要做。改需求先改 `design-document.md`（及 `PRD.md` / `PRD-P2.md`）。
+只做当前计划步骤。P0 / P1.1–P1.4 已收口。**当前步骤 P2-RAG-4（搜索时间窗）。** P2-DEBUG-1 与 AUTH-1 代码已落地。P2-RAG-3 待确认阈值。未在 `implementation-plan.md` 列出的功能不要做。改需求先改 `design-document.md`（及 `PRD.md` / `PRD-P2.md`）。
 
 ## 文档维护
 

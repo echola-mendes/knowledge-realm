@@ -14,7 +14,8 @@ from app.parse import parse_text_document
 def _client() -> TestClient:
     reset_app_state()
     get_settings(load_file=True)
-    return TestClient(create_app(load_file=True, ensure_default=True))
+    from http_client import api_client
+    return api_client()
 
 
 def test_summarize_and_auto_tags_keep_existing(monkeypatch):
@@ -76,4 +77,25 @@ def test_summarize_and_auto_tags_keep_existing(monkeypatch):
             monkeypatch.setattr("app.routers.documents.llm_keys_ready", lambda: False)
             denied = client.post(f"/api/documents/{doc_id}/summarize")
         assert denied.status_code == 503
+    reset_app_state()
+
+
+def test_index_writes_overview_and_tags(monkeypatch):
+    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
+    monkeypatch.setattr("app.p1.chains.summarize_document", lambda text: "上传概述")
+    monkeypatch.setattr("app.p1.chains.suggest_tag_names", lambda text: ["自动标"])
+    from app.p1.chains import enrich_document_after_ready
+
+    monkeypatch.setattr("app.index._enrich_after_index", enrich_document_after_ready)
+    with _client() as client:
+        created = client.post("/api/documents/notes", json={"content": "用于上传概述的正文", "filename": "overview.md"})
+        assert created.status_code == 200
+        doc_id = created.json()["id"]
+        parse_text_document(uuid.UUID(doc_id))
+        index_document(uuid.UUID(doc_id))
+        listed = client.get("/api/documents")
+        row = next(item for item in listed.json() if item["id"] == doc_id)
+        assert row["summary"] == "上传概述"
+        assert row["tag_ids"]
     reset_app_state()

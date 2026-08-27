@@ -316,6 +316,13 @@
 
 - 状态：已执行，待提出人确认阈值
 - 结果：Rerank 后逐条 `score >= RELEVANCE_MIN_SCORE`（默认 0.5）。低于门槛不进 Context、无 Citation；Chat 仍回答。pytest 58 passed。
-- 下一步：提出人确认后再 P2-RAG-4
+- 下一步：P2-DEBUG-UI 已落地，见下
+
+## 步骤 P2-DEBUG-UI — Debug 页与左侧导航
+
+- 状态：代码已写，待提出人看 UI
+- 结果：左侧栏导航；`/debug` 演示页（K 共用、N/M 独立、Evaluation K 多选）；未接检索 API。
+- 下一步：提出人确认 UI 后再接 debug API
+
 
 

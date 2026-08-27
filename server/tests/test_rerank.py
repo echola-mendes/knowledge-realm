@@ -12,7 +12,8 @@ from app.search import SearchHit, _rerank
 def _client() -> TestClient:
     reset_app_state()
     get_settings(load_file=True)
-    return TestClient(create_app(load_file=True, ensure_default=True))
+    from http_client import api_client
+    return api_client()
 
 
 def test_rerank_mock_changes_order(monkeypatch):

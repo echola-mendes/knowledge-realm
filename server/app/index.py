@@ -155,8 +155,15 @@ def index_document(document_id: uuid.UUID) -> None:
             doc.error_message = str(exc)
             session.commit()
             return
+        _enrich_after_index(document_id)
     finally:
         session.close()
+
+
+def _enrich_after_index(document_id: uuid.UUID) -> None:
+    from app.p1.chains import enrich_document_after_ready
+
+    enrich_document_after_ready(document_id)
 
 
 def reindex_document(document_id: uuid.UUID) -> None:

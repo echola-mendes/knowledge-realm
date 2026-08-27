@@ -42,6 +42,9 @@ def isolate_from_user_database(tmp_path_factory):
     os.environ["DATABASE_URL"] = test_url
     os.environ["DATA_DIR"] = str(data_dir)
     os.environ["ELASTICSEARCH_URL"] = "http://127.0.0.1:9200"
+    os.environ["SESSION_SECRET"] = "pytest-session-secret-min-32-chars"
+    os.environ["INITIAL_USERNAME"] = "echola"
+    os.environ["INITIAL_PASSWORD"] = "pytest-isolated-password"
     reset_app_state()
     alembic_cli = _SERVER_DIR / ".venv" / "bin" / "alembic"
     subprocess.run(
@@ -58,7 +61,7 @@ def isolate_from_user_database(tmp_path_factory):
         conn.execute(
             text(
                 "TRUNCATE TABLE message, conversation, document_tag, favorite, "
-                "document_chunk, entity_link, document, entity, tag, knowledge_base, app_user CASCADE"
+                "document_chunk, entity_link, retrieval_label, document, entity, tag, knowledge_base, users CASCADE"
             )
         )
     yield
@@ -80,6 +83,11 @@ def fake_elasticsearch(monkeypatch):
 
     monkeypatch.setattr("app.es_bm25._override", MemoryChunkIndex())
     monkeypatch.setattr("app.es_bm25._elastic", None)
+
+
+@pytest.fixture(autouse=True)
+def skip_post_index_enrich(monkeypatch):
+    monkeypatch.setattr("app.index._enrich_after_index", lambda _document_id: None)
 
 
 @pytest.fixture(autouse=True)

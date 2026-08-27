@@ -11,7 +11,8 @@ from app.parse import parse_text_document
 def _client() -> TestClient:
     reset_app_state()
     get_settings(load_file=True)
-    return TestClient(create_app(load_file=True, ensure_default=True))
+    from http_client import api_client
+    return api_client()
 
 
 def _ready_note(client: TestClient, filename: str, content: str) -> tuple[str, str]:

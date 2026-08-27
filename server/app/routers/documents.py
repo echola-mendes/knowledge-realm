@@ -10,9 +10,10 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.db import session_scope
-from app.kb import resolve_knowledge_base_id
+from app.deps import current_user
+from app.kb import KnowledgeBaseAccessError, owned_document, resolve_knowledge_base_id
 from app.llm import llm_keys_ready
-from app.models import Document, DocumentChunk, DocumentTag, Entity, EntityLink, Favorite, KnowledgeBase, Tag
+from app.models import Document, DocumentChunk, DocumentTag, Entity, EntityLink, Favorite, KnowledgeBase, Tag, User
 from app.p1.chains import extract_graph, gather_document_text, suggest_tag_names, summarize_document
 from app.schemas import (
     DocumentGraphOut,
@@ -24,7 +25,7 @@ from app.schemas import (
     RelatedDocumentOut,
     UrlCreate,
 )
-from app.search import search_chunks
+from app.chunk import CHUNK_OVERLAP, CHUNK_SIZE
 from app import index as index_mod
 from app.es_bm25 import EsNotConfiguredError, delete_document_chunks
 from app.storage import original_path, parsed_dir, remove_document_files, write_original
@@ -48,9 +49,18 @@ def _normalize_ext(filename: str) -> str:
     return Path(filename or "").suffix.lower()
 
 
-def _document_out(doc: Document, session: Session, *, existed: bool = False) -> DocumentOut:
+def _owned_doc(session: Session, document_id: uuid.UUID, user_id: uuid.UUID) -> Document:
+    doc = owned_document(session, document_id, user_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return doc
+
+
+def _document_out(doc: Document, session: Session, user_id: uuid.UUID, *, existed: bool = False) -> DocumentOut:
     tag_ids = list(session.scalars(select(DocumentTag.tag_id).where(DocumentTag.document_id == doc.id)))
-    fav = session.get(Favorite, doc.id) is not None
+    fav = session.get(Favorite, (user_id, doc.id)) is not None
+    kb = session.get(KnowledgeBase, doc.knowledge_base_id)
+    owner = session.get(User, kb.user_id) if kb else None
     return DocumentOut.model_validate(doc).model_copy(
         update={
             "existed": existed,
@@ -58,6 +68,9 @@ def _document_out(doc: Document, session: Session, *, existed: bool = False) -> 
             "source_path": str(original_path(doc.id, doc.ext)),
             "tag_ids": tag_ids,
             "is_favorite": fav,
+            "created_by": owner.username if owner else "",
+            "chunk_size": CHUNK_SIZE,
+            "chunk_overlap": CHUNK_OVERLAP,
         }
     )
 
@@ -68,6 +81,7 @@ async def upload_document(
     file: UploadFile = File(...),
     knowledge_base_id: uuid.UUID | None = Form(None),
     session: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     ext = _normalize_ext(file.filename or "")
     if ext not in ALLOWED:
@@ -75,15 +89,16 @@ async def upload_document(
     data = await file.read()
     if len(data) > UPLOAD_MAX_BYTES:
         raise HTTPException(status_code=400, detail="文件超过 100MB")
-    kb_id = resolve_knowledge_base_id(session, knowledge_base_id)
-    if session.get(KnowledgeBase, kb_id) is None:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+    try:
+        kb_id = resolve_knowledge_base_id(session, knowledge_base_id, user.id)
+    except KnowledgeBaseAccessError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     checksum = hashlib.sha256(data).hexdigest()
     existing = session.scalar(
         select(Document).where(Document.knowledge_base_id == kb_id, Document.checksum == checksum)
     )
     if existing is not None:
-        return _document_out(existing, session, existed=True)
+        return _document_out(existing, session, user.id, existed=True)
     doc_id = uuid.uuid4()
     write_original(doc_id, ext, data)
     doc = Document(
@@ -100,7 +115,7 @@ async def upload_document(
     session.commit()
     session.refresh(doc)
     background.add_task(index_mod.process_document, doc.id)
-    return _document_out(doc, session, existed=False)
+    return _document_out(doc, session, user.id, existed=False)
 
 
 @router.post("/notes", response_model=DocumentOut)
@@ -108,20 +123,22 @@ def create_note(
     body: NoteCreate,
     background: BackgroundTasks,
     session: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     text = body.content.strip()
     if not text:
         raise HTTPException(status_code=400, detail="笔记内容为空")
-    kb_id = resolve_knowledge_base_id(session, body.knowledge_base_id)
-    if session.get(KnowledgeBase, kb_id) is None:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+    try:
+        kb_id = resolve_knowledge_base_id(session, body.knowledge_base_id, user.id)
+    except KnowledgeBaseAccessError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     data = text.encode("utf-8")
     checksum = hashlib.sha256(data).hexdigest()
     existing = session.scalar(
         select(Document).where(Document.knowledge_base_id == kb_id, Document.checksum == checksum)
     )
     if existing is not None:
-        return _document_out(existing, session, existed=True)
+        return _document_out(existing, session, user.id, existed=True)
     doc_id = uuid.uuid4()
     write_original(doc_id, ".md", data)
     doc = Document(
@@ -138,7 +155,7 @@ def create_note(
     session.commit()
     session.refresh(doc)
     background.add_task(index_mod.process_document, doc.id)
-    return _document_out(doc, session, existed=False)
+    return _document_out(doc, session, user.id, existed=False)
 
 
 @router.post("/url", response_model=DocumentOut)
@@ -146,19 +163,21 @@ def create_url_document(
     body: UrlCreate,
     background: BackgroundTasks,
     session: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
     url = body.url.strip()
     if not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="只支持 http/https 公开页")
-    kb_id = resolve_knowledge_base_id(session, body.knowledge_base_id)
-    if session.get(KnowledgeBase, kb_id) is None:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+    try:
+        kb_id = resolve_knowledge_base_id(session, body.knowledge_base_id, user.id)
+    except KnowledgeBaseAccessError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     checksum = hashlib.sha256(url.encode("utf-8")).hexdigest()
     existing = session.scalar(
         select(Document).where(Document.knowledge_base_id == kb_id, Document.checksum == checksum)
     )
     if existing is not None:
-        return _document_out(existing, session, existed=True)
+        return _document_out(existing, session, user.id, existed=True)
     doc_id = uuid.uuid4()
     doc = Document(
         id=doc_id,
@@ -175,7 +194,7 @@ def create_url_document(
     session.commit()
     session.refresh(doc)
     background.add_task(index_mod.process_document, doc.id)
-    return _document_out(doc, session, existed=False)
+    return _document_out(doc, session, user.id, existed=False)
 
 
 @router.get("", response_model=list[DocumentOut])
@@ -184,15 +203,29 @@ def list_documents(
     tag_id: uuid.UUID | None = None,
     favorite: bool | None = None,
     session: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
-    kb_id = resolve_knowledge_base_id(session, knowledge_base_id)
-    stmt = select(Document).where(Document.knowledge_base_id == kb_id)
+    if knowledge_base_id is not None:
+        try:
+            kb_id = resolve_knowledge_base_id(session, knowledge_base_id, user.id)
+        except KnowledgeBaseAccessError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        stmt = select(Document).where(Document.knowledge_base_id == kb_id)
+    else:
+        stmt = (
+            select(Document)
+            .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
+            .where(KnowledgeBase.user_id == user.id)
+        )
     if tag_id is not None:
+        tag = session.get(Tag, tag_id)
+        if tag is None or tag.user_id != user.id:
+            raise HTTPException(status_code=404, detail="标签不存在")
         stmt = stmt.join(DocumentTag).where(DocumentTag.tag_id == tag_id)
     if favorite is True:
-        stmt = stmt.join(Favorite, Favorite.document_id == Document.id)
+        stmt = stmt.join(Favorite, Favorite.document_id == Document.id).where(Favorite.user_id == user.id)
     rows = session.scalars(stmt.order_by(Document.created_at.desc())).all()
-    return [_document_out(row, session) for row in rows]
+    return [_document_out(row, session, user.id) for row in rows]
 
 
 @router.put("/{document_id}/tags", response_model=DocumentOut)
@@ -200,43 +233,43 @@ def set_document_tags(
     document_id: uuid.UUID,
     body: DocumentTagsPut,
     session: Session = Depends(get_db),
+    user: User = Depends(current_user),
 ):
-    doc = session.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="文档不存在")
+    doc = _owned_doc(session, document_id, user.id)
     unique_ids = list(dict.fromkeys(body.tag_ids))
     if len(unique_ids) > 5:
         raise HTTPException(status_code=400, detail="一篇文档最多5个标签")
     for tag_id in unique_ids:
-        if session.get(Tag, tag_id) is None:
+        tag = session.get(Tag, tag_id)
+        if tag is None or tag.user_id != user.id:
             raise HTTPException(status_code=404, detail="标签不存在")
     session.execute(delete(DocumentTag).where(DocumentTag.document_id == document_id))
     for tag_id in unique_ids:
         session.add(DocumentTag(document_id=document_id, tag_id=tag_id))
     session.commit()
     session.refresh(doc)
-    return _document_out(doc, session)
+    return _document_out(doc, session, user.id)
 
 
 @router.post("/{document_id}/favorite", response_model=DocumentOut)
-def favorite_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
-    doc = session.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="文档不存在")
-    existing = session.get(Favorite, document_id)
+def favorite_document(
+    document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    doc = _owned_doc(session, document_id, user.id)
+    existing = session.get(Favorite, (user.id, document_id))
     if existing is None:
-        session.add(Favorite(document_id=document_id))
+        session.add(Favorite(user_id=user.id, document_id=document_id))
         session.commit()
     session.refresh(doc)
-    return _document_out(doc, session)
+    return _document_out(doc, session, user.id)
 
 
 @router.delete("/{document_id}/favorite")
-def unfavorite_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
-    doc = session.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="文档不存在")
-    row = session.get(Favorite, document_id)
+def unfavorite_document(
+    document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    _owned_doc(session, document_id, user.id)
+    row = session.get(Favorite, (user.id, document_id))
     if row is not None:
         session.delete(row)
         session.commit()
@@ -244,22 +277,19 @@ def unfavorite_document(document_id: uuid.UUID, session: Session = Depends(get_d
 
 
 @router.get("/{document_id}", response_model=DocumentOut)
-def get_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
-    doc = session.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="文档不存在")
-    return _document_out(doc, session)
+def get_document(document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)):
+    return _document_out(_owned_doc(session, document_id, user.id), session, user.id)
 
 
 @router.get("/{document_id}/related", response_model=list[RelatedDocumentOut])
-def list_related_documents(document_id: uuid.UUID, session: Session = Depends(get_db)):
-    doc = session.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="文档不存在")
+def list_related_documents(
+    document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    doc = _owned_doc(session, document_id, user.id)
     if not index_mod.embedding_keys_ready():
         raise HTTPException(status_code=503, detail="未配置 Embedding API Key")
     query = (doc.summary or "").strip() or doc.filename
-    hits = search_chunks(session, query, knowledge_base_id=doc.knowledge_base_id, k=20)
+    hits = search_chunks(session, query, user_id=user.id, knowledge_base_id=doc.knowledge_base_id, k=20)
     seen: set[uuid.UUID] = set()
     out: list[RelatedDocumentOut] = []
     for hit in hits:
@@ -290,20 +320,20 @@ def _require_ready_llm(doc: Document | None) -> Document:
 
 
 @router.post("/{document_id}/summarize", response_model=DocumentOut)
-def summarize(document_id: uuid.UUID, session: Session = Depends(get_db)):
-    doc = _require_ready_llm(session.get(Document, document_id))
+def summarize(document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)):
+    doc = _require_ready_llm(_owned_doc(session, document_id, user.id))
     text = gather_document_text(session, doc)
     if not text:
         raise HTTPException(status_code=400, detail="empty_content")
     doc.summary = summarize_document(text)
     session.commit()
     session.refresh(doc)
-    return _document_out(doc, session)
+    return _document_out(doc, session, user.id)
 
 
 @router.post("/{document_id}/auto-tags", response_model=DocumentOut)
-def auto_tags(document_id: uuid.UUID, session: Session = Depends(get_db)):
-    doc = _require_ready_llm(session.get(Document, document_id))
+def auto_tags(document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)):
+    doc = _require_ready_llm(_owned_doc(session, document_id, user.id))
     text = gather_document_text(session, doc)
     if not text:
         raise HTTPException(status_code=400, detail="empty_content")
@@ -311,9 +341,9 @@ def auto_tags(document_id: uuid.UUID, session: Session = Depends(get_db)):
         session.scalars(select(DocumentTag.tag_id).where(DocumentTag.document_id == document_id))
     )
     for name in suggest_tag_names(text):
-        tag = session.scalar(select(Tag).where(Tag.name == name))
+        tag = session.scalar(select(Tag).where(Tag.user_id == user.id, Tag.name == name))
         if tag is None:
-            tag = Tag(name=name)
+            tag = Tag(user_id=user.id, name=name)
             session.add(tag)
             session.flush()
         if tag.id not in existing_ids:
@@ -323,7 +353,7 @@ def auto_tags(document_id: uuid.UUID, session: Session = Depends(get_db)):
             existing_ids.add(tag.id)
     session.commit()
     session.refresh(doc)
-    return _document_out(doc, session)
+    return _document_out(doc, session, user.id)
 
 
 def _upsert_entities(session: Session, knowledge_base_id: uuid.UUID, items: list[dict[str, str]]) -> None:
@@ -347,8 +377,10 @@ def _entity_by_name(session: Session, knowledge_base_id: uuid.UUID, name: str) -
 
 
 @router.post("/{document_id}/graph", response_model=DocumentGraphOut)
-def extract_document_graph(document_id: uuid.UUID, session: Session = Depends(get_db)):
-    doc = _require_ready_llm(session.get(Document, document_id))
+def extract_document_graph(
+    document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    doc = _require_ready_llm(_owned_doc(session, document_id, user.id))
     text = gather_document_text(session, doc)
     if not text:
         raise HTTPException(status_code=400, detail="empty_content")
@@ -389,10 +421,10 @@ def extract_document_graph(document_id: uuid.UUID, session: Session = Depends(ge
 
 
 @router.get("/{document_id}/parsed.md")
-def get_parsed_markdown(document_id: uuid.UUID, session: Session = Depends(get_db)):
-    doc = session.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="文档不存在")
+def get_parsed_markdown(
+    document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    _owned_doc(session, document_id, user.id)
     path = parsed_dir(document_id) / "document.md"
     if not path.is_file():
         raise HTTPException(status_code=404, detail="解析稿不存在")
@@ -400,10 +432,8 @@ def get_parsed_markdown(document_id: uuid.UUID, session: Session = Depends(get_d
 
 
 @router.delete("/{document_id}")
-def delete_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
-    doc = session.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="文档不存在")
+def delete_document(document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)):
+    doc = _owned_doc(session, document_id, user.id)
     remove_document_files(doc)
     try:
         delete_document_chunks(document_id)
@@ -417,24 +447,25 @@ def delete_document(document_id: uuid.UUID, session: Session = Depends(get_db)):
 
 
 @router.post("/{document_id}/reindex", response_model=DocumentOut)
-def reindex_document_http(document_id: uuid.UUID, session: Session = Depends(get_db)):
+def reindex_document_http(
+    document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
     if not index_mod.embedding_keys_ready():
         raise HTTPException(status_code=503, detail="未配置 Embedding API Key")
-    doc = session.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="文档不存在")
+    doc = _owned_doc(session, document_id, user.id)
     index_mod.reindex_document(document_id)
     session.refresh(doc)
-    return _document_out(doc, session)
+    return _document_out(doc, session, user.id)
 
 
 @router.post("/{document_id}/index", response_model=DocumentOut)
-def index_document_http(document_id: uuid.UUID, session: Session = Depends(get_db)):
+def index_document_http(
+    document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
     if not index_mod.embedding_keys_ready():
         raise HTTPException(status_code=503, detail="未配置 Embedding API Key")
-    doc = session.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="文档不存在")
+    doc = _owned_doc(session, document_id, user.id)
     index_mod.index_document(document_id)
     session.refresh(doc)
-    return _document_out(doc, session)
+    return _document_out(doc, session, user.id)
+

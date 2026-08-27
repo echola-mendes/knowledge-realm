@@ -13,7 +13,8 @@ import app.search as search_mod
 def _client() -> TestClient:
     reset_app_state()
     get_settings(load_file=True)
-    return TestClient(create_app(load_file=True, ensure_default=True))
+    from http_client import api_client
+    return api_client()
 
 
 def _directional_embed(texts: list[str]) -> list[list[float]]:
@@ -82,8 +83,10 @@ def test_search_without_elasticsearch_url_is_visible(monkeypatch):
     monkeypatch.delenv("ELASTICSEARCH_URL", raising=False)
     monkeypatch.setenv("ELASTICSEARCH_URL", "")
     reset_app_state()
+    from http_client import api_client
+
     monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
-    with TestClient(create_app(load_file=True, ensure_default=True)) as client:
+    with api_client() as client:
         res = client.post("/api/search", json={"query": "苹果"})
         assert res.status_code == 503
         assert "ELASTICSEARCH_URL" in res.json()["detail"]

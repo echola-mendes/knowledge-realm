@@ -2,12 +2,15 @@ export type KnowledgeBase = {
   id: string;
   name: string;
   is_default: boolean;
+  is_enabled: boolean;
+  created_at?: string | null;
 };
 
 export type DocumentItem = {
   id: string;
   knowledge_base_id: string;
   filename: string;
+  ext: string;
   kind: string;
   status: string;
   error_message: string | null;
@@ -15,6 +18,11 @@ export type DocumentItem = {
   tag_ids: string[];
   is_favorite: boolean;
   summary: string | null;
+  byte_size: number;
+  created_at?: string | null;
+  created_by?: string;
+  chunk_size?: number;
+  chunk_overlap?: number;
 };
 
 export type TagItem = { id: string; name: string };
@@ -42,10 +50,22 @@ export type Citation = {
 
 export type Conversation = { id: string; knowledge_base_id: string; title: string };
 
-export type AppUser = { id: string; name: string; phone: string | null };
+export type AppUser = { id: string; username: string };
 
 export function getMe() {
-  return api<AppUser>("/api/me");
+  return api<AppUser>("/api/auth/me");
+}
+
+export function login(username: string, password: string) {
+  return api<AppUser>("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function logout() {
+  return api<void>("/api/auth/logout", { method: "POST" });
 }
 
 export function messageFromErrorBody(text: string, fallback = "请求失败"): string {
@@ -59,7 +79,7 @@ export function messageFromErrorBody(text: string, fallback = "请求失败"): s
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, init);
+  const res = await fetch(path, { credentials: "include", ...init });
   if (!res.ok) {
     throw new Error(messageFromErrorBody(await res.text(), res.statusText));
   }
@@ -77,14 +97,36 @@ export function listKnowledgeBases() {
   return api<KnowledgeBase[]>("/api/knowledge-bases");
 }
 
+export function createKnowledgeBase(name: string) {
+  return api<KnowledgeBase>("/api/knowledge-bases", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function updateKnowledgeBase(id: string, body: { name?: string; is_enabled?: boolean }) {
+  return api<KnowledgeBase>(`/api/knowledge-bases/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteKnowledgeBase(id: string) {
+  return api<void>(`/api/knowledge-bases/${id}`, { method: "DELETE" });
+}
+
 export function listDocuments(
-  knowledgeBaseId: string,
+  knowledgeBaseId?: string,
   opts?: { favorite?: boolean; tagId?: string },
 ) {
-  const q = new URLSearchParams({ knowledge_base_id: knowledgeBaseId });
+  const q = new URLSearchParams();
+  if (knowledgeBaseId) q.set("knowledge_base_id", knowledgeBaseId);
   if (opts?.favorite) q.set("favorite", "true");
   if (opts?.tagId) q.set("tag_id", opts.tagId);
-  return api<DocumentItem[]>(`/api/documents?${q}`);
+  const suffix = q.toString() ? `?${q}` : "";
+  return api<DocumentItem[]>(`/api/documents${suffix}`);
 }
 
 export function listTags() {
@@ -120,6 +162,8 @@ export function searchChunks(body: {
   knowledge_base_id?: string;
   tag_id?: string;
   kind?: string;
+  created_after?: string;
+  created_before?: string;
 }) {
   return api<SearchHit[]>("/api/search", {
     method: "POST",
@@ -238,4 +282,79 @@ export function statusLabel(status: string): string {
   if (status === "ready") return "已完成";
   if (status === "parse_failed" || status === "index_failed") return "处理失败";
   return "处理中";
+}
+
+export type RetrievalDebugRow = {
+  rank: number;
+  document_id: string;
+  document_name: string;
+  chunk_id: string;
+  score: number;
+  vector_rank: number | null;
+  vector_score: number | null;
+  bm25_rank: number | null;
+  bm25_score: number | null;
+  rrf_rank: number | null;
+  rrf_score: number | null;
+  rrf_from_vector: number | null;
+  rrf_from_bm25: number | null;
+  rerank_rank: number | null;
+  rerank_score: number | null;
+  final: boolean;
+};
+
+export type RetrievalStage = {
+  requested_k: number;
+  actual_count: number;
+  threshold?: number | null;
+  k_const?: number | null;
+  candidate_count?: number | null;
+  model?: string | null;
+  rows: RetrievalDebugRow[];
+};
+
+export type RetrievalDebugResponse = {
+  query: string;
+  query_norm: string;
+  vector: RetrievalStage;
+  bm25: RetrievalStage;
+  rrf: RetrievalStage;
+  rerank: RetrievalStage;
+  final: RetrievalDebugRow[];
+  candidates: RetrievalDebugRow[];
+  evaluation: { k: number; recall: number | null; precision: number | null; relevant_doc_count: number };
+  labels: Record<string, number>;
+};
+
+export type RetrievalDebugParams = {
+  query: string;
+  knowledge_base_id?: string;
+  vector_k: number;
+  bm25_k: number;
+  rrf_k: number;
+  rerank_k: number;
+  vector_threshold: number;
+  rrf_k_const: number;
+  eval_k: number;
+};
+
+export function runRetrievalDebug(body: RetrievalDebugParams) {
+  return api<RetrievalDebugResponse>("/api/retrieval-debug", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function putRetrievalLabel(body: {
+  query: string;
+  knowledge_base_id?: string;
+  document_id: string;
+  relevance: number;
+}) {
+  return api<{ document_id: string; relevance: number }>("/api/retrieval-debug/labels", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
