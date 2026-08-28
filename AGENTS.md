@@ -23,7 +23,7 @@
 
 ## 范围
 
-只做当前计划步骤。P0 / P1.1–P1.4 已收口。**当前步骤 P2-RAG-4（搜索时间窗）。** P2-DEBUG-1 与 AUTH-1 代码已落地。P2-RAG-3 待确认阈值。未在 `implementation-plan.md` 列出的功能不要做。改需求先改 `design-document.md`（及 `PRD.md` / `PRD-P2.md`）。
+只做当前计划步骤。P0 / P1.1–P1.4 已收口。**当前步骤 P2-Agent-4（Long-term Memory，代码已写待确认）。** P2-Agent-1～3 / P2-RAG-4 已确认。P2-DEBUG-1 与 AUTH-1 代码已落地。P2-RAG-3 待确认阈值。未在 `implementation-plan.md` 列出的功能不要做。改需求先改 `design-document.md`（及 `PRD.md` / `PRD-P2.md`）。
 
 ## 文档维护
 

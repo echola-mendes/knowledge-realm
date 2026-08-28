@@ -56,6 +56,14 @@ def summarize_document(text: str) -> str:
     )
 
 
+def summarize_conversation_turns(dialogue: str) -> str:
+    return _chat_complete(
+        "将以下更早的对话历史压缩为简短中文摘要，保留用户关键事实、偏好与结论。"
+        "只输出摘要正文，不要寒暄。",
+        dialogue,
+    )
+
+
 def enrich_document_after_ready(document_id: uuid.UUID) -> None:
     from app.db import session_scope
     from app.llm import llm_keys_ready

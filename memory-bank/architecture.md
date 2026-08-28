@@ -2,7 +2,7 @@
 
 代码仓库名：`knowledge_realm`。V1/P0 已落地。约定目录见 `tech-stack.md`。
 
-**阶段：** P0、P1.1–P1.4 已落地。**P2-RAG-1～2 已确认路径。P2-RAG-3 代码已写（待提出人验证阈值）。** 未开始 `search_graph` Tool、未做力导向可视化。
+**阶段：** P0、P1.1–P1.4 已落地。**P2-RAG-1～2、P2-RAG-4、P2-Agent-1～3 已确认。P2-RAG-3 待阈值确认。P2-Agent-4 LTM 代码已写（待确认）。** 未开始 WEB 路由；未开始 `search_graph` Tool、未做力导向可视化。
 
 | 路径 | 职责 |
 |---|---|
@@ -28,10 +28,11 @@
 | `server/alembic/` | 迁移；当前 `20260827_0007` |
 | `web/src/styles.css` | 全局设计 token 与顶栏/页面自适应容器（不锁 1440×900） |
 | `server/app/routers/tags.py` | 标签创建/列表/删除 |
-| `server/app/search.py` | Hybrid + RRF + Rerank；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤 |
+| `server/app/search.py` | Hybrid + RRF + Rerank；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤；可选 `created_after`/`created_before`（文档 `created_at`） |
 | `server/app/rerank.py` | DashScope 兼容 `/reranks`；无 Key 则 LLM 打分；都没有则保持 RRF 顺序 |
 | `server/app/es_bm25.py` | BM25 索引与检索；chunk 与 PG 同步 upsert/删除；测试可替换为内存实现 |
-| `server/app/routers/search.py` | `POST /api/search` |
+| `server/app/routers/search.py` | `POST /api/search`（可选 kind / 时间窗） |
+| `web/src/views/SearchView.vue` | 搜索页：标签、kind、时间窗；不调 Chat |
 | `server/app/llm.py` | LangChain 单链 Chat；无命中不调用 |
 | `server/app/chat.py` | 问答：检索只用当前句；最近 6 条历史给 LLM |
 | `server/app/routers/chat.py` | `POST /chat`、`/chat/stream`；会话列表/消息/删除 |
@@ -44,10 +45,13 @@
 | `server/app/models.py` | SQLAlchemy 表 |
 | `web/src/views/LoginView.vue` | 独立登录页 |
 | `server/app/p1/chains.py` | P1.1/P1.2/P1.4 摘要、自动标签、文档对比、图谱抽取 Chain；禁止 import LangGraph |
-| `server/app/routers/p1.py` | P1.2 `POST /api/compare`；P1.3 `POST /api/agent` 与 `/api/agent/stream`（`task=agent|report`，走 Graph，不经过 `/api/chat`）；P1.4 `GET /api/graph` |
+| `server/app/p1/conversation_summary.py` | 消息 >6 时压缩更早轮次写入 `conversation.summary` |
+| `server/app/p1/ltm.py` | `user_memory` 读写；Agent 灌入 `ltm_hits`（非向量检索） |
+| `server/app/p1/checkpoint.py` | LangGraph `PostgresSaver`（同库连接池）；`setup` 建 checkpoint 表 |
 | `server/app/p1/tools.py` | P1.3 `search_knowledge`：内部调用 `search_chunks`；禁止 HTTP `/api/search` |
-| `server/app/p1/graph.py` | P1.3 一张 StateGraph：reason 只决策、run_tool 执行 search_knowledge、generate 成文；`task=agent|report` 同图；max_loops=3；无 Checkpoint |
-| `web/src/views/ChatView.vue` | 默认 `/api/chat/stream`；「Agent / 报告」走 `/api/agent/stream` |
+| `server/app/p1/graph.py` | P1.3 一张 StateGraph：reason → search \| generate；`generate` 可带 STM history；compile 带 checkpointer；`task=agent|report` 同图；max_loops=3 |
+| `server/app/routers/p1.py` | P1.2 `POST /api/compare`；P1.3 `POST /api/agent` 与 `/api/agent/stream`（`thread_id=conversation_id`，每轮重灌 STM）；P1.4 `GET /api/graph` |
+| `web/src/views/ChatView.vue` | 默认 `/api/chat/stream`；「Agent / 报告」走 `/api/agent/stream`（共享 `conversation_id`） |
 | `web/src/views/ReaderView.vue` | 阅读页：摘要/自动标签；P1.4「抽取图谱」+ 实体/关系列表 + 相近文档（无 vis.js/D3） |
 | `web/` | Vite + Vue 3 + TS；左侧栏 + 首页/文档/搜索/对话/Debug/阅读/设置 |
 | `data/files/`、`data/parsed/` | 原件与解析稿；内容被 gitignore |
@@ -61,8 +65,9 @@
 
 - `/api/chat`、`/api/chat/stream` 仍为 P0 LangChain 单链，未进图。
 - Agent / 研究报告：同一张 `p1/graph.py`；`POST /api/agent` 与 `/api/agent/stream`；Tool 仅 `search_knowledge` → 内部 `search.py`（不是 HTTP `/api/search`）。
+- Agent 记忆：STM 在 `message`（最近 6 条）；`conversation.summary` 为窗口外摘要；`user_memory` 为跨会话 LTM；Checkpoint 为 Postgres 图快照（`thread_id=conversation_id`）。
 - 摘要 / 自动标签 / 文档对比 / 图谱抽取：`p1/chains.py`，无 LangGraph。
-- 未做：Checkpoint、HITL、Subgraph、Multi-Agent、`search_graph` Tool、力导向可视化。P2 计划中的 Checkpoint / Summary / LTM / WEB 见设计文档第 4.7 节，代码未开始。
+- 未做：HITL、Subgraph、Multi-Agent、`search_graph` Tool、力导向可视化。P2 计划中的 Summary / LTM / WEB 见设计文档第 4.7 节。
 
 ## P1.4 已落地边界
 

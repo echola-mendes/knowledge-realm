@@ -83,7 +83,53 @@ MinerU、LlamaIndex、Ollama、Milvus、RBAC/组织/租户/OAuth/JWT、扫描件
 - PDF：按页文本，`## Page N`；page 从 1。无 OCR。  
 - 空文本：`处理失败` / `empty_content`。解析超时 **60 秒**。  
 - 同库相同 SHA-256：跳过解析与 embedding，返回已有文档。  
-- 状态对用户：**处理中 / 已完成 / 处理失败**。内部可映射 `pending|parsing|indexing|ready|parse_failed|index_failed`。仅「已完成」参与检索。
+
+#### 4.1.1 文档状态（应用层状态机）
+
+**说明：** 下列状态码为知域「导入 → 解析 → 切片向量化」流水线的**应用层约定**，存于 `document.status`（`String(32)`）。**不是** pgvector、Embedding API 或 LangChain 的内置状态。对用户产品语义仍为三类：**处理中 / 已完成 / 处理失败**；仅 `ready`（已完成）参与检索与问答。
+
+**状态码与界面文案（文档列表「状态」列）：**
+
+| 状态码 | 界面显示 | 产品语义 | 说明 |
+|--------|----------|----------|------|
+| `pending` | 待处理 | 处理中 | 已入库或 reindex 重置后，等待后台任务开始 |
+| `parsing` | 解析中 | 处理中 | 读取原文并生成 `data/parsed/{id}/document.md` |
+| `parsed` | 待向量化 | 处理中 | 解析成功；通常很快进入向量化（`process_document` 内联调用索引） |
+| `indexing` | 向量化中 | 处理中 | 切片、Embedding、写入 `document_chunk` |
+| `ready` | 已完成 | 已完成 | 终态；可被检索、问答、对比 |
+| `parse_failed` | 解析失败 | 处理失败 | 终态；`error_message` 记录解析阶段原因 |
+| `index_failed` | 向量化失败 | 处理失败 | 终态；`error_message` 记录向量化/入库阶段原因 |
+
+**正常流转：**
+
+```text
+pending → parsing → parsed → indexing → ready
+```
+
+**失败分支：** `parsing` 阶段失败 → `parse_failed`；`indexing` 阶段失败 → `index_failed`。失败后不自动恢复；用户可点「向量化」（`POST /api/documents/{id}/reindex`）或删除后重新上传。
+
+**触发入口：**
+
+- 上传文件 / 创建笔记 / 导入 URL：创建时 `status=pending`，`BackgroundTasks` 调用 `process_document`（先解析，未 `parse_failed` 则继续 `index_document`）。
+- 同库 checksum 命中：返回已有文档，**不**重新走状态机。
+- reindex：删除该文档旧切片（及 ES 索引若已配置）→ `pending` + 清空 `error_message` → 重新 `process_document`。
+
+**常见 `error_message`（失败原因列 / API `error_message`）：**
+
+| 码 | 典型场景 |
+|----|----------|
+| `empty_content` | 解析结果为空 |
+| `missing_original` | 本地原文文件缺失 |
+| `invalid_utf8` | 文本编码无效 |
+| `parse_timeout` | 解析超过 60 秒 |
+| `parse_error:…` | 其他解析异常 |
+| `no_parsed_markdown` | 缺少解析产物 |
+| `no_chunks` | 无法生成有效切片 |
+| `未配置 Embedding API Key` | 未配置 Embedding |
+| `embed_failed:…` / `index_error:…` | Embedding 或入库异常 |
+| `url_timeout` / `url_fetch_failed` | URL 抓取失败 |
+
+**列表筛选映射：** 「处理中」= 非 `ready` 且非 `parse_failed` / `index_failed`；「处理失败」= `parse_failed` 或 `index_failed`；「已完成」= `ready`。
 
 ### 4.2 切块
 

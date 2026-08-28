@@ -324,5 +324,34 @@
 - 结果：左侧栏导航；`/debug` 演示页（K 共用、N/M 独立、Evaluation K 多选）；未接检索 API。
 - 下一步：提出人确认 UI 后再接 debug API
 
+## 步骤 P2-RAG-4 — 时间筛选
+
+- 状态：已执行并验证（提出人确认继续）
+- 结果：`search_chunks` / `POST /api/search` / 搜索页支持可选 `created_after`/`created_before`（文档 `created_at`）；来源仍用 `kind`；Chat 不传时间。`tests/test_search.py` 2 passed。
+- 下一步：P2-Agent-1 已落地，见下
+
+## 步骤 P2-Agent-1 — Agent 短期记忆
+
+- 状态：已执行并验证（提出人确认继续）
+- 结果：`AgentRequest`/`AgentOut` 含 `conversation_id`；无则新建同表会话；最近 6 条灌入 `AgentState.messages`；`generate` 经 `llm.chat(..., history)`；落库本轮 user/assistant。无 Summary/Checkpoint。对话页 Agent/报告也带会话 id。`tests/test_p1_agent.py` 通过。
+- 下一步：P2-Agent-2 已落地，见下
+
+## 步骤 P2-Agent-2 — Checkpoint
+
+- 状态：已执行并验证（提出人回复 1 确认）
+- 结果：`langgraph-checkpoint-postgres` + `PostgresSaver`（同 `DATABASE_URL`）；`thread_id=conversation_id`；每轮从 `message` 重灌 STM，`loop_count=0`，`citations` 清空；citations 上限 20。无 Summary。`test_p1_agent`+`test_p1_graph` 9 passed。
+- 下一步：P2-Agent-3 已落地，见下
+
+## 步骤 P2-Agent-3 — Conversation Summary
+
+- 状态：已执行并验证（提出人回复 1 确认）
+- 结果：迁移 `conversation.summary`；消息 >6 时压缩更早轮次；Agent 上下文 = 摘要 + 最近 6 条。Chat 未改。
+- 下一步：P2-Agent-4 已落地，见下
+
+## 步骤 P2-Agent-4 — Long-term Memory 表
+
+- 状态：已执行，待提出人确认
+- 结果：迁移 `user_memory`（user_id/kind/content）；`load_ltm_hits` / `write_user_memory`；Agent 请求灌入 `ltm_hits`，`generate` 经 `llm.chat(..., ltm=)`；不写入 `document_chunk`、不做向量检索。`test_p1_ltm` + `test_p1_agent` 通过。
+- 下一步：提出人确认后进入 **P2-Agent-5（web_search 与统一路由）**
 
 
