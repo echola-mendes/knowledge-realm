@@ -20,6 +20,8 @@ class AgentState(TypedDict, total=False):
     knowledge_base_id: str | None
     task: Literal["agent", "report"]
     messages: list[dict[str, str]]
+    summary: str
+    ltm_hits: list[dict[str, Any]]
     citations: list[dict[str, Any]]
     loop_count: int
     max_loops: int
@@ -143,7 +145,13 @@ def generate_answer(state: AgentState) -> str:
             "只使用资料中的事实，不要编造出处。\n\n"
             f"主题：{question}"
         )
-    return chat(question, context, history)
+    return chat(
+        question,
+        context,
+        history,
+        summary=(state.get("summary") or "").strip() or None,
+        ltm=state.get("ltm_hits") or None,
+    )
 
 
 def node_generate(state: AgentState) -> dict[str, Any]:
@@ -193,6 +201,8 @@ def initial_state(
     knowledge_base_id: uuid.UUID | None = None,
     task: Literal["agent", "report"] = "agent",
     history: list[dict[str, str]] | None = None,
+    summary: str | None = None,
+    ltm_hits: list[dict[str, Any]] | None = None,
 ) -> AgentState:
     messages = list(history or [])
     messages.append({"role": "user", "content": query})
@@ -200,6 +210,8 @@ def initial_state(
         "knowledge_base_id": str(knowledge_base_id) if knowledge_base_id else None,
         "task": task,
         "messages": messages,
+        "summary": (summary or "").strip(),
+        "ltm_hits": list(ltm_hits or []),
         "citations": [],
         "loop_count": 0,
         "max_loops": MAX_LOOPS,

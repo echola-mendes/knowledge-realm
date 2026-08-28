@@ -13,7 +13,14 @@ def llm_keys_ready() -> bool:
     return bool(get_settings().llm_api_key.strip())
 
 
-def chat(question: str, context: str, history: list[tuple[str, str]] | None = None) -> str:
+def chat(
+    question: str,
+    context: str,
+    history: list[tuple[str, str]] | None = None,
+    *,
+    summary: str | None = None,
+    ltm: list[dict[str, str]] | None = None,
+) -> str:
     global CHAT_CALLS
     CHAT_CALLS += 1
     from langchain_core.prompts import ChatPromptTemplate
@@ -26,7 +33,14 @@ def chat(question: str, context: str, history: list[tuple[str, str]] | None = No
         base_url=settings.llm_base_url,
         temperature=0,
     )
-    pairs: list[tuple[str, str]] = [("system", SYSTEM_PROMPT + "\n\n资料：\n{context}")]
+    system = SYSTEM_PROMPT + "\n\n资料：\n{context}"
+    if ltm:
+        lines = "\n".join(f"- [{row.get('kind', '')}] {row.get('content', '')}" for row in ltm if row.get("content"))
+        if lines.strip():
+            system = f"用户长期记忆：\n{lines}\n\n" + system
+    if summary and summary.strip():
+        system = f"更早对话摘要：\n{summary.strip()}\n\n" + system
+    pairs: list[tuple[str, str]] = [("system", system)]
     for role, content in history or []:
         if role == "user":
             pairs.append(("human", content))

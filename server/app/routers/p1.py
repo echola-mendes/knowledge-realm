@@ -14,6 +14,8 @@ from app.kb import KnowledgeBaseAccessError, owned_document, resolve_knowledge_b
 from app.llm import llm_keys_ready
 from app.models import Conversation, Document, Entity, EntityLink, Message, User
 from app.p1.chains import compare_documents, gather_document_text
+from app.p1.ltm import load_ltm_hits
+from app.p1.conversation_summary import refresh_conversation_summary
 from app.p1.graph import build_graph, initial_state
 from app.chat import _history
 from app.schemas import (
@@ -89,7 +91,8 @@ def _agent_out(body: AgentRequest, session: Session, user_id: uuid.UUID) -> Agen
         if convo is None or convo.user_id != user_id:
             raise HTTPException(status_code=404, detail="会话不存在")
         history_msgs = [{"role": role, "content": content} for role, content in _history(session, convo.id)]
-        summary_text = ""
+        summary_text = (convo.summary or "").strip()
+    ltm_hits = load_ltm_hits(session, user_id)
     task = "report" if body.task == "report" else "agent"
     out = build_graph().invoke(
         initial_state(
@@ -97,6 +100,8 @@ def _agent_out(body: AgentRequest, session: Session, user_id: uuid.UUID) -> Agen
             knowledge_base_id=body.knowledge_base_id,
             task=task,
             history=history_msgs,
+            summary=summary_text,
+            ltm_hits=ltm_hits,
         ),
         config={
             "configurable": {
@@ -117,6 +122,7 @@ def _agent_out(body: AgentRequest, session: Session, user_id: uuid.UUID) -> Agen
             citations=[c.model_dump(mode="json") for c in cites] or None,
         )
     )
+    refresh_conversation_summary(session, convo.id)
     session.commit()
     session.refresh(convo)
     return AgentOut(
