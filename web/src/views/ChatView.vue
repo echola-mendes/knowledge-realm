@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRoute, useRouter, RouterLink } from "vue-router";
 import {
   getMe,
   listConversations,
@@ -11,27 +11,34 @@ import {
   type Conversation,
 } from "../api";
 import Icon from "../components/Icon.vue";
-import RetrievalDebugPanel from "../components/RetrievalDebugPanel.vue";
-import { debugEnabled, setDebugEnabled } from "../debugFlag";
 
 const route = useRoute();
 const router = useRouter();
 const draft = ref(typeof route.query.q === "string" ? route.query.q : "");
 const messages = ref<ChatMessage[]>([]);
 const conversationId = ref<string>(typeof route.query.c === "string" ? route.query.c : "");
+const conversations = ref<Conversation[]>([]);
 const error = ref("");
 const streaming = ref(false);
-const mode = ref<"chat" | "agent" | "report">("chat");
-const debugQuery = ref("");
+const mode = ref<"chat" | "agent" | "report">(
+  route.query.mode === "report" ? "report" : route.query.mode === "agent" ? "agent" : "chat",
+);
 const CHAT_KEY = "zhiyu-chat-id";
+const userInitial = computed(() => (username.value.trim().charAt(0) || "U").toUpperCase());
+
+function syncRouteQuery() {
+  const query: Record<string, string> = {};
+  if (conversationId.value) query.c = conversationId.value;
+  if (mode.value === "report") query.mode = "report";
+  else if (mode.value === "agent") query.mode = "agent";
+  router.replace({ path: "/chat", query });
+}
 
 function rememberConversation(id: string) {
   conversationId.value = id;
   if (id) localStorage.setItem(CHAT_KEY, id);
   else localStorage.removeItem(CHAT_KEY);
-  const query: Record<string, string> = {};
-  if (id) query.c = id;
-  router.replace({ path: "/chat", query });
+  syncRouteQuery();
 }
 const username = ref("");
 const greeting = computed(
@@ -43,11 +50,73 @@ const greetingMsg = computed<ChatMessage>(() => ({
   role: "assistant",
   content: greeting.value,
 }));
-const threadMessages = computed(() => [greetingMsg.value, ...messages.value]);
-const sidebarOpen = ref(false);
+const threadMessages = computed(() => (messages.value.length ? messages.value : [greetingMsg.value]));
+const sidebarOpen = ref(true);
+const listSearch = ref("");
 const box = ref<HTMLElement | null>(null);
 const activeCite = ref<string>("");
 const citeFocus = ref(false);
+const showAllSources = ref(false);
+
+const chatTitle = computed(() => {
+  const row = conversations.value.find((c) => c.id === conversationId.value);
+  return row?.title || (messages.value.length ? "对话" : "新对话");
+});
+
+function convBucket(iso?: string | null) {
+  if (!iso) return "更早";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "更早";
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (d >= today) return "今天";
+  if (d >= yesterday) return "昨天";
+  return "更早";
+}
+
+function formatConvTime(iso?: string | null) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+const conversationGroups = computed(() => {
+  const q = listSearch.value.trim().toLowerCase();
+  const rows = q
+    ? conversations.value.filter((c) => c.title.toLowerCase().includes(q))
+    : conversations.value;
+  const labels = ["今天", "昨天", "更早"] as const;
+  const buckets: Record<(typeof labels)[number], Conversation[]> = { 今天: [], 昨天: [], 更早: [] };
+  for (const c of rows) buckets[convBucket(c.updated_at)].push(c);
+  return labels.filter((label) => buckets[label].length).map((label) => ({ label, items: buckets[label] }));
+});
+
+const citeStats = computed(() => {
+  const rows = panelCites.value;
+  if (!rows.length) return [] as Array<Citation & { pct: number; color: string; start: number; end: number }>;
+  const weights = rows.map((c) => Math.max(c.score ?? 0.01, 0.01));
+  const total = weights.reduce((s, w) => s + w, 0);
+  const colors = ["#2563eb", "#60a5fa", "#93c5fd", "#cbd5e1"];
+  let acc = 0;
+  return rows.map((c, i) => {
+    const pct = (weights[i] / total) * 100;
+    const start = acc;
+    acc += pct;
+    return { ...c, pct: Math.round(pct), color: colors[i % colors.length], start, end: acc };
+  });
+});
+
+const donutStyle = computed(() => {
+  if (!citeStats.value.length) return { background: "#e2e8f0" };
+  const parts = citeStats.value.map((s) => `${s.color} ${s.start}% ${s.end}%`);
+  return { background: `conic-gradient(${parts.join(", ")})` };
+});
+
+const sourceList = computed(() => (showAllSources.value ? panelCites.value : panelCites.value.slice(0, 3)));
 
 const panelCites = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
@@ -69,7 +138,6 @@ async function refreshConversations() {
 
 async function openConversation(id: string) {
   if (streaming.value) return;
-  mode.value = "chat";
   rememberConversation(id);
   try {
     await loadHistory();
@@ -91,8 +159,14 @@ function isThinking(m: ChatMessage) {
   return m.role === "assistant" && !m.content.trim() && streaming.value && last === m;
 }
 
-function formatScore(score: number | undefined) {
-  return typeof score === "number" && Number.isFinite(score) ? score.toFixed(3) : "—";
+function formatSimScore(score: number | undefined) {
+  return typeof score === "number" && Number.isFinite(score) ? score.toFixed(2) : "—";
+}
+
+function citePreview(content: string, limit = 72) {
+  const text = content.replace(/\s+/g, " ").trim();
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}…`;
 }
 
 function hashFor(c: Citation) {
@@ -116,7 +190,6 @@ async function loadHistory() {
 async function ask() {
   const q = draft.value.trim();
   if (!q || streaming.value) return;
-  debugQuery.value = q;
   error.value = "";
   messages.value.push({ id: "u-" + Date.now(), role: "user", content: q });
   const assistant: ChatMessage = { id: "a-" + Date.now(), role: "assistant", content: "" };
@@ -135,6 +208,7 @@ async function ask() {
           ? {
               task: mode.value === "report" ? "report" : "agent",
               query: q,
+              conversation_id: conversationId.value || undefined,
             }
           : {
               query: q,
@@ -164,17 +238,15 @@ async function ask() {
         };
         if (payload.type === "token" && payload.text) assistant.content += payload.text;
         if (payload.type === "citations") {
-          if (!useGraph) {
-            const cid = payload.conversation_id || conversationId.value;
-            if (cid) rememberConversation(cid);
-          }
+          const cid = payload.conversation_id || conversationId.value;
+          if (cid) rememberConversation(cid);
           assistant.citations = payload.citations || [];
           if (payload.answer) assistant.content = payload.answer;
         }
         scrollBottom();
       }
     }
-    if (!useGraph) await refreshConversations();
+    await refreshConversations();
   } catch (e) {
     error.value = String(e);
   } finally {
@@ -214,166 +286,220 @@ onMounted(async () => {
 watch(panelCites, (rows) => {
   citeFocus.value = false;
   activeCite.value = rows[0]?.chunk_id || "";
+  showAllSources.value = false;
 });
+
+watch(
+  () => route.query.mode,
+  (m) => {
+    if (m === "report") mode.value = "report";
+    else if (m === "agent") mode.value = "agent";
+    else if (route.path === "/chat") mode.value = "chat";
+  },
+);
+
+function setMode(next: "chat" | "agent" | "report") {
+  if (streaming.value) return;
+  mode.value = next;
+  syncRouteQuery();
+}
 
 function pickCite(id: string) {
   activeCite.value = id;
   citeFocus.value = true;
 }
-
-function openCite(c: Citation) {
-  router.push({ path: `/documents/${c.document_id}`, hash: hashFor(c) });
-}
 </script>
 
 <template>
-  <main class="page chat-page">
-    <aside class="chat-side card" :class="{ collapsed: !sidebarOpen }">
-      <button
-        class="fold"
-        type="button"
-        :class="{ open: sidebarOpen }"
-        :aria-expanded="sidebarOpen"
-        :title="sidebarOpen ? '折叠对话记录' : '展开对话记录'"
-        @click="sidebarOpen = !sidebarOpen"
-      >
-        <Icon :name="sidebarOpen ? 'chevron' : 'chat'" />
-      </button>
-      <div v-if="sidebarOpen" class="side-body">
-        <button class="btn new-chat" type="button" @click="newChat">+ 新对话</button>
-        <h2>对话记录</h2>
-        <button
-          v-for="c in conversations"
-          :key="c.id"
-          type="button"
-          class="side-item"
-          :class="{ on: c.id === conversationId }"
-          @click="openConversation(c.id)"
-        >
-          {{ c.title }}
+  <main class="chat-page">
+    <aside v-if="sidebarOpen" class="chat-list card">
+      <header class="list-head">
+        <h2>对话</h2>
+      </header>
+      <div class="new-chat-row">
+        <button class="btn btn-primary new-chat" type="button" @click="newChat">
+          <Icon name="plus" />
+          新建对话
         </button>
-        <p v-if="!conversations.length" class="side-empty">暂无对话</p>
+        <button class="list-panel-toggle" type="button" title="收起" @click="sidebarOpen = false">
+          <Icon name="panel-close" />
+        </button>
+      </div>
+      <label class="list-search">
+        <Icon name="search" />
+        <input v-model="listSearch" type="search" placeholder="搜索对话" />
+      </label>
+      <div class="list-scroll">
+        <section v-for="group in conversationGroups" :key="group.label" class="list-group">
+          <h3>{{ group.label }}</h3>
+          <button
+            v-for="c in group.items"
+            :key="c.id"
+            type="button"
+            class="list-item"
+            :class="{ on: c.id === conversationId }"
+            @click="openConversation(c.id)"
+          >
+            <Icon name="chat" class="list-icon" />
+            <span class="list-title">{{ c.title }}</span>
+            <span class="list-time">{{ formatConvTime(c.updated_at) }}</span>
+          </button>
+        </section>
+        <p v-if="!conversations.length" class="list-empty">暂无对话</p>
+        <p v-else-if="!conversationGroups.length" class="list-empty">无匹配对话</p>
       </div>
     </aside>
-    <div class="chat-main">
-    <div class="page-head">
-      <div>
-        <h1>对话</h1>
-        <p class="sub hint">默认检索全部已开启的知识库，回答会标注引用来源</p>
-      </div>
-      <div class="head-actions">
-        <div class="mode-switch" role="group" aria-label="Question mode">
-          <button type="button" :class="{ on: mode === 'chat' }" :aria-pressed="mode === 'chat'" :disabled="streaming" @click="mode = 'chat'">
-            Chat
-          </button>
-          <button type="button" :class="{ on: mode === 'agent' }" :aria-pressed="mode === 'agent'" :disabled="streaming" @click="mode = 'agent'">
-            Agent
-          </button>
-          <button type="button" :class="{ on: mode === 'report' }" :aria-pressed="mode === 'report'" :disabled="streaming" @click="mode = 'report'">
-            Report
-          </button>
-        </div>
-        <label class="debug-toggle">
-          <span>Debug</span>
-          <input
-            type="checkbox"
-            role="switch"
-            :checked="debugEnabled"
-            @change="setDebugEnabled(($event.target as HTMLInputElement).checked)"
-          />
-        </label>
-      </div>
-    </div>
-    <p v-if="error" class="hint err">{{ error }}</p>
+    <button v-else class="list-expand" type="button" title="展开对话列表" @click="sidebarOpen = true">
+      <Icon name="chat" />
+    </button>
 
-    <div class="stage">
-    <div ref="box" class="thread">
-      <div v-for="m in threadMessages" :key="m.id" :class="['msg', m.role]">
-        <div v-if="m.role === 'assistant'" class="who">知域</div>
-        <div class="bubble">
-          <div v-if="isThinking(m)" class="thinking">
-            <span class="spin" aria-hidden="true"></span>
-            思考中……
+    <div class="chat-main">
+      <div class="chat-workspace">
+        <div class="chat-column">
+          <header class="chat-head">
+            <div class="chat-head-top">
+              <div class="title-row">
+                <h1>{{ chatTitle }}</h1>
+                <button class="icon-btn" type="button" aria-label="编辑标题">
+                  <Icon name="edit" />
+                </button>
+              </div>
+              <div class="head-tools">
+                <div class="mode-switch" role="group" aria-label="Question mode">
+                  <button type="button" :class="{ on: mode === 'chat' }" :disabled="streaming" @click="setMode('chat')">Chat</button>
+                  <button type="button" :class="{ on: mode === 'agent' }" :disabled="streaming" @click="setMode('agent')">Agent</button>
+                  <button type="button" :class="{ on: mode === 'report' }" :disabled="streaming" @click="setMode('report')">Report</button>
+                </div>
+                <button class="icon-btn" type="button" aria-label="分享">
+                  <Icon name="share" />
+                </button>
+                <button class="icon-btn" type="button" aria-label="收藏">
+                  <Icon name="star" />
+                </button>
+                <button class="icon-btn" type="button" aria-label="更多">
+                  <Icon name="more" />
+                </button>
+              </div>
+            </div>
+            <p class="sub">默认检索全部已开启的知识库，回答会标注引用来源</p>
+          </header>
+
+          <p v-if="error" class="hint err">{{ error }}</p>
+
+          <div ref="box" class="thread">
+          <div v-for="m in threadMessages" :key="m.id" :class="['msg', m.role]">
+            <div v-if="m.role === 'user'" class="avatar user-avatar">{{ userInitial }}</div>
+            <div v-else class="avatar bot-avatar"><Icon name="brand" /></div>
+            <div class="bubble-wrap">
+              <div class="msg-meta">
+                <span class="msg-who">{{ m.role === "user" ? "你" : "知识助手" }}</span>
+              </div>
+              <div class="bubble">
+                <div v-if="isThinking(m)" class="thinking">
+                  <span class="spin" aria-hidden="true"></span>
+                  思考中……
+                </div>
+                <pre v-else>{{ m.content.replace(/^\s+/, "") }}</pre>
+                <div v-if="m.role === 'assistant' && m.citations?.length" class="cites">
+                  <p class="cites-label">引用来源 ({{ m.citations.length }})</p>
+                  <button
+                    v-for="c in visibleCites(m)"
+                    :key="c.chunk_id"
+                    type="button"
+                    class="cite-chip"
+                    :class="{ on: c.chunk_id === shownCite?.chunk_id }"
+                    @click="pickCite(c.chunk_id)"
+                  >
+                    <span class="cite-name">{{ c.document_name }}</span>
+                    <span class="cite-score">{{ formatSimScore(c.score) }}</span>
+                  </button>
+                  <button
+                    v-if="m.citations.length > CITE_LIMIT && !citeOpen[m.id]"
+                    type="button"
+                    class="cite-more"
+                    @click="citeOpen[m.id] = true"
+                  >
+                    展开全部
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
-          <pre v-else>{{ m.content.replace(/^\s+/, "") }}</pre>
-          <div v-if="m.role === 'assistant' && m.citations?.length" class="cites">
-            <p>引用来源 ({{ m.citations.length }})</p>
-            <button
-              v-for="c in visibleCites(m)"
+        </div>
+
+          <div class="composer card">
+            <textarea
+              v-model="draft"
+              rows="2"
+              :placeholder="
+                mode === 'report'
+                  ? '按主题生成研究报告…'
+                  : mode === 'agent'
+                    ? 'Agent 可多步检索后再回答…'
+                    : '继续追问，或输入新问题...'
+              "
+              @keydown="onKey"
+            ></textarea>
+            <div class="composer-bar">
+              <span class="composer-hint">Enter 发送 · Shift+Enter 换行</span>
+              <button class="btn btn-primary send-btn" type="button" :disabled="streaming" @click="ask">
+                <Icon name="send" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <aside v-if="panelCites.length" class="source-side card">
+          <header class="source-head">
+            <h2>资料来源</h2>
+          </header>
+          <section class="source-overview">
+            <h3>来源概览</h3>
+            <div class="donut-row">
+              <div class="donut" :style="donutStyle">
+                <div class="donut-hole">
+                  <strong>{{ panelCites.length }}</strong>
+                  <span>总片段</span>
+                </div>
+              </div>
+              <ul class="donut-legend">
+                <li v-for="(s, i) in citeStats" :key="s.chunk_id">
+                  <span class="dot" :style="{ background: s.color }"></span>
+                  {{ s.document_name }} #{{ i + 1 }} · {{ s.pct }}%
+                </li>
+              </ul>
+            </div>
+          </section>
+          <section class="source-all">
+            <h3>所有来源</h3>
+            <article
+              v-for="(c, i) in sourceList"
               :key="c.chunk_id"
-              type="button"
-              class="cite"
-              :class="{ on: c.chunk_id === shownCite?.chunk_id }"
+              class="source-card"
+              :class="{ on: c.chunk_id === activeCite }"
               @click="pickCite(c.chunk_id)"
             >
-              <span>{{ c.document_name }}</span>
-              <em v-if="debugEnabled">{{ formatScore(c.score) }}</em>
-            </button>
+              <div class="source-card-top">
+                <RouterLink class="source-doc" :to="{ path: `/documents/${c.document_id}`, hash: hashFor(c) }" @click.stop>
+                  {{ c.document_name }}
+                </RouterLink>
+                <span class="source-score">{{ formatSimScore(c.score) }}</span>
+              </div>
+              <p class="source-snippet">{{ citePreview(c.content, 120) }}</p>
+              <span class="source-meta">片段 #{{ i + 1 }}</span>
+            </article>
             <button
-              v-if="m.citations.length > CITE_LIMIT && !citeOpen[m.id]"
+              v-if="panelCites.length > 3 && !showAllSources"
+              class="btn source-more"
               type="button"
-              class="more"
-              @click="citeOpen[m.id] = true"
+              @click="showAllSources = true"
             >
-              …
+              查看全部来源
             </button>
-          </div>
-        </div>
+          </section>
+        </aside>
       </div>
     </div>
-    <aside v-if="panelCites.length" class="cite-side card" aria-label="引用文档">
-      <h2>引用文档</h2>
-      <label v-if="citeFocus" class="cite-pick">
-        <span>文档</span>
-        <select v-model="activeCite">
-          <option v-for="c in panelCites" :key="c.chunk_id" :value="c.chunk_id">
-            {{ c.document_name }}{{ c.page_start != null ? ` · 第 ${c.page_start} 页` : "" }}
-          </option>
-        </select>
-      </label>
-      <article v-if="citeFocus && shownCite" class="cite-body">
-        <p class="cite-meta">
-          <span>{{ shownCite.document_name }}</span>
-          <em v-if="shownCite.page_start != null">第 {{ shownCite.page_start }} 页</em>
-        </p>
-        <p v-if="debugEnabled" class="cite-score">分数 {{ formatScore(shownCite.score) }}</p>
-        <pre>{{ shownCite.content }}</pre>
-        <button class="btn-link" type="button" @click="openCite(shownCite)">打开全文</button>
-      </article>
-      <div v-else class="cite-list">
-        <article v-for="c in panelCites" :key="c.chunk_id" class="cite-body">
-          <p class="cite-meta">
-            <span>{{ c.document_name }}</span>
-            <em v-if="c.page_start != null">第 {{ c.page_start }} 页</em>
-          </p>
-          <p v-if="debugEnabled" class="cite-score">分数 {{ formatScore(c.score) }}</p>
-          <pre>{{ c.content }}</pre>
-          <button class="btn-link" type="button" @click="openCite(c)">打开全文</button>
-        </article>
-      </div>
-    </aside>
-    </div>
-
-    <div class="composer card pad">
-      <textarea
-        v-model="draft"
-        rows="3"
-        :placeholder="
-          mode === 'report'
-            ? '按主题生成研究报告…'
-            : mode === 'agent'
-              ? 'Agent 可多步检索后再回答…'
-              : '继续追问，或输入新问题...'
-        "
-        @keydown="onKey"
-      ></textarea>
-      <div class="composer-bar">
-        <span>Enter 发送 · Shift+Enter 换行</span>
-        <button class="btn btn-primary" type="button" :disabled="streaming" @click="ask">发送</button>
-      </div>
-    </div>
-    </div>
-    <RetrievalDebugPanel v-if="debugEnabled" :query="debugQuery" />
   </main>
 </template>
 
@@ -382,120 +508,169 @@ function openCite(c: Citation) {
   display: flex;
   flex-direction: row;
   align-items: stretch;
-  gap: 0.85rem;
+  gap: 0.75rem;
   width: 100%;
-  max-width: none;
+  max-width: 100%;
   margin: 0;
-  padding: 1rem 1.25rem 2rem;
-  min-height: calc(100vh - 8rem);
+  padding: 0.75rem 0.75rem 0.75rem 1rem;
+  box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
   font-size: 12.5px;
-  background: transparent;
+  background: var(--bg);
 }
-.chat-page .btn {
-  padding: 0.5rem 0.85rem;
-  border-radius: 10px;
-  font-size: inherit;
-}
-.chat-page .page-head h1 {
-  font-size: 1.05rem;
-}
-.hint {
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-.hint.err {
-  color: var(--danger);
-}
-.chat-side {
-  position: relative;
-  width: 14.5rem;
+.chat-list {
+  width: 15.5rem;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  background: #fff;
 }
-.chat-side.collapsed {
-  width: auto;
-  align-self: center;
-  background: none;
-  border: none;
-  box-shadow: none;
-  border-radius: 0;
+.list-head {
+  padding: 0.85rem 0.85rem 0.35rem;
 }
-.fold {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  z-index: 1;
+.list-head h2 {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+.new-chat-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0.75rem 0.55rem;
+}
+.new-chat {
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+  gap: 0.35rem;
+}
+.new-chat :deep(.ico) {
+  width: 14px;
+  height: 14px;
+}
+.list-panel-toggle {
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 8px;
+  width: 2rem;
+  height: 2rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 24px;
-  min-height: 24px;
-  margin: 0;
-  transform: translate(50%, -50%);
+  cursor: pointer;
+  color: var(--muted);
+}
+.list-panel-toggle :deep(.ico) {
+  width: 14px;
+  height: 14px;
+}
+.list-search {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0.75rem 0.55rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--muted);
+}
+.list-search :deep(.ico) {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.list-search input {
   border: none;
   background: none;
-  color: #94a3b8;
-  cursor: pointer;
-  line-height: 1;
-  padding: 0;
-  border-radius: 6px;
-}
-.fold:focus-visible {
-  outline: 2px solid var(--teal);
-  outline-offset: 2px;
-}
-.chat-side.collapsed .fold {
-  position: static;
-  transform: none;
-}
-.fold:hover {
-  color: #64748b;
-}
-.fold :deep(.ico) {
-  width: 18px;
-  height: 18px;
-}
-.fold.open :deep(.ico) {
-  transform: rotate(90deg);
-}
-.side-body {
-  padding: 0.75rem 0.7rem 0.7rem;
-  overflow: auto;
-}
-.new-chat {
   width: 100%;
-  justify-content: center;
-  margin-bottom: 0.65rem;
-}
-.side-body h2 {
-  margin: 0 0 0.4rem;
-  font-size: 0.78rem;
-}
-.side-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: none;
-  background: none;
-  border-top: 1px solid var(--line);
-  padding: 0.55rem 0.15rem;
-  cursor: pointer;
-  color: inherit;
+  font: inherit;
   font-size: 0.72rem;
+  color: inherit;
+  outline: none;
+}
+.list-search input::placeholder {
+  color: #94a3b8;
+}
+.list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 0.45rem;
+}
+.list-group h3 {
+  margin: 0.5rem 0.35rem 0.25rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+.list-item {
+  width: 100%;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 0.4rem;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  padding: 0.45rem 0.5rem;
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.75rem;
+  color: inherit;
+}
+.list-icon {
+  flex-shrink: 0;
+  color: #94a3b8;
+}
+.list-item.on .list-icon {
+  color: var(--teal);
+}
+.list-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+  flex: 1;
 }
-.side-item.on {
+.list-time {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 0.65rem;
+  margin-left: auto;
+}
+.list-empty {
+  padding: 0.5rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.list-item.on {
+  background: #eff6ff;
   color: var(--teal);
   font-weight: 600;
-  background: #f0f7ff;
 }
-.side-empty {
+.list-expand {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin: 0.75rem 0 0 1rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 8px;
+  padding: 0.45rem;
+  cursor: pointer;
   color: var(--muted);
-  font-size: 0.75rem;
+}
+.list-expand :deep(.ico) {
+  width: 18px;
+  height: 18px;
 }
 .chat-main {
   flex: 1;
@@ -503,137 +678,163 @@ function openCite(c: Citation) {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
 }
-.stage {
+.chat-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.85rem 1rem 0.55rem;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.chat-head-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.chat-head h1 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.head-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+.icon-btn {
+  border: none;
+  background: none;
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--muted);
+}
+.icon-btn:hover {
+  background: #f1f5f9;
+  color: var(--text);
+}
+.icon-btn :deep(.ico) {
+  width: 15px;
+  height: 15px;
+}
+.chat-head .sub {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.hint {
+  padding: 0 1rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.hint.err {
+  color: var(--danger);
+}
+.chat-workspace {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: row;
-  align-items: stretch;
-  gap: 0.75rem;
-}
-.cite-side {
-  width: min(22rem, 34vw);
-  flex-shrink: 0;
-  min-width: 14rem;
-  padding: 0.85rem 0.9rem 1rem;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
   overflow: hidden;
 }
-.cite-side h2 {
-  margin: 0 0 0.45rem;
-  font-size: 0.78rem;
-}
-.cite-pick {
+.chat-column {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
-  margin-bottom: 0.55rem;
-  font-size: 0.68rem;
-  color: var(--muted);
-}
-.cite-pick select {
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0.4rem 0.5rem;
-  background: #fff;
-  color: var(--text);
-  font-size: 0.72rem;
-}
-.cite-pick select:focus-visible {
-  outline: 2px solid var(--teal);
-  outline-offset: 1px;
-}
-.cite-list {
-  flex: 1;
   min-height: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0.7rem;
 }
-.cite-list .cite-body {
-  flex: none;
-  overflow: visible;
-  padding-bottom: 0.65rem;
-  border-bottom: 1px solid var(--line);
-}
-.cite-list .cite-body:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-.cite-body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-}
-.cite-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin: 0 0 0.35rem;
-  font-size: 0.72rem;
-  color: var(--text);
-}
-.cite-score {
-  margin: 0 0 0.4rem;
-  font-size: 0.68rem;
-  color: var(--muted);
-}
-.cite-body pre {
-  font-size: 0.72rem;
-  line-height: 1.5;
-  color: var(--text);
-  margin-bottom: 0.5rem;
-}
-@media (max-width: 900px) {
-  .cite-side {
-    display: none;
-  }
+.chat-column .chat-head {
+  border-right: none;
 }
 .thread {
   flex: 1;
+  min-width: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  padding-bottom: 0.75rem;
+  gap: 1.1rem;
+  padding: 1rem 1.25rem;
 }
-.msg.user {
-  align-self: flex-end;
-  max-width: min(36rem, 92%);
-}
-.msg.assistant {
-  align-self: flex-start;
+.msg {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
   max-width: min(44rem, 100%);
 }
-.who {
-  color: var(--muted);
-  font-size: 0.72rem;
+.msg-meta {
   margin-bottom: 0.25rem;
 }
-.user .bubble {
+.msg-who {
+  font-size: 0.68rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+.avatar {
+  flex-shrink: 0;
+  width: 1.85rem;
+  height: 1.85rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.user-avatar {
   background: #2563eb;
   color: #fff;
-  border-radius: 10px;
-  padding: 0.55rem 0.75rem;
 }
-.assistant .bubble {
+.bot-avatar {
+  background: #eff6ff;
+  color: var(--teal);
+}
+.bot-avatar :deep(.ico) {
+  width: 14px;
+  height: 14px;
+}
+.bubble-wrap {
+  min-width: 0;
+  flex: 1;
+}
+.bubble {
+  border-radius: 12px;
+  padding: 0.65rem 0.8rem;
   background: #fff;
   border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 0.55rem 0.75rem;
+}
+.user .bubble {
+  background: #dbeafe;
+  color: var(--text);
+  border-color: #bfdbfe;
 }
 pre {
   margin: 0;
-  padding: 0;
   white-space: pre-wrap;
   font: inherit;
-  font-size: 0.78rem;
-  line-height: 1.5;
+  font-size: 0.8rem;
+  line-height: 1.55;
 }
 .thinking {
   display: flex;
@@ -655,140 +856,267 @@ pre {
     transform: rotate(360deg);
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .spin {
-    animation: none;
-  }
-}
 .cites {
-  margin-top: 0.55rem;
-  padding-top: 0.5rem;
+  margin-top: 0.65rem;
+  padding-top: 0.55rem;
   border-top: 1px solid var(--line);
 }
-.cites p {
-  margin: 0 0 0.35rem;
-  color: var(--muted);
+.cites-label {
+  margin: 0 0 0.4rem;
   font-size: 0.68rem;
+  color: var(--muted);
 }
-.cite {
+.cite-chip {
   width: 100%;
   display: flex;
   justify-content: space-between;
-  gap: 0.6rem;
-  background: #f0f7ff;
-  border: 1px solid #e0edff;
+  gap: 0.5rem;
+  border: 1px solid #dbeafe;
+  background: #f8fbff;
   border-radius: 8px;
   padding: 0.4rem 0.55rem;
-  margin-bottom: 0.3rem;
+  margin-bottom: 0.35rem;
   cursor: pointer;
-  text-align: left;
   font-size: 0.72rem;
-  min-height: 24px;
 }
-.cite:hover,
-.cite.on {
-  background: var(--teal-soft);
-  border-color: #bfdbfe;
+.cite-chip.on,
+.cite-chip:hover {
+  border-color: var(--teal);
+  background: #eff6ff;
 }
-.cite:focus-visible {
-  outline: 2px solid var(--teal);
-  outline-offset: 1px;
-}
-.cite span {
+.cite-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.cite em {
-  font-style: normal;
-  color: var(--muted);
-  white-space: nowrap;
-  font-size: 0.68rem;
+.cite-score {
+  color: #ea580c;
+  background: #fff7ed;
+  border-radius: 6px;
+  padding: 0.05rem 0.35rem;
+  font-size: 0.65rem;
+  flex-shrink: 0;
 }
-.more {
-  width: 100%;
+.cite-more {
   border: none;
-  background: transparent;
-  color: var(--muted);
-  letter-spacing: 0.2em;
-  padding: 0.2rem 0;
+  background: none;
+  color: var(--teal);
+  font-size: 0.68rem;
   cursor: pointer;
-  min-height: 24px;
+  padding: 0;
 }
-.pad {
-  padding: 0.75rem 0.85rem;
+.source-side {
+  width: min(19rem, 30vw);
+  flex-shrink: 0;
+  min-width: 14rem;
+  align-self: stretch;
+  border-radius: 0;
+  border: none;
+  border-left: 1px solid var(--line);
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem 0.85rem 1rem;
+}
+.source-head h2 {
+  margin: 0 0 0.65rem;
+  font-size: 0.88rem;
+}
+.source-overview h3,
+.source-all h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+.donut-row {
+  display: flex;
+  gap: 0.65rem;
+  align-items: center;
+  margin-bottom: 0.85rem;
+}
+.donut {
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 50%;
+  position: relative;
+  flex-shrink: 0;
+}
+.donut-hole {
+  position: absolute;
+  inset: 0.85rem;
+  border-radius: 50%;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.58rem;
+  color: var(--muted);
+}
+.donut-hole strong {
+  font-size: 0.82rem;
+  color: var(--text);
+}
+.donut-legend {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.65rem;
+  color: var(--muted);
+}
+.donut-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.2rem;
+}
+.dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.source-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.55rem 0.6rem;
+  margin-bottom: 0.5rem;
+  cursor: pointer;
+  background: #fff;
+}
+.source-card.on {
+  border-color: var(--teal);
+  background: #f0f9ff;
+}
+.source-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.35rem;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+.source-doc {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--teal);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-score {
+  font-size: 0.62rem;
+  color: #ea580c;
+  background: #fff7ed;
+  border-radius: 6px;
+  padding: 0.05rem 0.35rem;
+  flex-shrink: 0;
+}
+.source-snippet {
+  margin: 0 0 0.25rem;
+  font-size: 0.68rem;
+  line-height: 1.45;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.source-meta {
+  font-size: 0.62rem;
+  color: var(--muted);
+}
+.source-more {
+  width: 100%;
+  justify-content: center;
+  margin-top: 0.25rem;
 }
 .composer {
-  margin-top: 0.35rem;
+  margin: 0;
+  border-radius: 0;
+  border: none;
+  border-top: 1px solid var(--line);
+  box-shadow: none;
+  padding: 0.75rem 1rem 0.85rem;
+  flex-shrink: 0;
 }
 .composer textarea {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0.4rem 0.5rem;
+  border-radius: 10px;
+  padding: 0.55rem 0.65rem;
   resize: vertical;
   font-size: inherit;
-}
-.composer textarea:focus-visible {
-  outline: 2px solid var(--teal);
-  outline-offset: 1px;
+  min-height: 2.6rem;
 }
 .composer-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  color: var(--muted);
-  font-size: 0.72rem;
   margin-top: 0.45rem;
 }
-.head-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-.debug-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  font-size: 0.72rem;
+.composer-hint {
   color: var(--muted);
-  margin: 0;
+  font-size: 0.68rem;
 }
-.debug-toggle input {
-  accent-color: var(--teal);
+.send-btn {
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  justify-content: center;
+  border-radius: 10px;
+}
+.send-btn :deep(.ico) {
+  width: 16px;
+  height: 16px;
 }
 .mode-switch {
   display: inline-flex;
-  flex-wrap: nowrap;
   gap: 0;
-  border-bottom: 1px solid var(--line);
-  background: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+  margin-right: 0.15rem;
 }
 .mode-switch button {
   border: none;
-  background: none;
-  border-radius: 0;
-  padding: 0.35rem 0.7rem 0.45rem;
+  background: #fff;
+  padding: 0.35rem 0.75rem;
   cursor: pointer;
   color: var(--muted);
   font-size: 0.72rem;
-  white-space: nowrap;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  border-right: 1px solid var(--line);
+}
+.mode-switch button:last-child {
+  border-right: none;
 }
 .mode-switch button.on {
-  background: none;
+  background: #eff6ff;
   color: var(--teal);
   font-weight: 600;
-  border-bottom-color: var(--teal);
-}
-.mode-switch button:focus-visible {
-  outline: 2px solid var(--teal);
-  outline-offset: 1px;
 }
 .mode-switch button:disabled {
-  cursor: not-allowed;
   opacity: 0.6;
+  cursor: not-allowed;
+}
+@media (max-width: 960px) {
+  .source-side {
+    display: none;
+  }
+  .chat-list {
+    width: 13rem;
+  }
+  .head-tools .mode-switch {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
 }
 </style>

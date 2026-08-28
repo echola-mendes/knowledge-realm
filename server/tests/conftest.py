@@ -61,9 +61,16 @@ def isolate_from_user_database(tmp_path_factory):
         conn.execute(
             text(
                 "TRUNCATE TABLE message, conversation, document_tag, favorite, "
-                "document_chunk, entity_link, retrieval_label, document, entity, tag, knowledge_base, users CASCADE"
+                "document_chunk, entity_link, retrieval_label, user_memory, document, entity, tag, knowledge_base, users CASCADE"
             )
         )
+        for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints", "checkpoint_migrations"):
+            exists = conn.execute(
+                text("SELECT to_regclass(:name)"),
+                {"name": table},
+            ).scalar()
+            if exists:
+                conn.execute(text(f'TRUNCATE TABLE "{table}" CASCADE'))
     yield
     reset_app_state()
 

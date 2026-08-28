@@ -123,6 +123,7 @@ class ConversationOut(BaseModel):
     id: uuid.UUID
     knowledge_base_id: uuid.UUID
     title: str
+    updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -155,11 +156,13 @@ class AgentRequest(BaseModel):
     task: str
     query: str = Field(min_length=1)
     knowledge_base_id: uuid.UUID | None = None
+    conversation_id: uuid.UUID | None = None
 
 
 class AgentOut(BaseModel):
     task: str
     knowledge_base_id: uuid.UUID
+    conversation_id: uuid.UUID
     answer: str
     citations: list[CitationOut]
     loop_count: int

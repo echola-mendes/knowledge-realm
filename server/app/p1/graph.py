@@ -11,6 +11,9 @@ from app.p1.tools import search_knowledge
 from app.search import SearchHit
 
 MAX_LOOPS = 3
+MAX_CITATIONS = 20
+
+_compiled = None
 
 
 class AgentState(TypedDict, total=False):
@@ -42,6 +45,21 @@ def _hit_to_citation(hit: SearchHit) -> dict[str, Any]:
         "content": hit.content,
         "score": hit.score,
     }
+
+
+def plan_agent_search(
+    question: str,
+    *,
+    citations: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """首轮 Agent reason：决定是否检索及 search_query（与 node_reason 第一次调用一致）。"""
+    state: AgentState = {
+        "messages": [{"role": "user", "content": question}],
+        "citations": citations or [],
+        "loop_count": 0,
+        "max_loops": MAX_LOOPS,
+    }
+    return reason_decide(state)
 
 
 def reason_decide(state: AgentState) -> dict[str, Any]:
@@ -101,13 +119,22 @@ def node_run_tool(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     hits = search_knowledge(session, state.get("search_query") or "", user_id=user_id, knowledge_base_id=kb_id)
     cites = list(state.get("citations") or [])
     cites.extend(_hit_to_citation(hit) for hit in hits)
+    if len(cites) > MAX_CITATIONS:
+        cites = cites[-MAX_CITATIONS:]
     return {"citations": cites, "loop_count": int(state.get("loop_count") or 0) + 1}
 
 
 def generate_answer(state: AgentState) -> str:
     from app.llm import chat
 
+    messages = list(state.get("messages") or [])
     question = _user_question(state)
+    prior = messages[:-1] if messages and messages[-1].get("role") == "user" else messages
+    history = [
+        (str(item.get("role") or ""), str(item.get("content") or ""))
+        for item in prior
+        if item.get("role") in ("user", "assistant") and item.get("content")
+    ]
     cites = state.get("citations") or []
     context = "\n\n".join(f"[{c.get('document_name')}]\n{c.get('content')}" for c in cites)
     if state.get("task") == "report":
@@ -116,7 +143,7 @@ def generate_answer(state: AgentState) -> str:
             "只使用资料中的事实，不要编造出处。\n\n"
             f"主题：{question}"
         )
-    return chat(question, context)
+    return chat(question, context, history)
 
 
 def node_generate(state: AgentState) -> dict[str, Any]:
@@ -135,6 +162,11 @@ def route_after_reason(state: AgentState) -> Literal["run_tool", "generate"]:
 
 
 def build_graph():
+    global _compiled
+    if _compiled is not None:
+        return _compiled
+    from app.p1.checkpoint import get_checkpointer
+
     graph = StateGraph(AgentState)
     graph.add_node("reason", node_reason)
     graph.add_node("run_tool", node_run_tool)
@@ -143,7 +175,16 @@ def build_graph():
     graph.add_conditional_edges("reason", route_after_reason, {"run_tool": "run_tool", "generate": "generate"})
     graph.add_edge("run_tool", "reason")
     graph.add_edge("generate", END)
-    return graph.compile()
+    _compiled = graph.compile(checkpointer=get_checkpointer())
+    return _compiled
+
+
+def reset_graph() -> None:
+    global _compiled
+    _compiled = None
+    from app.p1.checkpoint import reset_checkpointer
+
+    reset_checkpointer()
 
 
 def initial_state(
@@ -151,11 +192,14 @@ def initial_state(
     *,
     knowledge_base_id: uuid.UUID | None = None,
     task: Literal["agent", "report"] = "agent",
+    history: list[dict[str, str]] | None = None,
 ) -> AgentState:
+    messages = list(history or [])
+    messages.append({"role": "user", "content": query})
     return {
         "knowledge_base_id": str(knowledge_base_id) if knowledge_base_id else None,
         "task": task,
-        "messages": [{"role": "user", "content": query}],
+        "messages": messages,
         "citations": [],
         "loop_count": 0,
         "max_loops": MAX_LOOPS,

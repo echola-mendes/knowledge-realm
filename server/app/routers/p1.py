@@ -12,9 +12,10 @@ from app.db import session_scope
 from app.deps import current_user
 from app.kb import KnowledgeBaseAccessError, owned_document, resolve_knowledge_base_id
 from app.llm import llm_keys_ready
-from app.models import Document, Entity, EntityLink, User
+from app.models import Conversation, Document, Entity, EntityLink, Message, User
 from app.p1.chains import compare_documents, gather_document_text
 from app.p1.graph import build_graph, initial_state
+from app.chat import _history
 from app.schemas import (
     AgentOut,
     AgentRequest,
@@ -77,16 +78,53 @@ def _agent_out(body: AgentRequest, session: Session, user_id: uuid.UUID) -> Agen
         kb_id = resolve_knowledge_base_id(session, body.knowledge_base_id, user_id)
     except KnowledgeBaseAccessError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if body.conversation_id is None:
+        convo = Conversation(user_id=user_id, knowledge_base_id=kb_id, title=body.query[:40])
+        session.add(convo)
+        session.flush()
+        history_msgs: list[dict[str, str]] = []
+        summary_text = ""
+    else:
+        convo = session.get(Conversation, body.conversation_id)
+        if convo is None or convo.user_id != user_id:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        history_msgs = [{"role": role, "content": content} for role, content in _history(session, convo.id)]
+        summary_text = ""
     task = "report" if body.task == "report" else "agent"
     out = build_graph().invoke(
-        initial_state(body.query, knowledge_base_id=body.knowledge_base_id, task=task),
-        config={"configurable": {"session": session, "user_id": user_id}},
+        initial_state(
+            body.query,
+            knowledge_base_id=body.knowledge_base_id,
+            task=task,
+            history=history_msgs,
+        ),
+        config={
+            "configurable": {
+                "thread_id": str(convo.id),
+                "session": session,
+                "user_id": user_id,
+            }
+        },
     )
+    answer = out.get("answer") or ""
+    cites = [CitationOut.model_validate(item) for item in (out.get("citations") or [])]
+    session.add(Message(conversation_id=convo.id, role="user", content=body.query, citations=None))
+    session.add(
+        Message(
+            conversation_id=convo.id,
+            role="assistant",
+            content=answer,
+            citations=[c.model_dump(mode="json") for c in cites] or None,
+        )
+    )
+    session.commit()
+    session.refresh(convo)
     return AgentOut(
         task=task,
         knowledge_base_id=kb_id,
-        answer=out.get("answer") or "",
-        citations=[CitationOut.model_validate(item) for item in (out.get("citations") or [])],
+        conversation_id=convo.id,
+        answer=answer,
+        citations=cites,
         loop_count=int(out.get("loop_count") or 0),
     )
 

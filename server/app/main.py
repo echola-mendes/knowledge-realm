@@ -87,5 +87,8 @@ app = create_app()
 
 
 def reset_app_state() -> None:
+    from app.p1.graph import reset_graph
+
     reset_settings()
     reset_engine()
+    reset_graph()

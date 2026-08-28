@@ -43,7 +43,10 @@ def test_graph_searches_then_generates_and_caps_loops(monkeypatch):
     monkeypatch.setattr(graph_mod, "search_knowledge", fake_search)
     monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "根据资料回答")
     compiled = build_graph()
-    out = compiled.invoke(initial_state("苹果是什么"), config={"configurable": {"session": object()}})
+    out = compiled.invoke(
+        initial_state("苹果是什么"),
+        config={"configurable": {"thread_id": f"graph-loop-{uuid.uuid4()}", "session": object()}},
+    )
     assert calls == ["苹果"]
     assert out["answer"] == "根据资料回答"
     assert out["loop_count"] == 1
@@ -65,7 +68,10 @@ def test_graph_max_loops_forces_generate(monkeypatch):
     monkeypatch.setattr(graph_mod, "search_knowledge", fake_search)
     monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "停")
     compiled = build_graph()
-    out = compiled.invoke(initial_state("一直搜"), config={"configurable": {"session": object()}})
+    out = compiled.invoke(
+        initial_state("一直搜"),
+        config={"configurable": {"thread_id": f"graph-cap-{uuid.uuid4()}", "session": object()}},
+    )
     assert n["search"] == 3
     assert out["loop_count"] == 3
     assert out["answer"] == "停"
@@ -74,6 +80,7 @@ def test_graph_max_loops_forces_generate(monkeypatch):
 
 def test_agent_and_report_share_one_graph(monkeypatch):
     assert "StateGraph" in inspect.getsource(graph_mod)
+    assert "checkpointer" in inspect.getsource(graph_mod.build_graph)
     assert "StateGraph" not in inspect.getsource(chat_mod)
     assert "StateGraph" not in inspect.getsource(chains_mod)
     monkeypatch.setattr(graph_mod, "reason_decide", lambda state: {"next_action": "generate"})
@@ -85,8 +92,15 @@ def test_agent_and_report_share_one_graph(monkeypatch):
 
     monkeypatch.setattr("app.llm.chat", fake_chat)
     compiled = build_graph()
-    agent_out = compiled.invoke(initial_state("苹果", task="agent"), config={"configurable": {"session": object()}})
-    report_out = compiled.invoke(initial_state("苹果", task="report"), config={"configurable": {"session": object()}})
+    tid = f"graph-share-{uuid.uuid4()}"
+    agent_out = compiled.invoke(
+        initial_state("苹果", task="agent"),
+        config={"configurable": {"thread_id": tid + "-a", "session": object()}},
+    )
+    report_out = compiled.invoke(
+        initial_state("苹果", task="report"),
+        config={"configurable": {"thread_id": tid + "-r", "session": object()}},
+    )
     assert agent_out["task"] == "agent"
     assert report_out["task"] == "report"
     assert questions[0] == "苹果"
