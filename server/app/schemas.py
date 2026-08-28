@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from app.chunk import CHUNK_OVERLAP, CHUNK_SIZE
 from pydantic import BaseModel, Field
@@ -49,6 +50,17 @@ class DocumentOut(BaseModel):
     chunk_overlap: int = CHUNK_OVERLAP
 
     model_config = {"from_attributes": True}
+
+
+class DocumentChunkOut(BaseModel):
+    id: uuid.UUID | None = None
+    chunk_index: int
+    chunk_label: str | None = None
+    content: str
+    page: int | None = None
+    heading: str | None = None
+    vector_status: str
+    created_at: datetime | None = None
 
 
 class TagCreate(BaseModel):
@@ -247,12 +259,14 @@ class RetrievalEvalOut(BaseModel):
     k: int
     recall: float | None = None
     precision: float | None = None
-    relevant_doc_count: int
+    relevant_chunk_count: int
 
 
 class RetrievalDebugResponse(BaseModel):
     query: str
     query_norm: str
+    search_query: str | None = None
+    next_action: Literal["search", "generate"] = "search"
     vector: RetrievalStageOut
     bm25: RetrievalStageOut
     rrf: RetrievalStageOut
@@ -266,10 +280,22 @@ class RetrievalDebugResponse(BaseModel):
 class RetrievalLabelPut(BaseModel):
     query: str = Field(min_length=1)
     knowledge_base_id: uuid.UUID | None = None
-    document_id: uuid.UUID
+    chunk_id: uuid.UUID
     relevance: int = Field(ge=0, le=3)
 
 
 class RetrievalLabelOut(BaseModel):
+    chunk_id: uuid.UUID
     document_id: uuid.UUID
     relevance: int
+
+
+class DebugDatasetChunkOut(BaseModel):
+    chunk_id: uuid.UUID
+    chunk_label: str
+    document_id: uuid.UUID
+    document_name: str
+    knowledge_base_id: uuid.UUID
+    knowledge_base_name: str
+    chunk_index: int
+    content: str

@@ -48,7 +48,7 @@ export type Citation = {
   score: number;
 };
 
-export type Conversation = { id: string; knowledge_base_id: string; title: string };
+export type Conversation = { id: string; knowledge_base_id: string; title: string; updated_at?: string | null };
 
 export type AppUser = { id: string; username: string };
 
@@ -71,11 +71,46 @@ export function logout() {
 export function messageFromErrorBody(text: string, fallback = "请求失败"): string {
   try {
     const body = JSON.parse(text) as { detail?: unknown };
-    if (typeof body.detail === "string") return body.detail;
+    const detail = body.detail;
+    if (typeof detail === "string" && detail.trim()) return detail;
+    if (Array.isArray(detail) && detail.length) {
+      const first = detail[0] as { msg?: string };
+      if (typeof first?.msg === "string") return first.msg;
+    }
   } catch {
     /* keep raw text */
   }
-  return text || fallback;
+  const trimmed = text.trim();
+  if (trimmed && trimmed !== fallback) return trimmed;
+  return fallback;
+}
+
+const FAILURE_LABELS: Record<string, string> = {
+  missing_original: "原文文件缺失，请删除后重新上传",
+  empty_content: "文档内容为空",
+  invalid_utf8: "文件编码无效",
+  parse_timeout: "解析超时",
+  no_parsed_markdown: "缺少解析结果",
+  no_chunks: "无法生成切片",
+  "未配置 Embedding API Key": "未配置 Embedding API Key",
+  url_timeout: "URL 抓取超时",
+  url_fetch_failed: "URL 抓取失败",
+};
+
+export function documentFailureReason(doc: DocumentItem): string {
+  if (doc.status !== "index_failed" && doc.status !== "parse_failed") return "—";
+  const raw = doc.error_message?.trim();
+  if (!raw) return "未知错误";
+  if (FAILURE_LABELS[raw]) return FAILURE_LABELS[raw];
+  if (raw.startsWith("parse_error:")) return `解析失败：${raw.slice("parse_error:".length)}`;
+  if (raw.startsWith("embed_failed:")) return `向量化失败：${raw.slice("embed_failed:".length)}`;
+  if (raw.startsWith("index_error:")) return `向量化失败：${raw.slice("index_error:".length)}`;
+  return raw;
+}
+
+/** @deprecated use documentFailureReason */
+export function vectorFailureReason(doc: DocumentItem): string {
+  return documentFailureReason(doc);
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -227,6 +262,32 @@ export function getDocument(id: string) {
   return api<DocumentItem>(`/api/documents/${id}`);
 }
 
+export type DocumentChunkItem = {
+  id: string | null;
+  chunk_index: number;
+  chunk_label: string | null;
+  content: string;
+  page: number | null;
+  heading: string | null;
+  vector_status: "ready" | "indexing" | "pending";
+  created_at: string | null;
+};
+
+export function listDocumentChunks(id: string) {
+  return api<DocumentChunkItem[]>(`/api/documents/${id}/chunks`);
+}
+
+export function reindexDocumentChunk(documentId: string, chunkId: string) {
+  return api<DocumentChunkItem>(`/api/documents/${documentId}/chunks/${chunkId}/reindex`, { method: "POST" });
+}
+
+export function chunkVectorStatusLabel(status: string): string {
+  if (status === "ready") return "已完成";
+  if (status === "indexing") return "向量中";
+  if (status === "pending") return "未向量";
+  return status;
+}
+
 export function summarizeDocument(id: string) {
   return api<DocumentItem>(`/api/documents/${id}/summarize`, { method: "POST" });
 }
@@ -284,6 +345,24 @@ export function statusLabel(status: string): string {
   return "处理中";
 }
 
+export function documentStatusLabel(status: string): string {
+  if (status === "pending") return "待处理";
+  if (status === "parsing") return "解析中";
+  if (status === "parsed") return "待向量化";
+  if (status === "indexing") return "向量化中";
+  if (status === "ready") return "已完成";
+  if (status === "parse_failed") return "解析失败";
+  if (status === "index_failed") return "向量化失败";
+  return status;
+}
+
+export function documentStatusClass(status: string): string {
+  if (status === "ready") return "ok";
+  if (status === "parse_failed" || status === "index_failed") return "bad";
+  if (status === "indexing" || status === "parsing") return "busy";
+  return "idle";
+}
+
 export type RetrievalDebugRow = {
   rank: number;
   document_id: string;
@@ -316,14 +395,27 @@ export type RetrievalStage = {
 export type RetrievalDebugResponse = {
   query: string;
   query_norm: string;
+  search_query?: string | null;
+  next_action?: "search" | "generate";
   vector: RetrievalStage;
   bm25: RetrievalStage;
   rrf: RetrievalStage;
   rerank: RetrievalStage;
   final: RetrievalDebugRow[];
   candidates: RetrievalDebugRow[];
-  evaluation: { k: number; recall: number | null; precision: number | null; relevant_doc_count: number };
+  evaluation: { k: number; recall: number | null; precision: number | null; relevant_chunk_count: number };
   labels: Record<string, number>;
+};
+
+export type DebugDatasetChunk = {
+  chunk_id: string;
+  chunk_label: string;
+  document_id: string;
+  document_name: string;
+  knowledge_base_id: string;
+  knowledge_base_name: string;
+  chunk_index: number;
+  content: string;
 };
 
 export type RetrievalDebugParams = {
@@ -346,13 +438,25 @@ export function runRetrievalDebug(body: RetrievalDebugParams) {
   });
 }
 
+export function listDebugDatasetChunks() {
+  return api<DebugDatasetChunk[]>("/api/retrieval-debug/dataset-chunks");
+}
+
+export function listRetrievalLabels(query: string, knowledge_base_id?: string) {
+  const params = new URLSearchParams({ query });
+  if (knowledge_base_id) params.set("knowledge_base_id", knowledge_base_id);
+  return api<{ chunk_id: string; document_id: string; relevance: number }[]>(
+    `/api/retrieval-debug/labels?${params}`,
+  );
+}
+
 export function putRetrievalLabel(body: {
   query: string;
   knowledge_base_id?: string;
-  document_id: string;
+  chunk_id: string;
   relevance: number;
 }) {
-  return api<{ document_id: string; relevance: number }>("/api/retrieval-debug/labels", {
+  return api<{ chunk_id: string; document_id: string; relevance: number }>("/api/retrieval-debug/labels", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

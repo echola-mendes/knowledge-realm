@@ -53,6 +53,22 @@ def test_create_note_reaches_ready_with_chunks(monkeypatch):
             session.close()
 
 
+def test_create_note_filename_from_heading():
+    body = f"# 退款\n\n说明 {uuid.uuid4()}"
+    with _client() as client:
+        res = client.post("/api/documents/notes", json={"content": body})
+        assert res.status_code == 200
+        assert res.json()["filename"] == "退款.md"
+        assert res.json()["kind"] == "note"
+
+
+def test_create_note_filename_from_first_line_when_no_heading():
+    body = f"纯文本标题行\n\n正文 {uuid.uuid4()}"
+    with _client() as client:
+        res = client.post("/api/documents/notes", json={"content": body})
+        assert res.status_code == 200
+        assert res.json()["filename"] == "纯文本标题行.md"
+
 def test_url_import_from_mocked_html(monkeypatch):
     monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.url_import.fetch_html", lambda url: SAMPLE_HTML)

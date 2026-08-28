@@ -68,8 +68,16 @@ def parse_text_document(document_id: uuid.UUID) -> None:
             doc.status = STATUS_PARSE_FAILED
             doc.error_message = "invalid_utf8"
             session.commit()
+    except FileNotFoundError:
+        doc = session.get(Document, document_id)
+        if doc is not None:
+            _fail(session, doc, "missing_original")
+    except Exception as exc:  # noqa: BLE001
+        doc = session.get(Document, document_id)
+        if doc is not None:
+            _fail(session, doc, f"parse_error:{exc}")
     finally:
-            session.close()
+        session.close()
 
 
 def parse_pdf_document(document_id: uuid.UUID) -> None:

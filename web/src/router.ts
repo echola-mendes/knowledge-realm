@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from "vue-router";
 import { getMe } from "./api";
 import { debugEnabled } from "./debugFlag";
 import HomeView from "./views/HomeView.vue";
+import DocumentChunksView from "./views/DocumentChunksView.vue";
 import DocumentsView from "./views/DocumentsView.vue";
 import SearchView from "./views/SearchView.vue";
 import ChatView from "./views/ChatView.vue";
@@ -18,6 +19,7 @@ export const router = createRouter({
     { path: "/login", name: "login", component: LoginView, meta: { public: true } },
     { path: "/", name: "home", component: HomeView },
     { path: "/documents", name: "documents", component: DocumentsView },
+    { path: "/documents/:id/chunks", name: "document-chunks", component: DocumentChunksView },
     { path: "/knowledge-bases", name: "kbs", component: KnowledgeBasesView },
     { path: "/search", name: "search", component: SearchView },
     { path: "/chat", name: "chat", component: ChatView },

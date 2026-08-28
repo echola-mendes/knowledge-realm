@@ -247,13 +247,14 @@ def _label_map(
         stmt = stmt.where(RetrievalLabel.knowledge_base_id.is_(None))
     else:
         stmt = stmt.where(RetrievalLabel.knowledge_base_id == knowledge_base_id)
-    return {row.document_id: row.relevance for row in session.scalars(stmt)}
+    return {row.chunk_id: row.relevance for row in session.scalars(stmt)}
 
 
 def search_debug(
     session: Session,
     query: str,
     *,
+    retrieval_query: str | None = None,
     user_id: uuid.UUID,
     knowledge_base_id: uuid.UUID | None = None,
     vector_k: int = DEFAULT_K,
@@ -266,6 +267,7 @@ def search_debug(
 ) -> RetrievalDebugResponse:
     require_elasticsearch_url()
     kb_ids = search_kb_ids(session, user_id, knowledge_base_id)
+    rq = (retrieval_query or query).strip() or query
     query_norm = normalize_query(query)
     empty_stage = RetrievalStageOut(requested_k=0, actual_count=0, rows=[])
     if not kb_ids:
@@ -278,13 +280,13 @@ def search_debug(
             rerank=empty_stage.model_copy(update={"requested_k": rerank_k, "model": _rerank_model_name()}),
             final=[],
             candidates=[],
-            evaluation=RetrievalEvalOut(k=eval_k, relevant_doc_count=0),
+            evaluation=RetrievalEvalOut(k=eval_k, relevant_chunk_count=0),
             labels={},
         )
-    query_vec = embed_texts([query])[0]
+    query_vec = embed_texts([rq])[0]
     rows = _vector_stmt(session, query_vec, kb_ids, user_id, None, None, None, vector_k)
     vector_hits = [_hit_from_row(chunk, doc, dist) for chunk, doc, dist in rows]
-    bm25_pairs = search_chunk_scores(query, knowledge_base_ids=kb_ids, k=bm25_k)
+    bm25_pairs = search_chunk_scores(rq, knowledge_base_ids=kb_ids, k=bm25_k)
     bm25_ids = [cid for cid, _ in bm25_pairs]
     bm25_scores = {cid: score for cid, score in bm25_pairs}
     by_id = {hit.chunk_id: hit for hit in vector_hits}
@@ -306,7 +308,7 @@ def search_debug(
     rrf_hits = [by_id[cid] for cid in rrf_ids if cid in by_id]
     gate_fail = not vector_hits or vector_hits[0].score < vector_threshold
     rerank_in = rrf_hits[: min(rerank_k, RERANK_CANDIDATE_MAX)]
-    reranked = _rerank(query, rerank_in)
+    reranked = _rerank(rq, rerank_in)
     kept = [] if gate_fail else _keep_relevant(reranked)
     kept_ids = {h.chunk_id for h in kept}
 
@@ -400,15 +402,12 @@ def search_debug(
     )
     candidates = [r.model_copy(update={"rank": i}) for i, r in enumerate(ordered, start=1)]
     labels = _label_map(session, user_id, query_norm, knowledge_base_id)
-    doc_order: list[uuid.UUID] = []
-    for row in final_rows:
-        if row.document_id not in doc_order:
-            doc_order.append(row.document_id)
-    relevant = {did for did, rel in labels.items() if rel >= 2}
+    chunk_order: list[uuid.UUID] = [row.chunk_id for row in final_rows]
+    relevant = {cid for cid, rel in labels.items() if rel >= 2}
     recall = precision = None
     if relevant:
-        top = doc_order[:eval_k]
-        hit_n = sum(1 for did in top if did in relevant)
+        top = chunk_order[:eval_k]
+        hit_n = sum(1 for cid in top if cid in relevant)
         precision = hit_n / eval_k
         recall = hit_n / len(relevant)
     return RetrievalDebugResponse(
@@ -440,7 +439,7 @@ def search_debug(
             k=eval_k,
             recall=recall,
             precision=precision,
-            relevant_doc_count=len(relevant),
+            relevant_chunk_count=len(relevant),
         ),
         labels={str(k): v for k, v in labels.items()},
     )

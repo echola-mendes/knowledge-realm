@@ -16,6 +16,7 @@ from app.llm import llm_keys_ready
 from app.models import Document, DocumentChunk, DocumentTag, Entity, EntityLink, Favorite, KnowledgeBase, Tag, User
 from app.p1.chains import extract_graph, gather_document_text, suggest_tag_names, summarize_document
 from app.schemas import (
+    DocumentChunkOut,
     DocumentGraphOut,
     DocumentOut,
     DocumentTagsPut,
@@ -25,9 +26,11 @@ from app.schemas import (
     RelatedDocumentOut,
     UrlCreate,
 )
-from app.chunk import CHUNK_OVERLAP, CHUNK_SIZE
+from app.chunk import CHUNK_OVERLAP, CHUNK_SIZE, split_markdown
 from app import index as index_mod
+from app.index import STATUS_INDEXING
 from app.es_bm25 import EsNotConfiguredError, delete_document_chunks
+from app.search import search_chunks
 from app.storage import original_path, parsed_dir, remove_document_files, write_original
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -35,6 +38,7 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 ALLOWED = {".pdf": "pdf", ".docx": "docx", ".md": "md", ".markdown": "md", ".txt": "txt"}
 UPLOAD_MAX_BYTES = 100 * 1024 * 1024
 STATUS_PENDING = "pending"
+NOTE_FILENAME_MAX = 80
 
 
 def get_db():
@@ -43,6 +47,32 @@ def get_db():
         yield session
     finally:
         session.close()
+
+
+def _note_filename_from_content(text: str) -> str:
+    """从正文首个 Markdown 标题或首行生成文件名；无则「笔记.md」。"""
+    title = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            title = stripped.lstrip("#").strip()
+        else:
+            title = stripped
+        break
+    if not title:
+        return "笔记.md"
+    for ch in '<>:"/\\|?*':
+        title = title.replace(ch, "")
+    title = " ".join(title.split()).strip(" .")
+    if not title:
+        return "笔记.md"
+    if len(title) > NOTE_FILENAME_MAX:
+        title = title[:NOTE_FILENAME_MAX].rstrip()
+    if not title.lower().endswith(".md"):
+        title = f"{title}.md"
+    return title
 
 
 def _normalize_ext(filename: str) -> str:
@@ -73,6 +103,43 @@ def _document_out(doc: Document, session: Session, user_id: uuid.UUID, *, existe
             "chunk_overlap": CHUNK_OVERLAP,
         }
     )
+
+
+def _chunks_for_document(doc: Document, session: Session) -> list[DocumentChunkOut]:
+    rows = session.scalars(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == doc.id)
+        .order_by(DocumentChunk.chunk_index)
+    ).all()
+    if rows:
+        return [
+            DocumentChunkOut(
+                id=c.id,
+                chunk_index=c.chunk_index,
+                chunk_label=c.chunk_label,
+                content=c.content,
+                page=c.page,
+                heading=c.heading,
+                vector_status="ready",
+                created_at=c.created_at,
+            )
+            for c in rows
+        ]
+    md_path = parsed_dir(doc.id) / "document.md"
+    if not md_path.is_file():
+        return []
+    pieces = split_markdown(md_path.read_text(encoding="utf-8"))
+    vector_status = "indexing" if doc.status == STATUS_INDEXING else "pending"
+    return [
+        DocumentChunkOut(
+            chunk_index=i,
+            content=piece.content,
+            page=piece.page,
+            heading=piece.heading,
+            vector_status=vector_status,
+        )
+        for i, piece in enumerate(pieces)
+    ]
 
 
 @router.post("/upload", response_model=DocumentOut)
@@ -141,10 +208,13 @@ def create_note(
         return _document_out(existing, session, user.id, existed=True)
     doc_id = uuid.uuid4()
     write_original(doc_id, ".md", data)
+    name = (body.filename or "").strip() or _note_filename_from_content(text)
+    if not name.lower().endswith(".md"):
+        name = f"{name}.md"
     doc = Document(
         id=doc_id,
         knowledge_base_id=kb_id,
-        filename=body.filename or "笔记.md",
+        filename=name,
         ext=".md",
         kind="note",
         checksum=checksum,
@@ -279,6 +349,49 @@ def unfavorite_document(
 @router.get("/{document_id}", response_model=DocumentOut)
 def get_document(document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)):
     return _document_out(_owned_doc(session, document_id, user.id), session, user.id)
+
+
+@router.get("/{document_id}/chunks", response_model=list[DocumentChunkOut])
+def list_document_chunks(
+    document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    doc = _owned_doc(session, document_id, user.id)
+    return _chunks_for_document(doc, session)
+
+
+@router.post("/{document_id}/chunks/{chunk_id}/reindex", response_model=DocumentChunkOut)
+def reindex_document_chunk_http(
+    document_id: uuid.UUID,
+    chunk_id: uuid.UUID,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if not index_mod.embedding_keys_ready():
+        raise HTTPException(status_code=503, detail="未配置 Embedding API Key")
+    doc = _owned_doc(session, document_id, user.id)
+    chunk = session.get(DocumentChunk, chunk_id)
+    if chunk is None or chunk.document_id != doc.id:
+        raise HTTPException(status_code=404, detail="切片不存在")
+    try:
+        ok = index_mod.reindex_chunk(chunk_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    if not ok:
+        raise HTTPException(status_code=404, detail="切片不存在")
+    updated = session.get(DocumentChunk, chunk_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="切片不存在")
+    session.refresh(updated)
+    return DocumentChunkOut(
+        id=updated.id,
+        chunk_index=updated.chunk_index,
+        chunk_label=updated.chunk_label,
+        content=updated.content,
+        page=updated.page,
+        heading=updated.heading,
+        vector_status="ready",
+        created_at=updated.created_at,
+    )
 
 
 @router.get("/{document_id}/related", response_model=list[RelatedDocumentOut])
@@ -452,9 +565,12 @@ def reindex_document_http(
 ):
     if not index_mod.embedding_keys_ready():
         raise HTTPException(status_code=503, detail="未配置 Embedding API Key")
+    _owned_doc(session, document_id, user.id)
+    try:
+        index_mod.reindex_document(document_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"重新处理失败：{exc}") from exc
     doc = _owned_doc(session, document_id, user.id)
-    index_mod.reindex_document(document_id)
-    session.refresh(doc)
     return _document_out(doc, session, user.id)
 
 

@@ -6,6 +6,7 @@ from time import sleep
 from sqlalchemy import delete, select
 
 from app.chunk import split_markdown
+from app.chunk_label import allocate_chunk_labels
 from app.config import get_settings
 from app.db import session_scope
 from app.es_bm25 import EsNotConfiguredError, delete_document_chunks, upsert_chunks
@@ -130,11 +131,13 @@ def index_document(document_id: uuid.UUID) -> None:
             session.commit()
             return
         session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc.id))
-        for i, (piece, vec) in enumerate(zip(pieces, vectors, strict=True)):
+        labels = allocate_chunk_labels(session, len(pieces))
+        for i, (piece, vec, label) in enumerate(zip(pieces, vectors, labels, strict=True)):
             session.add(
                 DocumentChunk(
                     document_id=doc.id,
                     chunk_index=i,
+                    chunk_label=label,
                     content=piece.content,
                     page=piece.page,
                     heading=piece.heading,
@@ -156,6 +159,13 @@ def index_document(document_id: uuid.UUID) -> None:
             session.commit()
             return
         _enrich_after_index(document_id)
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        doc = session.get(Document, document_id)
+        if doc is not None and doc.status == STATUS_INDEXING:
+            doc.status = STATUS_INDEX_FAILED
+            doc.error_message = f"index_error:{exc}"
+            session.commit()
     finally:
         session.close()
 
@@ -185,6 +195,35 @@ def reindex_document(document_id: uuid.UUID) -> None:
     process_document(document_id)
 
 
+def reindex_chunk(chunk_id: uuid.UUID) -> bool:
+    """仅重新向量化一条切片，不重跑整篇文档解析。成功返回 True，切片不存在返回 False。"""
+    if not embedding_keys_ready():
+        raise RuntimeError("未配置 Embedding API Key")
+    session = session_scope()
+    try:
+        chunk = session.get(DocumentChunk, chunk_id)
+        if chunk is None:
+            return False
+        doc = session.get(Document, chunk.document_id)
+        if doc is None:
+            return False
+        try:
+            vectors = embed_texts([chunk.content])
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(format_embed_error(exc)) from exc
+        chunk.embedding = vectors[0]
+        session.commit()
+        try:
+            upsert_chunks(
+                [(chunk.id, chunk.content, doc.knowledge_base_id, doc.id, doc.kind)]
+            )
+        except EsNotConfiguredError:
+            pass
+        return True
+    finally:
+        session.close()
+
+
 def process_document(document_id: uuid.UUID) -> None:
     session = session_scope()
     try:
@@ -200,4 +239,11 @@ def process_document(document_id: uuid.UUID) -> None:
         parse_docx_document(document_id)
     elif kind == URL_KIND:
         process_url_document(document_id)
+    session = session_scope()
+    try:
+        doc = session.get(Document, document_id)
+        if doc is None or doc.status == STATUS_PARSE_FAILED:
+            return
+    finally:
+        session.close()
     index_document(document_id)
