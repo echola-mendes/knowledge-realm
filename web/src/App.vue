@@ -12,11 +12,10 @@ const isLogin = computed(() => route.name === "login");
 const initial = computed(() => (me.value?.username?.trim().charAt(0) || "?").toUpperCase());
 
 const allLinks = [
-  { to: "/", label: "首页", icon: "home", match: "home" },
   { to: "/chat", label: "对话", icon: "chat", match: "chat" },
-  { to: "/search", label: "搜索", icon: "search", match: "search" },
+  { to: "/knowledge-bases", label: "知识库", icon: "db", match: "kbs" },
   { to: "/documents", label: "文档", icon: "doc", match: "docs" },
-  { to: "/knowledge-bases", label: "知识库管理", icon: "db", match: "kbs" },
+  { to: "/search", label: "搜索", icon: "search", match: "search" },
   { to: "/debug", label: "调试", icon: "bug", match: "debug" },
   { to: "/settings", label: "设置", icon: "gear", match: "settings" },
 ] as const;
@@ -25,10 +24,10 @@ const links = computed(() => allLinks.filter((item) => item.match !== "debug" ||
 
 function navOn(match: string) {
   const p = route.path;
-  if (match === "home") return p === "/";
-  if (match === "docs") return p === "/documents" || p.startsWith("/documents/");
+  const qMode = typeof route.query.mode === "string" ? route.query.mode : "";
+  if (match === "chat") return p === "/chat" && qMode !== "report";
   if (match === "kbs") return p === "/knowledge-bases";
-  if (match === "chat") return p === "/chat";
+  if (match === "docs") return p === "/documents" || p.startsWith("/documents/");
   if (match === "search") return p === "/search";
   if (match === "debug") return p === "/debug";
   if (match === "settings") return p === "/settings";
@@ -46,23 +45,6 @@ function loadShell() {
     });
 }
 
-const navPinned = ref(false);
-const navHover = ref(false);
-const navOpen = computed(() => navPinned.value || navHover.value);
-
-function collapseNav() {
-  navPinned.value = false;
-  navHover.value = false;
-}
-
-function holdNav() {
-  navPinned.value = true;
-}
-
-function onNavLeave() {
-  navHover.value = false;
-}
-
 onMounted(() => {
   if (!isLogin.value) loadShell();
 });
@@ -77,13 +59,7 @@ watch(isLogin, (login) => {
     <RouterView />
   </div>
   <div v-else class="app-shell">
-    <aside
-      class="sidenav"
-      :class="{ collapsed: !navOpen, pinned: navPinned }"
-      @mouseenter="navHover = true"
-      @mouseleave="onNavLeave"
-      @click="holdNav"
-    >
+    <aside class="sidenav collapsed">
       <header class="sidenav-head">
         <RouterLink class="brand" to="/" aria-label="知域">
           <span class="mark" aria-hidden="true"></span>
@@ -93,7 +69,7 @@ watch(isLogin, (login) => {
       <nav class="nav">
         <RouterLink
           v-for="item in links"
-          :key="item.to"
+          :key="item.match"
           :to="item.to"
           active-class=""
           exact-active-class=""
@@ -104,6 +80,9 @@ watch(isLogin, (login) => {
         </RouterLink>
       </nav>
       <div class="sidenav-foot">
+        <button class="theme-btn" type="button" aria-label="主题">
+          <Icon name="sun" />
+        </button>
         <RouterLink
           v-if="me"
           class="who"
@@ -116,7 +95,7 @@ watch(isLogin, (login) => {
         </RouterLink>
       </div>
     </aside>
-    <div class="app-main" @click="collapseNav">
+    <div class="app-main">
       <RouterView />
       <footer class="footer-note">🔒 检索与问答时，文本片段会发往所配置的第三方 AI。</footer>
     </div>

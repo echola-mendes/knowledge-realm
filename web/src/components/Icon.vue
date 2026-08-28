@@ -24,6 +24,45 @@ defineProps<{ name: string }>();
     <template v-else-if="name === 'chat'">
       <path d="M7.4 18.2 4.2 20.4V7.6A2.6 2.6 0 0 1 6.8 5h10.4A2.6 2.6 0 0 1 19.8 7.6v6.4a2.6 2.6 0 0 1-2.6 2.6H9.2Z" />
     </template>
+    <template v-else-if="name === 'report'">
+      <path d="M7.2 4h9.6a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7.2a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" />
+      <path d="M9 15.5 11.5 12l2 1.5 2.5-3.5" />
+    </template>
+    <template v-else-if="name === 'send'">
+      <path d="m22 2-7 20-4-9-9-4 20-7z" fill="currentColor" stroke="none" />
+    </template>
+    <template v-else-if="name === 'plus'">
+      <path d="M12 5v14M5 12h14" />
+    </template>
+    <template v-else-if="name === 'chevron-left'">
+      <path d="m14 7-5 5 5 5" />
+    </template>
+    <template v-else-if="name === 'edit'">
+      <path d="M12 20h9M16.5 3.5a1.8 1.8 0 0 1 2.5 2.5L7 18l-4 1 1-4 12.5-12.5Z" />
+    </template>
+    <template v-else-if="name === 'share'">
+      <path d="M16 8a2.2 2.2 0 1 0-2.2-2.2M8 14.5a2.2 2.2 0 1 0-2.2-2.2M16 20.8a2.2 2.2 0 1 0-2.2-2.2M9.8 13.3l4.4-2.6M9.8 10.7l4.4 2.6" />
+    </template>
+    <template v-else-if="name === 'star'">
+      <path d="m12 3.8 2.2 4.5 4.9.7-3.5 3.4.8 4.9L12 14.8l-4.4 2.3.8-4.9-3.5-3.4 4.9-.7L12 3.8Z" />
+    </template>
+    <template v-else-if="name === 'more'">
+      <circle cx="6" cy="12" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="18" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    </template>
+    <template v-else-if="name === 'panel-close'">
+      <rect x="5" y="5" width="14" height="14" rx="2" />
+      <path d="m10 8-2 2 2 2M14 8l2 2-2 2" />
+    </template>
+    <template v-else-if="name === 'brand'">
+      <rect x="8.2" y="4.2" width="8.8" height="8.8" rx="2" fill="currentColor" stroke="none" opacity="0.42" />
+      <rect x="4.2" y="10.8" width="8.8" height="8.8" rx="2" fill="currentColor" stroke="none" />
+    </template>
+    <template v-else-if="name === 'sun'">
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M12 2.8v2.2M12 19v2.2M4.1 4.1l1.6 1.6M18.3 18.3l1.6 1.6M2.8 12h2.2M19 12h2.2M4.1 19.9l1.6-1.6M18.3 5.7l1.6-1.6" />
+    </template>
     <template v-else-if="name === 'gear'">
       <circle cx="12" cy="12" r="3" />
       <path d="M12 2.6v2.2M12 19.2v2.2M4.1 4.1l1.6 1.6M18.3 18.3l1.6 1.6M2.6 12h2.2M19.2 12h2.2M4.1 19.9l1.6-1.6M18.3 5.7l1.6-1.6" />
@@ -35,8 +74,9 @@ defineProps<{ name: string }>();
       <path d="M4.8 10.8v4.8c0 1.4 3.2 2.5 7.2 2.5s7.2-1.1 7.2-2.5v-4.8" />
     </template>
     <template v-else-if="name === 'bug'">
-      <circle cx="12" cy="14" r="5.2" />
-      <path d="M12 8.8V5.5M8.2 6.2 10 8.2M15.8 6.2 14 8.2M4.8 12.2h2.4M16.8 12.2h2.4M5.5 17.5l2.2-1M18.5 17.5l-2.2-1" />
+      <path d="M12 2.8 18.2 6.2v7.6L12 20.2 5.8 13.8V6.2L12 2.8Z" />
+      <circle cx="12" cy="12.8" r="2.4" />
+      <path d="M12 9.8V8M9.4 10.8l1.4 1.2M14.6 10.8l-1.4 1.2M7.2 12.8h1.8M16.8 12.8h-1.8" />
     </template>
     <template v-else-if="name === 'user'">
       <circle cx="12" cy="8.2" r="3.2" />
@@ -58,6 +98,48 @@ defineProps<{ name: string }>();
     </template>
     <template v-else-if="name === 'chevron'">
       <path d="m7 9.5 5 5 5-5" />
+    </template>
+    <template v-else-if="name === 'check'">
+      <path d="m5.5 12.2 3.8 3.8L18.5 6.5" />
+    </template>
+    <template v-else-if="name === 'info'">
+      <circle cx="12" cy="12" r="8.2" />
+      <path d="M12 10.2V16.2M12 7.8h.01" />
+    </template>
+    <template v-else-if="name === 'bell'">
+      <path d="M12 4.2c-2.2 0-4 1.8-4 4v2.4l-1.4 2.2h11l-1.4-2.2V8.2c0-2.2-1.8-4-4-4Z" />
+      <path d="M10 18.2h4" />
+    </template>
+    <template v-else-if="name === 'tag'">
+      <path d="M4.2 12.2 12 4.4l7.8 7.8-3.6 3.6H7.8L4.2 12.2Z" />
+      <circle cx="14.6" cy="9.4" r="1" />
+    </template>
+    <template v-else-if="name === 'spark'">
+      <path d="M12 3.5v3.2M12 17.3v3.2M4.2 12h3.2M16.6 12h3.2M6.4 6.4l2.3 2.3M15.3 15.3l2.3 2.3M6.4 17.6l2.3-2.3M15.3 8.7l2.3-2.3" />
+    </template>
+    <template v-else-if="name === 'nodes'">
+      <circle cx="6.5" cy="6.5" r="2.2" />
+      <circle cx="17.5" cy="6.5" r="2.2" />
+      <circle cx="12" cy="17.5" r="2.2" />
+      <path d="M8.4 7.8 10.4 15.2M15.6 7.8l-2 7.4M8.7 6.5h6.6" />
+    </template>
+    <template v-else-if="name === 'box'">
+      <path d="M4.8 8.2 12 4.2l7.2 4v7.6l-7.2 4-7.2-4V8.2Z" />
+      <path d="M12 12.2V20.2M4.8 8.2 12 12.2l7.2-4" />
+    </template>
+    <template v-else-if="name === 'link'">
+      <path d="M9.2 14.8a3.4 3.4 0 0 0 4.8 0l2.2-2.2a3.4 3.4 0 0 0-4.8-4.8l-1 1" />
+      <path d="M14.8 9.2a3.4 3.4 0 0 0-4.8 0l-2.2 2.2a3.4 3.4 0 0 0 4.8 4.8l1-1" />
+    </template>
+    <template v-else-if="name === 'alert'">
+      <path d="M12 4.2 20.2 18.2H3.8L12 4.2Z" />
+      <path d="M12 9.2v4.2M12 16.2h.01" />
+    </template>
+    <template v-else-if="name === 'folder'">
+      <path d="M4.2 6.8h5.2l1.6 1.6h8.8a1.2 1.2 0 0 1 1.2 1.2v8.4a1.2 1.2 0 0 1-1.2 1.2H5.4a1.2 1.2 0 0 1-1.2-1.2V8a1.2 1.2 0 0 1 1-1.2Z" />
+    </template>
+    <template v-else-if="name === 'list'">
+      <path d="M7.5 7.2h10.2M7.5 12h10.2M7.5 16.8h10.2M5 7.2h.01M5 12h.01M5 16.8h.01" />
     </template>
   </svg>
 </template>

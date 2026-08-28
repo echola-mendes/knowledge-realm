@@ -1,17 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import ChunkMultiSelect from "../components/ChunkMultiSelect.vue";
 import {
-  createKnowledgeBase,
-  createNote,
-  deleteKnowledgeBase,
-  getDocument,
   getMe,
+  listDebugDatasetChunks,
+  listRetrievalLabels,
   putRetrievalLabel,
   runRetrievalDebug,
-  type KnowledgeBase,
+  type DebugDatasetChunk,
   type RetrievalDebugRow,
 } from "../api";
-import { knowledgeBases, loadKnowledgeBases } from "../kb";
 
 const STORAGE_BASE = "zhiyu-debug-ui";
 const userTag = ref("echola");
@@ -36,111 +34,66 @@ type Cand = {
   final: boolean;
 };
 
-const TEST_PREFIX = "测试库-";
-const TEST_MAX = 3;
-const TEST_SEEDS = [
-  { name: "测试库-退款", filename: "退款.md", content: "退款须原路返回。" },
-  { name: "测试库-手册", filename: "手册.md", content: "手册规定工时休假。" },
-  { name: "测试库-请假", filename: "请假.md", content: "请假须提前报备。" },
-] as const;
+const query = ref("");
+const searchQuery = ref("");
+const nextAction = ref<"search" | "generate">("search");
+const datasetChunks = ref<DebugDatasetChunk[]>([]);
+const selectedGtChunks = ref<string[]>([]);
+const gtQueryHint = computed(() => (query.value.trim() ? "" : "请先填写测试查询"));
 
-const kbs = ref<KnowledgeBase[]>([]);
-const seeding = ref(false);
-const testKbs = computed(() => kbs.value.filter((kb) => kb.name.startsWith(TEST_PREFIX)));
-const canSeed = computed(() => testKbs.value.length < TEST_MAX);
-
-function seedPreview(name: string) {
-  const hit = TEST_SEEDS.find((s) => s.name === name);
-  const text = hit?.content || "";
-  return Array.from(text).slice(0, 30).join("");
+function optionLabel(chunkId: string) {
+  return datasetChunks.value.find((c) => c.chunk_id === chunkId)?.chunk_label || chunkId.slice(0, 8);
 }
 
-function nextSeed() {
-  const used = new Set(testKbs.value.map((kb) => kb.name));
-  return TEST_SEEDS.find((s) => !used.has(s.name));
-}
-
-async function refreshKbs() {
-  await loadKnowledgeBases();
-  kbs.value = knowledgeBases.value;
-}
-
-async function waitReady(id: string) {
-  for (let i = 0; i < 40; i++) {
-    const doc = await getDocument(id);
-    if (doc.status === "ready") return;
-    if (doc.status === "parse_failed" || doc.status === "index_failed") {
-      throw new Error(doc.error_message || "测试文档索引失败");
-    }
-    await new Promise((r) => setTimeout(r, 400));
+async function loadDatasetChunks() {
+  try {
+    datasetChunks.value = await listDebugDatasetChunks();
+  } catch (e) {
+    hint.value = String(e);
   }
-  throw new Error("测试文档索引超时");
 }
 
-async function createSeed(seed: (typeof TEST_SEEDS)[number]) {
-  const text = Array.from(seed.content).slice(0, 30).join("");
-  const kb = await createKnowledgeBase(seed.name);
-  const doc = await createNote(kb.id, text, seed.filename);
-  await waitReady(doc.id);
-  return kb;
-}
-
-async function seedTestKb() {
-  if (!canSeed.value) {
-    hint.value = `测试库最多 ${TEST_MAX} 个。`;
+async function loadGtSelection() {
+  const q = query.value.trim();
+  if (!q) {
+    selectedGtChunks.value = [];
     return;
   }
-  const seed = nextSeed();
-  if (!seed) {
-    hint.value = `测试库最多 ${TEST_MAX} 个。`;
+  try {
+    const rows = await listRetrievalLabels(q);
+    gtMap.value = Object.fromEntries(rows.map((r) => [r.chunk_id, r.relevance]));
+    selectedGtChunks.value = rows.filter((r) => r.relevance >= 2).map((r) => r.chunk_id);
+  } catch (e) {
+    hint.value = String(e);
+  }
+}
+
+async function toggleGtChunk(chunkId: string) {
+  const q = query.value.trim();
+  if (!q) {
+    hint.value = "先填写测试查询，再选择切片编号。";
     return;
   }
-  seeding.value = true;
+  const set = new Set(selectedGtChunks.value);
+  const adding = !set.has(chunkId);
+  if (adding) set.add(chunkId);
+  else set.delete(chunkId);
+  selectedGtChunks.value = [...set];
+  const next = adding ? 3 : 0;
   try {
-    const kb = await createSeed(seed);
-    await refreshKbs();
-    dataset.value = kb.id;
-    hint.value = `已创建 ${seed.name}（正文 ${Array.from(seed.content).length} 字）。`;
+    await putRetrievalLabel({ query: q, chunk_id: chunkId, relevance: next });
+    gtMap.value = { ...gtMap.value, [chunkId]: next };
+    hint.value = `已保存 ${selectedGtChunks.value.length} 条标准切片（${selectedGtChunks.value.map((id) => optionLabel(id)).join(", ") || "—"}）。`;
   } catch (e) {
     hint.value = String(e);
-  } finally {
-    seeding.value = false;
-  }
-}
-
-async function ensureTestKbs() {
-  await refreshKbs();
-  if (testKbs.value.length >= TEST_MAX) return;
-  seeding.value = true;
-  try {
-    while (testKbs.value.length < TEST_MAX) {
-      const seed = nextSeed();
-      if (!seed) break;
-      hint.value = `正在准备测试库 ${testKbs.value.length + 1}/${TEST_MAX}…`;
-      await createSeed(seed);
-      await refreshKbs();
+    if (adding) {
+      selectedGtChunks.value = selectedGtChunks.value.filter((id) => id !== chunkId);
+    } else {
+      selectedGtChunks.value = [...selectedGtChunks.value, chunkId];
     }
-    hint.value = `测试库已就绪（${testKbs.value.length}/${TEST_MAX}），正文均不超过 30 字。`;
-  } catch (e) {
-    hint.value = String(e);
-  } finally {
-    seeding.value = false;
   }
 }
 
-async function removeTestKb(kb: KnowledgeBase) {
-  if (seeding.value) return;
-  if (!confirm(`删除 ${kb.name}？`)) return;
-  try {
-    await deleteKnowledgeBase(kb.id);
-    await refreshKbs();
-    if (dataset.value === kb.id) dataset.value = "current_kb";
-    hint.value = `已删除 ${kb.name}。当前 ${testKbs.value.length}/${TEST_MAX}。`;
-  } catch (e) {
-    hint.value = String(e);
-  }
-}
-const dataset = ref("current_kb");
 const k = ref(5);
 const bm25K = ref(5);
 const n = ref(5);
@@ -170,12 +123,18 @@ function setGt(id: string, v: number) {
   if (!query.value.trim()) return;
   putRetrievalLabel({
     query: query.value,
-    knowledge_base_id: dataset.value === "current_kb" ? undefined : dataset.value,
-    document_id: id,
+    chunk_id: id,
     relevance: v,
   }).catch((e) => {
     hint.value = String(e);
   });
+  if (v >= 2) {
+    if (!selectedGtChunks.value.includes(id)) {
+      selectedGtChunks.value = [...selectedGtChunks.value, id];
+    }
+  } else {
+    selectedGtChunks.value = selectedGtChunks.value.filter((x) => x !== id);
+  }
 }
 
 function toggleEval(v: number) {
@@ -226,7 +185,6 @@ async function run() {
     const evalK = Math.max(...evalKs.value, 5);
     const body = await runRetrievalDebug({
       query: q,
-      knowledge_base_id: dataset.value === "current_kb" ? undefined : dataset.value,
       vector_k: k.value,
       bm25_k: bm25K.value,
       rrf_k: n.value,
@@ -238,11 +196,16 @@ async function run() {
     const ms = Math.round(performance.now() - t0);
     cands.value = body.candidates.map(rowToCand);
     gtMap.value = { ...body.labels };
+    searchQuery.value = body.search_query || q;
+    nextAction.value = body.next_action === "generate" ? "generate" : "search";
     rerankModel.value = body.rerank.model || rerankModel.value;
     lat.value = { vector: 0, bm25: 0, rrf: 0, rerank: 0, total: ms };
     ran.value = true;
     formulaId.value = null;
-    hint.value = `检索完成（整次 ${ms} ms）。向量 ${body.vector.actual_count} / BM25 ${body.bm25.actual_count} / Final ${body.final.length}。`;
+    const sqNote =
+      searchQuery.value !== q ? `；search_query「${searchQuery.value}」` : "";
+    const actionNote = nextAction.value === "generate" ? "（Agent 判定不检索，仍用原问题跑检索）" : "";
+    hint.value = `检索完成（整次 ${ms} ms）${sqNote}${actionNote}。向量 ${body.vector.actual_count} / BM25 ${body.bm25.actual_count} / Final ${body.final.length}。`;
   } catch (e) {
     hint.value = String(e);
   } finally {
@@ -252,7 +215,9 @@ async function run() {
 
 function reset() {
   query.value = "";
-  dataset.value = "current_kb";
+  searchQuery.value = "";
+  nextAction.value = "search";
+  selectedGtChunks.value = [];
   k.value = 5;
   bm25K.value = 5;
   n.value = 5;
@@ -272,7 +237,7 @@ function save() {
     STORAGE.value,
     JSON.stringify({
       query: query.value,
-      dataset: dataset.value,
+      selectedGtChunks: selectedGtChunks.value,
       k: k.value,
       bm25K: bm25K.value,
       n: n.value,
@@ -296,7 +261,9 @@ function load() {
   }
   const c = JSON.parse(raw) as Record<string, unknown>;
   if (typeof c.query === "string") query.value = c.query;
-  if (typeof c.dataset === "string") dataset.value = c.dataset;
+  if (Array.isArray(c.selectedGtChunks)) {
+    selectedGtChunks.value = c.selectedGtChunks.filter((x): x is string => typeof x === "string");
+  }
   if (typeof c.k === "number") k.value = c.k;
   if (typeof c.bm25K === "number") bm25K.value = c.bm25K;
   if (typeof c.n === "number") n.value = c.n;
@@ -342,33 +309,26 @@ const tabRows = computed(() => {
   return rerankRows.value;
 });
 
-const uniqueDocs = computed(() => {
+const uniqueChunks = computed(() => {
   const seen = new Set<string>();
   const list: Cand[] = [];
   for (const c of [...finalRows.value, ...cands.value]) {
-    if (seen.has(c.documentId)) continue;
-    seen.add(c.documentId);
+    if (seen.has(c.chunkId)) continue;
+    seen.add(c.chunkId);
     list.push(c);
   }
   return list;
 });
 
-const relevantIds = computed(() => uniqueDocs.value.filter((c) => gtOf(c.documentId) >= 2).map((c) => c.documentId));
+const relevantIds = computed(() => uniqueChunks.value.filter((c) => gtOf(c.chunkId) >= 2).map((c) => c.chunkId));
 
-function finalDocOrder() {
-  const seen = new Set<string>();
-  const order: string[] = [];
-  for (const c of finalRows.value) {
-    if (seen.has(c.documentId)) continue;
-    seen.add(c.documentId);
-    order.push(c.documentId);
-  }
-  return order;
+function finalChunkOrder() {
+  return finalRows.value.map((c) => c.chunkId);
 }
 
 function precisionAt(at: number) {
   if (!ran.value) return "—";
-  const order = finalDocOrder().slice(0, at);
+  const order = finalChunkOrder().slice(0, at);
   if (!order.length) return "0.00";
   const hits = order.filter((id) => relevantIds.value.includes(id)).length;
   return (hits / order.length).toFixed(2);
@@ -378,7 +338,7 @@ function recallAt(at: number) {
   if (!ran.value) return "—";
   const rel = relevantIds.value;
   if (!rel.length) return "—";
-  const order = finalDocOrder().slice(0, at);
+  const order = finalChunkOrder().slice(0, at);
   const hits = order.filter((id) => rel.includes(id)).length;
   return (hits / rel.length).toFixed(2);
 }
@@ -387,7 +347,7 @@ function hitAt(at: number) {
   if (!ran.value) return "—";
   const rel = relevantIds.value;
   if (!rel.length) return "—";
-  const order = finalDocOrder().slice(0, at);
+  const order = finalChunkOrder().slice(0, at);
   return order.some((id) => rel.includes(id)) ? "1.00" : "0.00";
 }
 
@@ -395,7 +355,7 @@ function mrrAt(at: number) {
   if (!ran.value) return "—";
   const rel = new Set(relevantIds.value);
   if (!rel.size) return "—";
-  const order = finalDocOrder().slice(0, at);
+  const order = finalChunkOrder().slice(0, at);
   const idx = order.findIndex((id) => rel.has(id));
   if (idx < 0) return "0.00";
   return (1 / (idx + 1)).toFixed(2);
@@ -403,15 +363,15 @@ function mrrAt(at: number) {
 
 function ndcgAt(at: number) {
   if (!ran.value) return "—";
-  const order = finalDocOrder().slice(0, at);
+  const order = finalChunkOrder().slice(0, at);
   let dcg = 0;
   order.forEach((id, i) => {
     const g = gtOf(id);
     if (g <= 0) return;
     dcg += (2 ** g - 1) / Math.log2(i + 2);
   });
-  const ideal = [...uniqueDocs.value]
-    .map((c) => gtOf(c.documentId))
+  const ideal = [...uniqueChunks.value]
+    .map((c) => gtOf(c.chunkId))
     .sort((a, b) => b - a)
     .slice(0, at);
   let idcg = 0;
@@ -431,10 +391,18 @@ function rrfParts(c: Cand) {
 }
 
 const formulaRow = computed(() => rrfRows.value.find((x) => x.chunkId === formulaId.value) || null);
-const gtHits = computed(() => uniqueDocs.value.filter((c) => gtOf(c.documentId) >= 2).slice(0, 3));
+const gtHits = computed(() =>
+  datasetChunks.value.filter((c) => selectedGtChunks.value.includes(c.chunk_id)).slice(0, 5),
+);
+
+watch(query, () => {
+  loadGtSelection().catch((e) => {
+    hint.value = String(e);
+  });
+});
 
 onMounted(() => {
-  ensureTestKbs().catch((e) => {
+  loadDatasetChunks().catch((e) => {
     hint.value = String(e);
   });
   getMe()
@@ -447,6 +415,7 @@ onMounted(() => {
 
 <template>
   <main class="page debug-page">
+    <div class="debug-scroll">
     <div class="page-head">
       <div>
         <h1>调试模式</h1>
@@ -465,27 +434,28 @@ onMounted(() => {
 
     <section class="top-grid">
       <div class="card pad">
-        <label>测试查询</label>
-        <textarea v-model="query" rows="3" />
+        <label>测试查询（用户问题）</label>
+        <p class="tiny">模拟 Agent 输入；运行后先经 reason 生成 search_query，再对该词做向量化与混合检索。</p>
+        <textarea v-model="query" rows="3" placeholder="例如：帮我查一下那个代号" />
+        <p v-if="ran && searchQuery" class="tiny sq">
+          search_query：{{ searchQuery }}
+          <span v-if="searchQuery !== query.trim()">（已改写）</span>
+        </p>
+        <p v-if="ran && nextAction === 'generate'" class="tiny warn">Agent reason：不检索</p>
       </div>
-      <div class="card pad">
-        <label>数据集 / Ground Truth</label>
-        <ul v-if="testKbs.length" class="test-list">
-          <li v-for="kb in testKbs" :key="kb.id">
-            <strong>{{ kb.name }}</strong>
-            <span>{{ seedPreview(kb.name) || "短测试文" }}</span>
-            <button class="btn-link" type="button" @click="removeTestKb(kb)">删除</button>
-          </li>
-        </ul>
-        <p v-else class="tiny">还没有测试库。点下方按钮创建（最多 3 个）。</p>
-        <select v-model="dataset">
-          <option value="current_kb">当前用户已开启知识库</option>
-          <option v-for="kb in testKbs" :key="kb.id" :value="kb.id">{{ kb.name }}</option>
-        </select>
-        <button class="btn" type="button" :disabled="!canSeed || seeding" @click="seedTestKb">
-          {{ seeding ? "创建中…" : `创建测试库（${testKbs.length}/${TEST_MAX}）` }}
-        </button>
-        <p class="tiny">测试库正文不超过 30 字，同时最多 3 个。Ground Truth 写入 retrieval_label。</p>
+      <div class="card pad gt-card">
+        <label id="gt-chunk-label">数据集 / Ground Truth</label>
+        <p class="tiny">下拉多选切片编号（Chunk_1…），写入 retrieval_label。</p>
+        <ChunkMultiSelect
+          v-model="selectedGtChunks"
+          :options="datasetChunks"
+          :disabled="!datasetChunks.length"
+          :hint="gtQueryHint"
+          placeholder="选择切片编号…"
+          @toggle="toggleGtChunk"
+        />
+        <p v-if="!datasetChunks.length" class="tiny">暂无切片。请先在文档页上传并等待向量化完成。</p>
+        <p v-else class="tiny">共 {{ datasetChunks.length }} 条切片可选。</p>
       </div>
       <div class="card pad">
         <label>Evaluation K</label>
@@ -774,7 +744,7 @@ onMounted(() => {
                 <td>{{ c.rrfScore?.toFixed(4) ?? "—" }}</td>
                 <td>{{ c.rerankScore?.toFixed(3) ?? "—" }}</td>
                 <td>
-                  <select :value="gtOf(c.documentId)" @change="setGt(c.documentId, Number(($event.target as HTMLSelectElement).value))">
+                  <select :value="gtOf(c.chunkId)" @change="setGt(c.chunkId, Number(($event.target as HTMLSelectElement).value))">
                     <option v-for="(lab, gi) in GT_LABELS" :key="gi" :value="gi">{{ gi }}</option>
                   </select>
                 </td>
@@ -788,7 +758,7 @@ onMounted(() => {
       </div>
       <div class="card pad">
         <h2>Evaluation Metrics</h2>
-        <p class="tiny">只根据 Ground Truth（≥2 视为相关），不用检索分推断。</p>
+        <p class="tiny">只根据 Ground Truth（≥2 视为相关，切片级），不用检索分推断。</p>
         <select>
           <option>Default Metric Set</option>
         </select>
@@ -830,14 +800,15 @@ onMounted(() => {
 
     <section class="card pad gt-foot">
       <h2>Ground Truth（本次查询）</h2>
-      <p v-if="!gtHits.length" class="tiny">在结果表 GT 列把文档标成 2/3 后会出现在这里。</p>
+      <p v-if="!gtHits.length" class="tiny">在上方多选标准切片，或在结果表 GT 列标注 2/3。</p>
       <ul>
-        <li v-for="c in gtHits" :key="c.documentId">
-          <strong>{{ c.title }}</strong>
-          <span>{{ c.path }}</span>
+        <li v-for="c in gtHits" :key="c.chunk_id">
+          <strong>{{ c.chunk_label }}</strong>
+          <span>{{ c.knowledge_base_name }} · {{ c.document_name }}</span>
         </li>
       </ul>
     </section>
+    </div>
   </main>
 </template>
 
@@ -846,9 +817,21 @@ onMounted(() => {
   width: 100%;
   max-width: none;
   margin: 0;
-  padding: 1rem 1.25rem 2rem;
+  padding: 0;
   font-size: 12.5px;
   background: transparent;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.debug-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem 1.25rem 2rem;
 }
 .debug-page .btn {
   padding: 0.5rem 0.85rem;
@@ -876,29 +859,6 @@ onMounted(() => {
 .top-grid .btn {
   margin-top: 0.4rem;
   width: 100%;
-}
-.test-list {
-  margin: 0.35rem 0 0.45rem;
-  padding: 0;
-  list-style: none;
-  font-size: 0.72rem;
-}
-.test-list li {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.1rem 0.4rem;
-  align-items: start;
-  padding: 0.25rem 0;
-  border-bottom: 1px solid var(--line);
-}
-.test-list span {
-  grid-column: 1;
-  color: var(--muted);
-}
-.test-list .btn-link {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  align-self: center;
 }
 .stage-grid {
   display: grid;
@@ -1156,6 +1116,12 @@ onMounted(() => {
 }
 .tiny {
   margin: 0.2rem 0 0.5rem;
+}
+.tiny.sq {
+  color: var(--teal);
+}
+.tiny.warn {
+  color: #b45309;
 }
 .pad {
   padding: 1rem 1.1rem;
