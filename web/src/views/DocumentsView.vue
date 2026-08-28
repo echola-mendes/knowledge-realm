@@ -6,6 +6,9 @@ import {
   compareDocuments,
   createNote,
   deleteDocument,
+  documentFailureReason,
+  documentStatusClass,
+  documentStatusLabel,
   importUrl,
   listDocuments,
   listTags,
@@ -40,6 +43,7 @@ const picked = ref<string[]>([]);
 const pickMode = ref(false);
 const comparing = ref(false);
 const comparisonHtml = ref("");
+const reindexingIds = ref<Set<string>>(new Set());
 const filteredDocs = computed(() => {
   const name = appliedName.value.trim().toLowerCase();
   return docs.value.filter((doc) => {
@@ -53,6 +57,11 @@ const filteredDocs = computed(() => {
   });
 });
 const canCompare = computed(() => filteredDocs.value.filter((d) => d.status === "ready").length >= 2);
+const notePreviewHtml = computed(() => {
+  const raw = note.value.trim();
+  if (!raw) return "<p class=\"empty\">预览将显示在这里</p>";
+  return md.render(raw);
+});
 const pageSize = 20;
 const page = ref(1);
 const pageCount = computed(() => Math.max(1, Math.ceil(filteredDocs.value.length / pageSize)));
@@ -82,6 +91,37 @@ function busy(status: string) {
   return status !== "ready" && status !== "parse_failed" && status !== "index_failed";
 }
 
+function reindexBusy(doc: DocumentItem) {
+  return reindexingIds.value.has(doc.id);
+}
+
+function reindexLabel(doc: DocumentItem) {
+  if (reindexingIds.value.has(doc.id)) return "处理中";
+  if (doc.status === "indexing" || doc.status === "parsing") return "重试向量化";
+  return "向量化";
+}
+
+async function onReindex(doc: DocumentItem) {
+  if (reindexBusy(doc)) return;
+  reindexingIds.value = new Set([...reindexingIds.value, doc.id]);
+  try {
+    await reindexDocument(doc.id);
+    await refresh();
+  } catch {
+    await refresh();
+  }
+}
+
+function failureReasonTitle(doc: DocumentItem) {
+  const text = documentFailureReason(doc);
+  return text === "—" ? undefined : text;
+}
+
+function formatApiError(e: unknown) {
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.replace(/^Error:\s*/, "");
+}
+
 function openImport() {
   error.value = "";
   ingest.value = "file";
@@ -105,7 +145,7 @@ async function sendFile(file: File) {
     await uploadFile(uploadKbId.value, file);
     await afterImport();
   } catch (e) {
-    error.value = String(e);
+    error.value = formatApiError(e);
   } finally {
     uploading.value = false;
   }
@@ -134,7 +174,7 @@ async function onNote() {
     note.value = "";
     await afterImport();
   } catch (e) {
-    error.value = String(e);
+    error.value = formatApiError(e);
   } finally {
     importing.value = false;
   }
@@ -149,22 +189,36 @@ async function onUrl() {
     url.value = "";
     await afterImport();
   } catch (e) {
-    error.value = String(e);
+    error.value = formatApiError(e);
   } finally {
     importing.value = false;
   }
 }
 
 onMounted(() => {
-  refresh().catch((e) => (error.value = String(e)));
+  refresh().catch((e) => (error.value = formatApiError(e)));
   timer = window.setInterval(() => {
-    if (docs.value.some((d) => busy(d.status))) {
+    if (docs.value.some((d) => busy(d.status)) || reindexingIds.value.size) {
       refresh().catch(() => undefined);
     }
   }, 2000);
 });
 onUnmounted(() => {
   if (timer) window.clearInterval(timer);
+});
+
+watch(docs, (rows) => {
+  if (!reindexingIds.value.size) return;
+  const next = new Set(reindexingIds.value);
+  let changed = false;
+  for (const id of reindexingIds.value) {
+    const doc = rows.find((d) => d.id === id);
+    if (!doc || !busy(doc.status)) {
+      next.delete(id);
+      changed = true;
+    }
+  }
+  if (changed) reindexingIds.value = next;
 });
 
 function formatSize(n: number) {
@@ -262,7 +316,7 @@ async function onCompare() {
     const result = await compareDocuments(picked.value[0], picked.value[1]);
     comparisonHtml.value = md.render(result.comparison);
   } catch (e) {
-    error.value = String(e);
+    error.value = formatApiError(e);
   } finally {
     comparing.value = false;
   }
@@ -286,14 +340,15 @@ watch(pageCount, (n) => {
 </script>
 
 <template>
-  <main v-if="screen === 'import'" class="page docs-page">
+  <main v-if="screen === 'import'" class="page docs-page import-screen">
     <div class="page-head">
       <div>
-        <h1>导入</h1>
+        <h1 class="crumb-title">
+          <button type="button" class="crumb-link" @click="backToList">文档</button>
+          <span class="crumb-sep" aria-hidden="true">›</span>
+          <span>导入</span>
+        </h1>
         <p class="sub">写入所选知识库。完成后返回文档列表。</p>
-      </div>
-      <div class="head-actions">
-        <button class="btn" type="button" @click="backToList">返回文档列表</button>
       </div>
     </div>
     <p v-if="error" class="hint err">{{ error }}</p>
@@ -344,7 +399,23 @@ watch(pageCount, (n) => {
       </div>
       <div v-else class="ingest-body">
         <label for="import-note">Markdown 笔记</label>
-        <textarea id="import-note" v-model="note" rows="8" placeholder="笔记" :disabled="importing"></textarea>
+        <p class="tiny">左侧写 Markdown 原文；右侧即时预览。首个标题会作为文件名。</p>
+        <div class="note-compose">
+          <div class="note-pane">
+            <span class="pane-label">原文</span>
+            <textarea
+              id="import-note"
+              v-model="note"
+              rows="10"
+              placeholder="# 标题&#10;&#10;正文…"
+              :disabled="importing"
+            ></textarea>
+          </div>
+          <div class="note-pane">
+            <span class="pane-label">预览</span>
+            <div class="note-preview" v-html="notePreviewHtml"></div>
+          </div>
+        </div>
         <button class="btn btn-primary" type="button" :disabled="importing || !note.trim()" @click="onNote">
           {{ importing ? "创建中…" : "创建笔记" }}
         </button>
@@ -425,8 +496,10 @@ watch(pageCount, (n) => {
               <th>文件大小</th>
               <th>切片长度</th>
               <th>重叠长度</th>
-              <th>创建时间</th>
+              <th class="status-cell">状态</th>
+              <th>失败原因</th>
               <th>创建人</th>
+              <th>创建时间</th>
               <th>操作</th>
             </tr>
           </thead>
@@ -465,15 +538,31 @@ watch(pageCount, (n) => {
               <td>{{ formatSize(doc.byte_size || 0) }}</td>
               <td>{{ doc.chunk_size ?? "—" }}</td>
               <td>{{ doc.chunk_overlap ?? "—" }}</td>
-              <td>{{ formatTime(doc.created_at) }}</td>
+              <td class="status-cell">
+                <span class="pill status-pill" :class="documentStatusClass(doc.status)">
+                  {{ documentStatusLabel(doc.status) }}
+                </span>
+              </td>
+              <td class="fail-reason">
+                <span class="fail-text" :title="failureReasonTitle(doc)">{{ documentFailureReason(doc) }}</span>
+              </td>
               <td>{{ doc.created_by || "—" }}</td>
+              <td>{{ formatTime(doc.created_at) }}</td>
               <td class="ops">
-                <button class="btn-link" type="button" @click="reindexDocument(doc.id).then(refresh)">重新处理</button>
+                <RouterLink class="btn-link" :to="`/documents/${doc.id}/chunks`">切片</RouterLink>
+                <button
+                  class="btn-link reindex-btn"
+                  type="button"
+                  :disabled="reindexBusy(doc)"
+                  @click="onReindex(doc)"
+                >
+                  {{ reindexLabel(doc) }}
+                </button>
                 <button class="btn-danger" type="button" @click="deleteDocument(doc.id).then(refresh)">删除</button>
               </td>
             </tr>
             <tr v-if="!filteredDocs.length">
-              <td :colspan="pickMode ? 12 : 11" class="empty">没有符合条件的文档。可调整筛选，或点「导入」。</td>
+              <td :colspan="pickMode ? 14 : 13" class="empty">没有符合条件的文档。可调整筛选，或点「导入」。</td>
             </tr>
           </tbody>
         </table>
@@ -490,13 +579,14 @@ watch(pageCount, (n) => {
 <style scoped>
 .docs-page {
   width: 100%;
-  max-width: none;
+  max-width: 100%;
   margin: 0;
-  padding: 1rem 1.25rem 1rem;
+  padding: 1rem 1.25rem 0.75rem;
   font-size: 12.5px;
   background: transparent;
-  height: 100%;
+  flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -598,9 +688,121 @@ watch(pageCount, (n) => {
 .toolbar input {
   padding: 0.28rem 0.4rem;
 }
+.import-screen {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.import-screen .import-panel {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: none;
+  margin-bottom: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.crumb-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0 0.25rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text);
+}
+.crumb-link {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: 700;
+  color: var(--teal);
+  cursor: pointer;
+}
+.crumb-link:hover {
+  text-decoration: underline;
+}
+.crumb-sep {
+  color: var(--muted);
+  font-weight: 500;
+}
 .import-panel {
-  max-width: 36rem;
-  margin-bottom: 1rem;
+  max-width: none;
+  width: 100%;
+  margin-bottom: 0;
+}
+.note-compose {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin: 0.35rem 0 0;
+  min-width: 0;
+}
+.note-pane {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.pane-label {
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.note-pane textarea {
+  flex: 1;
+  min-height: 12rem;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+.note-preview {
+  flex: 1;
+  min-height: 12rem;
+  max-height: 22rem;
+  overflow: auto;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: var(--text);
+}
+.note-preview :deep(h1),
+.note-preview :deep(h2),
+.note-preview :deep(h3) {
+  margin: 0.35rem 0 0.45rem;
+  line-height: 1.3;
+}
+.note-preview :deep(h1) { font-size: 1.15rem; }
+.note-preview :deep(h2) { font-size: 1.02rem; }
+.note-preview :deep(h3) { font-size: 0.9rem; }
+.note-preview :deep(p) {
+  margin: 0.35rem 0;
+}
+.note-preview :deep(ul),
+.note-preview :deep(ol) {
+  margin: 0.35rem 0;
+  padding-left: 1.2rem;
+}
+.note-preview :deep(.empty) {
+  margin: 0;
+  color: var(--muted);
+}
+@media (max-width: 640px) {
+  .note-compose {
+    grid-template-columns: 1fr;
+  }
 }
 .tabs {
   display: flex;
@@ -664,6 +866,26 @@ watch(pageCount, (n) => {
   color: var(--muted);
   margin: 0.3rem 0 0;
 }
+.import-screen .drop {
+  flex: 1;
+  min-height: 14rem;
+}
+.import-screen .ingest-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.import-screen .note-compose {
+  flex: 1;
+  min-height: 0;
+}
+.import-screen .note-pane textarea,
+.import-screen .note-preview {
+  min-height: 0;
+  flex: 1;
+  max-height: none;
+}
 .drop:hover,
 .drop.over {
   border-color: var(--teal);
@@ -688,7 +910,9 @@ watch(pageCount, (n) => {
 .list-card .table-wrap {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: auto;
+  max-width: 100%;
 }
 .pager {
   display: flex;
@@ -708,13 +932,24 @@ table {
   border-collapse: collapse;
   font-size: 0.72rem;
 }
-th,
-td {
-  text-align: left;
+.list-card th,
+.list-card td {
   padding: 0.4rem 0.45rem;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
   vertical-align: middle;
+}
+.list-card th {
+  text-align: left;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--card);
+  color: var(--muted);
+  font-weight: 500;
+}
+.list-card td {
+  text-align: left;
 }
 .list-card tbody td {
   min-height: 36px;
@@ -723,14 +958,65 @@ td {
   line-height: 1.45;
   box-sizing: border-box;
 }
+tbody tr:nth-child(odd) {
+  background: var(--card);
+}
+tbody tr:nth-child(even) {
+  background: var(--bg);
+}
+tbody tr.on {
+  background: var(--teal-soft);
+}
 .file-cell {
   white-space: nowrap;
 }
 .tags-cell .pill {
-  margin-right: 0.2rem;
+  margin: 0 0.1rem;
   padding: 0.08rem 0.45rem;
   font-size: 0.62rem;
   cursor: default;
+}
+.status-cell .status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0.08rem 0.45rem;
+  font-size: 0.62rem;
+  line-height: 1.45;
+  cursor: default;
+}
+.pill.ok {
+  background: #ecfdf5;
+  color: #059669;
+}
+.pill.busy {
+  background: #fff7ed;
+  color: #ea580c;
+}
+.pill.idle {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+.pill.bad {
+  background: #fef2f2;
+  color: #dc2626;
+}
+.fail-reason {
+  max-width: 10rem;
+  color: var(--text);
+}
+.fail-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+.ops .btn-link:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  text-decoration: none;
 }
 .seq {
   color: var(--muted);
@@ -762,23 +1048,6 @@ td {
 .overview:hover .tip {
   display: block;
 }
-th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--card);
-  color: var(--muted);
-  font-weight: 500;
-}
-tbody tr:nth-child(odd) {
-  background: var(--card);
-}
-tbody tr:nth-child(even) {
-  background: var(--bg);
-}
-tbody tr.on {
-  background: var(--teal-soft);
-}
 .pick-count {
   display: block;
   font-size: 0.62rem;
@@ -808,8 +1077,18 @@ tbody tr.on {
 }
 .ops {
   display: flex;
-  gap: 0.7rem;
+  gap: 0.35rem;
   white-space: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+}
+.ops > * {
+  flex-shrink: 0;
+}
+.ops .reindex-btn {
+  display: inline-block;
+  min-width: 3em;
+  text-align: left;
 }
 .compare-body {
   margin-top: 0.4rem;

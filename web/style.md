@@ -36,7 +36,19 @@
 开关关：`#cbd5e1`；开：`#2563eb`。  
 箭头/弱图标：`#94a3b8`。
 
-侧栏（不要在内容页复刻）：底 `#f9fafb`，默认字 `#4b5563`，激活底 `#eff6ff`、字 `#2563eb`，品牌字 `#111827`。
+### 背景分层（整页）
+
+| 层级 | 色值 / Token | 用在 |
+|---|---|---|
+| 主工作区底 | `--bg` `#f8fafc` | `.app-main`、对话页 `.chat-page` 外层 gutter |
+| 侧栏底 | `#f9fafb` | `.sidenav`（略暖于主栏，与内容区区隔） |
+| 侧栏分隔线 | `#e5e7eb` | `.sidenav` 右边框 |
+| 内容卡片 | `--card` `#ffffff` | `.card`、筛选栏、表格、对话列表/主区白底 |
+| 列表页路由底 | `transparent` | `.docs-page` 等，透出 `--bg` |
+
+**视觉：** 侧栏与主栏之间无额外 gap；主栏浅灰底上叠白卡片。列表页标题、筛选、表格左缘与 **`padding-left: 1.25rem`** 对齐，与菜单栏右缘留出统一 gutter（见 §3.1）。
+
+侧栏（不要在内容页复刻）：底 `#f9fafb`，默认字 `#4b5563`，激活底 `#eff6ff`、字 `#2563eb`，品牌字 `#111827`。折叠宽 `--rail: 4.5rem`（小屏 `4.2rem`），**固定折叠、不随 hover 展开**。
 
 ---
 
@@ -51,8 +63,8 @@
 
 | 角色 | 规则 | 约等于 |
 |---|---|---|
-| 页标题 `h1` | `1.05rem`，`margin: 0 0 0.25rem` | ~13px |
-| 副标题 `.sub` | `0.75rem`，`color: var(--muted)`，`margin: 0` | ~9.5px |
+| 页标题 `h1` | `1.05rem`，`font-weight: 700`，`color: var(--text)`，`margin: 0 0 0.25rem` | ~13px，深色标题 |
+| 副标题 `.sub` | `0.75rem`，`font-weight: 400`，`color: var(--muted)`，`margin: 0`，行高继承 | ~9.5px，灰色说明 |
 | 区块标题 `.block-title` | `0.8rem`，`margin: 0 0 0.45rem` | ~10px |
 | 卡片 `h2` | `0.78rem`，`margin: 0 0 0.4rem` | ~10px |
 | 流水线节点 `h3` | `0.72rem`，`font-weight: 650` | ~9px |
@@ -70,6 +82,23 @@
 
 ## 3. 页面边距与节奏
 
+### 3.1 与侧栏（菜单栏）的间距
+
+应用壳：`aside.sidenav` + `.app-main` 横排，`gap: 0`（无中间缝）。内容区距菜单栏的边距由**路由页 `padding-left`** 控制，不要再用全局 `.page` 的 `margin: 0 auto` 居中窄栏。
+
+| 页面类型 | 参考类 | padding（上 · 右 · 下 · 左） | 说明 |
+|---|---|---|---|
+| 列表 / 工具页 | `.docs-page`、`.debug-page` | `1rem 1.25rem 0.75rem`～`2rem` | **左 1.25rem（20px）** 为标准 gutter，与文档页截图一致 |
+| 搜索 | `.search-page` | `1rem 1.25rem 2rem` | 全宽，左对齐，同列表页 gutter |
+| 对话 | `.chat-page` | `0.75rem 0.75rem 0.75rem 1rem` | 外层 `--bg` gutter；内层 `.chat-list` / `.chat-main` 为白卡片 + `gap: 0.75rem` |
+
+约定：
+
+- **标准内容左距菜单栏：** `1.25rem`（`padding-left` on `main`）
+- 页内白卡片（`.card`）贴齐该左缘，不再额外 `margin-left`
+- 侧栏宽 `4.5rem`，内容从侧栏右缘 + padding 起算
+- 小屏（`≤800px`）侧栏 `4.2rem`，内容 gutter 仍用 `1.25rem`（或对话页 `1rem`）
+
 内容页**铺满主栏**（调试页覆盖全局 `.page` 的窄栏）：
 
 ```css
@@ -83,7 +112,7 @@
 }
 ```
 
-全局默认 `.page`（窄内容页，如部分旧页）：`width: var(--page)` 即 `min(1120px, calc(100% - 2rem))`，`padding: 1.15rem 0 2rem`，`margin: 0 auto`。新工具页跟调试页：全宽 + `1rem 1.25rem 2rem`。
+全局默认 `.page`（**旧窄栏，新页勿用**）：`width: var(--page)` 即 `min(1120px, calc(100% - 2rem))`，`padding: 1.15rem 0 2rem`，`margin: 0 auto`。新工具页跟调试 / 文档 / 搜索：**全宽 + 左 `1.25rem` gutter**。
 
 | 间距 | 值 | 用在 |
 |---|---|---|
@@ -107,7 +136,7 @@
 
 ## 4. 页头
 
-结构：左标题 + 副文案，右操作。
+结构：左标题 + 副文案，右操作。标题与说明始终成对出现；说明只用一行 `.sub`，不要 eyebrow。
 
 ```html
 <div class="page-head">
@@ -122,6 +151,15 @@
 </div>
 <p class="hint">一行状态/提示</p>
 ```
+
+### 页头字体（文档页定稿）
+
+| 元素 | 字号 | 字重 | 颜色 | 间距 |
+|---|---|---|---|---|
+| `h1` | `1.05rem`（相对页内 `12.5px`） | `700` | `var(--text)` `#1e293b` | `margin: 0 0 0.25rem` |
+| `.sub` | `0.75rem` | `400`（常规） | `var(--muted)` `#64748b` | `margin: 0` |
+
+列表页（`.docs-page`）页头下间距：`margin-bottom: 0.45rem`（略紧于全局 `.page-head` 的 `1rem`）。
 
 - `.page-head`：`display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap`
 - 次按钮白底描边；**一页一个** `.btn-primary`（蓝底白字）
@@ -207,7 +245,8 @@
 
 - `width: 100%; border-collapse: collapse; font-size: 0.72rem`
 - **表头** `th`：`font-size: 0.85rem`（见 `styles.css` 的 `.page table th`），`position: sticky; top: 0`，底 `--card`
-- 单元格左对齐，底边 `1px var(--line)`，`padding: 0.4rem 0.45rem`；默认 `white-space: nowrap`
+- 单元格：`vertical-align: middle`；**表头与数据行全部水平靠左**（列表页 `.list-card` 内，见 §12.3）
+- 底边 `1px var(--line)`，`padding: 0.4rem 0.45rem`；默认 `white-space: nowrap`
 - 外包 `.table-wrap { overflow: auto }`；列表页内 `.list-card .table-wrap` 可 `flex: 1; min-height: 0` 占满剩余高度
 - 空数据：一行 `colspan`，类 `.empty`，文案说明下一步
 - 可点行 / 选中行：`.on` → `background: var(--teal-soft)`
@@ -243,9 +282,9 @@ Pipeline：横向 `flex` + 节点 `flex: 1`，`min-width: 7.2rem`，箭头 `→`
 
 ## 11. 新页面检查清单
 
-1. `main` 使用 `page` + 页专类；工具页 `padding: 1rem 1.25rem 2rem`、`font-size: 12.5px`、全宽。
-2. 页头：`h1` + `.sub`；主操作一个 `btn-primary`。
-3. 内容进 `.card.pad`，边框+浅阴影，圆角 12px。
+1. `main` 使用页专类（如 `docs-page` / `search-page` / `chat-page`）；工具页 `font-size: 12.5px`、全宽；**左 gutter `1.25rem`**（对话页 `1rem`）。
+2. 页头：`h1`（`1.05rem` / `700` / `--text`）+ `.sub`（`0.75rem` / `--muted`）；主操作一个 `btn-primary`。
+3. 工作区背景 `--bg` `#f8fafc`；内容进 `.card.pad` 白底，边框+浅阴影，圆角 12px。
 4. 颜色只走 §1 token；状态用 `--ok` / `--warn` / `--danger`。
 5. 字号不大于 §2；label 用 muted 小字。
 6. 表格密排 + 横滑；空状态写清下一步；列表页跟 **§12**。
@@ -261,31 +300,33 @@ Pipeline：横向 `flex` + 节点 `flex: 1`，`min-width: 7.2rem`，箭头 `→`
 
 ### 12.1 页面壳（`.docs-page`）
 
-列表页铺满主栏，纵向 flex，表格区吃掉剩余高度：
+列表页铺满主栏，纵向 flex，**页面本身不滚动**；表格区在 `.list-card .table-wrap` 内滚动。与全局 `.app-main` 配合：`app-main` `overflow: hidden`，首子路由页 `flex: 1; min-height: 0`，底栏 `.footer-note` `flex-shrink: 0`。
 
 ```css
 .docs-page {
   width: 100%;
-  max-width: none;
+  max-width: 100%;
   margin: 0;
-  padding: 1rem 1.25rem 1rem;
+  padding: 1rem 1.25rem 0.75rem;
   font-size: 12.5px;
   background: transparent;
-  height: 100%;
+  flex: 1;
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 ```
 
-- 页头 `.page-head`、筛选 `.toolbar`、错误 `.hint`：`flex-shrink: 0`
+- 页头 `.page-head`、筛选 `.toolbar`、错误 `.hint`、对比结果等非列表卡片：`flex-shrink: 0`
 - 页内按钮：`padding: 0.5rem 0.85rem; border-radius: 10px; font-size: inherit`
 - 页头 `h1`：`1.05rem`；页头下间距 `margin-bottom: 0.45rem`
+- **不要**在页面底部出现整页横向滚动条；列过多时仅在 `.table-wrap` 内横滑
 
 ### 12.2 筛选栏（`.toolbar`）
 
-白卡片一行：左侧筛选字段，右侧操作按钮。
+白卡片一行：左侧筛选字段，右侧操作按钮；窄屏可换行。
 
 ```html
 <section class="card pad toolbar">
@@ -303,8 +344,8 @@ Pipeline：横向 `flex` + 节点 `flex: 1`，`min-width: 7.2rem`，箭头 `→`
 
 | 类 / 元素 | 规则 |
 |---|---|
-| `.toolbar` | `display: flex; flex-wrap: nowrap; gap: 0.35rem; align-items: center; margin-bottom: 0.4rem; padding: 0.45rem 0.55rem` |
-| `.filters` | `width: 80%; display: flex; gap: 0.35rem; min-width: 0` |
+| `.toolbar` | `display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; margin-bottom: 0.4rem; padding: 0.45rem 0.55rem` |
+| `.filters` | `flex: 1 1 16rem; display: flex; flex-wrap: wrap; gap: 0.35rem; min-width: 0` |
 | `.filters select`, `.filters input` | `flex: 1 1 0; min-width: 0; padding: 0.28rem 0.4rem; margin: 0` |
 | `.toolbar select`, `.toolbar input` | 同上 padding；边 `1px var(--line)`，圆角 `8px`，底 `#fff`（继承卡片内输入规则） |
 | `.toolbar-actions` | `display: flex; gap: 0.35rem; margin-left: auto; flex-shrink: 0` |
@@ -317,6 +358,7 @@ Pipeline：横向 `flex` + 节点 `flex: 1`，`min-width: 7.2rem`，箭头 `→`
 - 筛选项**不要**「全部…」选项
 - 查询按钮触发筛选；Enter 在搜索框内等同查询
 - 对比等多选模式：**不要**额外一行 hint 文案；用表头「对比」列 + 按钮文案切换（「对比」→「开始对比」）
+- 文档处理失败原因**只在表格「失败原因」列**展示（省略 + `title` 悬浮全文）；**不要**在页顶 `.hint.err` 重复展示 reindex 失败文案
 
 ### 12.3 数据表（`.list-card`）
 
@@ -336,11 +378,31 @@ Pipeline：横向 `flex` + 节点 `flex: 1`，`min-width: 7.2rem`，箭头 `→`
 | 类 | 规则 |
 |---|---|
 | `.list-card` | `flex: 1; min-height: 0; display: flex; flex-direction: column; margin-bottom: 0` |
-| `.list-card .table-wrap` | `flex: 1; min-height: 0; overflow: auto` |
-| `.pager` | `display: flex; justify-content: flex-end; align-items: center; gap: 0.45rem; margin-top: 0.55rem; color: var(--muted)` |
+| `.list-card .table-wrap` | `flex: 1; min-height: 0; min-width: 0; overflow: auto; max-width: 100%` |
+| `.list-card th` | `text-align: left; vertical-align: middle` |
+| `.list-card td` | `text-align: left; vertical-align: middle` |
+| `.list-card tbody td` | `min-height: 36px; padding-top/bottom: 0.55rem; line-height: 1.45` |
+| `.pager` | `display: flex; justify-content: flex-end; align-items: center; gap: 0.45rem; margin-top: 0.55rem; color: var(--muted); flex-shrink: 0` |
 | `.pager .btn:disabled` | `opacity: 0.5; cursor: not-allowed` |
 
-推荐列顺序（文档页）：**序号 → 文件名 → 概述 → 标签 → … → 操作**。
+**文档页列顺序（`DocumentsView`，2026-08 定稿）：**
+
+对比（可选）→ 序号 → 文件名 → 概述 → 标签 → 文件类型 → 文件大小 → 切片长度 → 重叠长度 → **状态** → **失败原因** → **创建人** → **创建时间** → **操作**
+
+操作列顺序：**切片 → 向量化 → 删除**（间距 `gap: 0.35rem`，全部左对齐）
+
+**切片列表列顺序（`DocumentChunksView`）：**
+
+序号 → 编号 → 切片 → **字符数** → 状态 → 创建时间 → **操作**
+
+- 切片列：超长省略，`title` 悬浮全文（与失败原因省略策略一致）
+- 字符数：按 Unicode 码点计数（`[...content].length`）
+- 页壳 / **表头与行数据全部靠左** / 状态 pill：同本节其它规则；面包屑为 `文档 › 文件名 › 切片`
+- 操作列：**向量化 → 删除**（无「切片」入口）
+  - 向量化：仅重新嵌入**当前行切片**（`POST .../chunks/{chunk_id}/reindex`），不是整篇文档
+  - 删除：仍删除**本文档**（与文档列表同一套 API）
+- 页头**不要**再放「查看文档 / 向量化 / 删除」
+- 列表卡片：全局 `.card` + **必须** `.pad`（`padding: 1rem 1.1rem`）
 
 ### 12.4 单元格辅助类
 
@@ -351,11 +413,49 @@ Pipeline：横向 `flex` + 节点 `flex: 1`，`min-width: 7.2rem`，箭头 `→`
 | `.overview` | 概述 | `max-width: 12rem`；正文超 **15 字** 显示「前 15 字…」 |
 | `.overview .tip` | 概述悬浮全文 | hover 显示白底浮层：`border + shadow`，`font-size: 0.68rem`，`max-width: 22rem` |
 | `.tags-cell` | 标签 | 每标签一个全局 `.pill`；**最多 3 个**，超出加 `…` pill；hover `title` 显示全部 |
-| `.tags-cell .pill` | 表内标签 pill | `padding: 0.08rem 0.45rem; font-size: 0.62rem; margin-right: 0.2rem; cursor: default` |
-| `.ops` | 操作列 | `display: flex; gap: 0.7rem`；`.btn-link` + `.btn-danger` |
+| `.tags-cell .pill` | 表内标签 pill | `padding: 0.08rem 0.45rem; font-size: 0.62rem; margin: 0 0.1rem; cursor: default` |
+| `.status-cell` | 状态 | 表头 `th`、数据 `td` 均用此类；内嵌 `.pill.status-pill` |
+| `.status-cell .status-pill` | 状态徽章 | `inline-flex; align-items: center; padding: 0.08rem 0.45rem; font-size: 0.62rem; line-height: 1.45` |
+| `.fail-reason` | 失败原因 | `max-width: 10rem` |
+| `.fail-text` | 失败原因正文 | `overflow: hidden; text-overflow: ellipsis; white-space: nowrap`；完整文案放 `title` |
+| `.ops` | 操作列 | 见 §12.6 |
 | `.pick-count` | 对比模式计数 | 表头内 `0/2`，`font-size: 0.62rem`，块级副行 |
 
-### 12.5 复制到新列表页的 HTML 骨架
+### 12.5 状态徽章色（文档列表）
+
+状态文案与 `documentStatusLabel` 一致；语义色**仅**用于列表 pill，不用流水线左边框。
+
+| 类 | 背景 | 字色 | 对应状态 |
+|---|---|---|---|
+| `.pill.ok` | `#ecfdf5` | `#059669` | 已完成 `ready` |
+| `.pill.busy` | `#fff7ed` | `#ea580c` | 解析中 / 向量化中 `parsing` `indexing` |
+| `.pill.idle` | `#f3f4f6` | `#6b7280` | 待处理 / 待向量化等 `pending` `parsed` |
+| `.pill.bad` | `#fef2f2` | `#dc2626` | 解析失败 / 向量化失败 |
+
+状态机与文案定义见根目录 `PRD.md`（文档状态）与 `memory-bank/design-document.md` §4.1.1。
+
+### 12.6 操作列（`.ops`）
+
+**按钮顺序（文档页定稿）：** 切片 → 向量化 → 删除
+
+```html
+<td class="ops">
+  <RouterLink class="btn-link" to="…">切片</RouterLink>
+  <button class="btn-link reindex-btn" type="button">向量化</button>
+  <button class="btn-danger" type="button">删除</button>
+</td>
+```
+
+| 规则 | 值 |
+|---|---|
+| 容器 | `display: flex; gap: 0.35rem; align-items: center; justify-content: flex-start; white-space: nowrap` |
+| 子项 | `flex-shrink: 0`（避免点击后文案变长挤压邻按钮） |
+| `.reindex-btn` | `min-width: 3em; text-align: left` |
+| 向量化文案 | 默认「向量化」；请求进行中「处理中」；卡在解析/向量化「重试向量化」 |
+| 进行中 | `:disabled` + `opacity: 0.55`；**处理中**保持至文档终态（完成/失败）后再恢复 |
+| `.ops .btn-link:disabled` | `cursor: not-allowed; text-decoration: none` |
+
+### 12.7 复制到新列表页的 HTML 骨架
 
 ```html
 <main class="page docs-page">

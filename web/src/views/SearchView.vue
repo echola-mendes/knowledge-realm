@@ -56,7 +56,7 @@ function pct(score: number) {
 </script>
 
 <template>
-  <main class="page">
+  <main class="page search-page">
     <section class="card search-card">
       <h1>搜索知识库</h1>
         <p class="sub">只返回已开启知识库中的相似片段，不生成长答案。点击文档名进入阅读页，可携带页锚点。</p>
@@ -134,6 +134,13 @@ function pct(score: number) {
 </template>
 
 <style scoped>
+.search-page {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 1rem 1.25rem 2rem;
+  box-sizing: border-box;
+}
 .search-card {
   padding: 1.3rem 1.3rem 1rem;
 }
