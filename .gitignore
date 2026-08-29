@@ -22,3 +22,5 @@ data/parsed/**
 
 .DS_Store
 test.md
+.cursor/
+server/_tmp_run_server.py
