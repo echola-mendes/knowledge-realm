@@ -2,7 +2,7 @@
 
 代码仓库名：`knowledge_realm`。V1/P0 已落地。约定目录见 `tech-stack.md`。
 
-**阶段：** P0、P1.1–P1.4 已落地。**P2-RAG-1～2、P2-RAG-4、P2-Agent-1～3 已确认。P2-RAG-3 待阈值确认。P2-Agent-4 LTM 代码已写（待确认）。** 未开始 WEB 路由；未开始 `search_graph` Tool、未做力导向可视化。
+**阶段：** P0、P1.1–P1.4、**P2（PRD-P2 §7）已确认结束。** **KB-ENABLE 代码已验证，待提出人确认。** 未开始 P3（冲突/缺口/多 Agent/库自动更新）；未开始 `search_graph` Tool、未做力导向可视化。
 
 | 路径 | 职责 |
 |---|---|
@@ -19,16 +19,19 @@
 | `server/app/passwords.py` | Argon2 |
 | `server/app/deps.py` | Session 当前用户 |
 | `server/app/routers/auth.py` | login/logout/me |
-| `server/app/routers/knowledge_bases.py` | 知识库 HTTP |
+| `server/app/kb.py` | 默认库；`search_kb_ids`（未传 id → 用户已开启库；传 id → 单库） |
+| `server/app/routers/knowledge_bases.py` | 知识库 HTTP（含 `is_enabled` 开关） |
+| `web/src/views/KnowledgeBasesView.vue` | 知识库管理（开关/筛选） |
 | `server/app/routers/documents.py` | 上传、笔记、URL、列表、详情、`parsed.md`、删除、打标签、收藏、`/index`、`/reindex`、P1.1 `POST .../summarize` 与 `POST .../auto-tags`、P1.4 `POST .../graph` 与 `GET .../related` |
 | `web/src/App.vue` | 左侧主导航；库切换与用户在侧栏底部 |
-| `web/src/views/DebugView.vue` | 调试模式页（演示数据） |
+| `web/src/views/DebugView.vue` | 调试模式页（检索调试；不含切片配置） |
+| `web/src/views/SettingsView.vue` | 设置；调试 panel 内可开调试模式，开启后同 panel 配置用户级 Chunk Size/Overlap |
 | `web/src/components/RetrievalDebugPanel.vue` | 对话页 Retrieval Debug 抽屉 |
 | `server/app/routers/retrieval_debug.py` | `POST /api/retrieval-debug` 与 labels |
-| `server/alembic/` | 迁移；当前 `20260827_0007` |
+| `server/alembic/` | 迁移；当前 `20260828_0014`（`document.chunk_size` / `chunk_overlap`） |
 | `web/src/styles.css` | 全局设计 token 与顶栏/页面自适应容器（不锁 1440×900） |
 | `server/app/routers/tags.py` | 标签创建/列表/删除 |
-| `server/app/search.py` | Hybrid + RRF + Rerank；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤；可选 `created_after`/`created_before`（文档 `created_at`） |
+| `server/app/search.py` | Hybrid + RRF + Rerank；经 `search_kb_ids` 定库；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤；可选 `created_after`/`created_before`（文档 `created_at`） |
 | `server/app/rerank.py` | DashScope 兼容 `/reranks`；无 Key 则 LLM 打分；都没有则保持 RRF 顺序 |
 | `server/app/es_bm25.py` | BM25 索引与检索；chunk 与 PG 同步 upsert/删除；测试可替换为内存实现 |
 | `server/app/routers/search.py` | `POST /api/search`（可选 kind / 时间窗） |
@@ -38,8 +41,10 @@
 | `server/app/routers/chat.py` | `POST /chat`、`/chat/stream`；会话列表/消息/删除 |
 | `server/app/url_import.py` | 公开页 httpx + trafilatura；超时 20s；无浏览器自动化 |
 | `server/app/parse.py` | md/txt UTF-8；PDF PyMuPDF 按页 `## Page N`；DOCX 按段落。无 OCR/MinerU |
-| `server/app/chunk.py` | LangChain 标题切分 + 800/120；内存 `TextChunk`（page/heading）；无 LlamaIndex |
-| `server/app/index.py` | 切块 Embedding 写入 `document_chunk`；状态 `ready`；额度不足提示改 v4 |
+| `server/app/chunk.py` | LangChain 标题切分；默认 800/120；`split_markdown(..., chunk_size, chunk_overlap)`；无 LlamaIndex |
+| `server/app/chunk_settings.py` | 按用户读写 `user_chunk_setting`；无行则默认 800/120 |
+| `server/app/routers/chunk_settings.py` | `GET/PUT /api/chunk-settings`（Session 用户） |
+| `server/app/index.py` | 切块 Embedding 写入 `document_chunk`；切块用文档所属用户配置并写入 `document.chunk_size`/`chunk_overlap`；状态 `ready`；额度不足提示改 v4 |
 | `server/app/storage.py` | 本地文件路径与清理 |
 | `server/app/schemas.py` | Pydantic 模型 |
 | `server/app/models.py` | SQLAlchemy 表 |
@@ -48,8 +53,8 @@
 | `server/app/p1/conversation_summary.py` | 消息 >6 时压缩更早轮次写入 `conversation.summary` |
 | `server/app/p1/ltm.py` | `user_memory` 读写；Agent 灌入 `ltm_hits`（非向量检索） |
 | `server/app/p1/checkpoint.py` | LangGraph `PostgresSaver`（同库连接池）；`setup` 建 checkpoint 表 |
-| `server/app/p1/tools.py` | P1.3 `search_knowledge`：内部调用 `search_chunks`；禁止 HTTP `/api/search` |
-| `server/app/p1/graph.py` | P1.3 一张 StateGraph：reason → search \| generate；`generate` 可带 STM history；compile 带 checkpointer；`task=agent|report` 同图；max_loops=3 |
+| `server/app/p1/tools.py` | `search_knowledge`（内部 `search_chunks`，禁止 HTTP `/api/search`）；P2-Agent-5 `web_search`（httpx POST 配置端点，禁止 Playwright） |
+| `server/app/p1/graph.py` | 一张 StateGraph：reason → DIRECT \| RAG \| WEB；首圈可写入 ≤3 有序子任务，之后每圈仍只选三者之一；`run_tool` 只执行 reason 指定的 Tool；`generate` 可带 STM / Summary / LTM / web_hits，有子任务时汇总；compile 带 checkpointer；`task=agent|report` 同图；max_loops=3 |
 | `server/app/routers/p1.py` | P1.2 `POST /api/compare`；P1.3 `POST /api/agent` 与 `/api/agent/stream`（`thread_id=conversation_id`，每轮重灌 STM）；P1.4 `GET /api/graph` |
 | `web/src/views/ChatView.vue` | 默认 `/api/chat/stream`；「Agent / 报告」走 `/api/agent/stream`（共享 `conversation_id`） |
 | `web/src/views/ReaderView.vue` | 阅读页：摘要/自动标签；P1.4「抽取图谱」+ 实体/关系列表 + 相近文档（无 vis.js/D3） |
@@ -64,10 +69,10 @@
 ## P1.3 已落地边界
 
 - `/api/chat`、`/api/chat/stream` 仍为 P0 LangChain 单链，未进图。
-- Agent / 研究报告：同一张 `p1/graph.py`；`POST /api/agent` 与 `/api/agent/stream`；Tool 仅 `search_knowledge` → 内部 `search.py`（不是 HTTP `/api/search`）。
+- Agent / 研究报告：同一张 `p1/graph.py`；`POST /api/agent` 与 `/api/agent/stream`；Tool 为 `search_knowledge`（内部 `search.py`，不是 HTTP `/api/search`）与 `web_search`（httpx）。`reason` 路由 DIRECT / RAG / WEB；复杂问句仅首圈可写 ≤3 有序子任务（`AgentState.subtasks` / `subtask_index`），之后每圈仍只选三者之一；无第二张图，`max_loops=3` 未放宽。
 - Agent 记忆：STM 在 `message`（最近 6 条）；`conversation.summary` 为窗口外摘要；`user_memory` 为跨会话 LTM；Checkpoint 为 Postgres 图快照（`thread_id=conversation_id`）。
 - 摘要 / 自动标签 / 文档对比 / 图谱抽取：`p1/chains.py`，无 LangGraph。
-- 未做：HITL、Subgraph、Multi-Agent、`search_graph` Tool、力导向可视化。P2 计划中的 Summary / LTM / WEB 见设计文档第 4.7 节。
+- 未做：HITL、Subgraph、Multi-Agent、`search_graph` Tool、力导向可视化。Summary / LTM / WEB / Planning 见设计文档第 4.7 节。
 
 ## P1.4 已落地边界
 
@@ -75,10 +80,10 @@
 - 抽取：`extract_graph` Chain → `POST /api/documents/{id}/graph`；upsert 实体，按文档替换边。
 - 只读：`GET /api/graph`（可选 `knowledge_base_id`、`document_id`）；`GET /api/documents/{id}/related` 内部 `search_chunks`，排除本文、按文档去重最多 5 条。
 - 前端：阅读页列表/表格；禁止 vis.js/D3 关系图。
-- `/api/chat` 未改。Agent Tool 仍仅 `search_knowledge`，**没有** `search_graph`。
+- `/api/chat` 未改。Agent Tool 为 `search_knowledge` 与 `web_search`，**没有** `search_graph`。
 
-## P2 计划中的 Agent 分层（代码未开始）
+## P2 已落地的 Agent 分层
 
 - STM / Summary / LTM 是记忆，权威在表；Checkpoint 是图快照，不是 `AgentState` 字段。  
-- `reason` 唯一路由：Agent-5 为 DIRECT / RAG / WEB；Agent-6 子任务 ≤3，仍一张图。  
-- 细则：`design-document.md` 第 4.7 节；步骤：`implementation-plan.md` P2-Agent-1～6。
+- `reason` 唯一路由：DIRECT / RAG / WEB；Agent-6 子任务 ≤3 已确认，仍一张图，不是第四张子图 / 动态 DAG / Multi-Agent。  
+- 细则：`design-document.md` 第 4.7 节；步骤：`implementation-plan.md` P2-Agent-1～6。**P2 已确认结束。** KB-ENABLE：`knowledge_base.is_enabled`；检索未传 id 只打已开启库。不开始 P3，也不做 `search_graph` / 力导向可视化。

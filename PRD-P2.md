@@ -1,7 +1,7 @@
 # P2——RAG 与 Agent 能力增强
 
-**状态：** 范围已按提出人「P2 PRD 边界修正」收敛；实施须先写入 `implementation-plan.md` 再改代码。  
-**基线：** P0 / P1.1–P1.4 已落地。检索实现只有一份：`search.py` 的 `search_chunks`。
+**状态：** **P2 已确认结束**（提出人 2026-08-29）。KB-ENABLE 见 `implementation-plan.md`（代码已验证，待确认）。  
+**基线：** P0 / P1.1–P1.4 / P2 已落地。检索实现只有一份：`search.py` 的 `search_chunks`。
 
 ## 1. 版本目标
 

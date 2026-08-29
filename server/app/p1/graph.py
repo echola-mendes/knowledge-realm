@@ -7,10 +7,11 @@ from typing import Any, Literal, TypedDict
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
-from app.p1.tools import search_knowledge
+from app.p1.tools import search_knowledge, web_search
 from app.search import SearchHit
 
 MAX_LOOPS = 3
+MAX_SUBTASKS = 3
 MAX_CITATIONS = 20
 
 _compiled = None
@@ -23,11 +24,49 @@ class AgentState(TypedDict, total=False):
     summary: str
     ltm_hits: list[dict[str, Any]]
     citations: list[dict[str, Any]]
+    web_hits: list[dict[str, Any]]
     loop_count: int
     max_loops: int
-    next_action: Literal["search", "generate"]
+    next_action: Literal["search", "web", "generate"]
     search_query: str
     answer: str
+    subtasks: list[str]
+    subtask_index: int
+    allow_web: bool
+
+
+def clip_subtasks(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        text = str(item).strip()
+        if not text:
+            continue
+        out.append(text)
+        if len(out) >= MAX_SUBTASKS:
+            break
+    return out
+
+
+def _current_subtask(state: AgentState, extra_tasks: list[str] | None = None) -> str:
+    tasks = extra_tasks if extra_tasks is not None else clip_subtasks(state.get("subtasks") or [])
+    if not tasks:
+        return ""
+    idx = int(state.get("subtask_index") or 0)
+    if idx < 0 or idx >= len(tasks):
+        return ""
+    return tasks[idx]
+
+
+def _plan_preview(state: AgentState) -> str:
+    tasks = clip_subtasks(state.get("subtasks") or [])
+    if not tasks:
+        return "（无拆分）"
+    idx = int(state.get("subtask_index") or 0)
+    idx = min(max(idx, 0), len(tasks) - 1)
+    lines = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(tasks))
+    return f"{lines}\n当前子任务：{tasks[idx]}"
 
 
 def _user_question(state: AgentState) -> str:
@@ -79,19 +118,42 @@ def reason_decide(state: AgentState) -> dict[str, Any]:
     )
     cites = state.get("citations") or []
     preview = "\n".join(f"- {c.get('document_name')}: {str(c.get('content') or '')[:200]}" for c in cites[:8])
+    web_hits = state.get("web_hits") or []
+    if web_hits:
+        web_preview = "\n".join(
+            f"- 网页 {h.get('title') or h.get('url')}: {str(h.get('snippet') or '')[:200]}" for h in web_hits[:8]
+        )
+        preview = f"{preview}\n{web_preview}".strip() if preview else web_preview
     prompt = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
                 "你在决定下一步。只输出 JSON。"
-                '要检索知识库：{{"action":"search","query":"检索词"}}。'
-                '资料已够用或不必检索：{{"action":"generate"}}。'
-                "不要编造检索结果。",
+                '不调用工具、直接生成：{{"action":"direct"}}。'
+                '检索知识库：{{"action":"rag","query":"检索词"}}。'
+                + (
+                    '检索互联网：{{"action":"web","query":"检索词"}}。'
+                    if state.get("allow_web")
+                    else "禁止检索互联网，不得输出 action=web。"
+                )
+                + '复杂问题仅当尚无子任务时，可加 {{"subtasks":["步骤1","步骤2"]}}（最多3条）。'
+                "之后每圈只选 action，禁止再写 subtasks。"
+                "不要编造检索结果。禁止因为知识库无结果就自动改为联网。",
             ),
-            ("human", "问题：{question}\n已有资料：\n{preview}"),
+            ("human", "问题：{question}\n子任务：\n{plan}\n已有资料：\n{preview}"),
         ]
     )
-    raw = str((prompt | model).invoke({"question": _user_question(state), "preview": preview or "（无）"}).content)
+    raw = str(
+        (prompt | model)
+        .invoke(
+            {
+                "question": _user_question(state),
+                "plan": _plan_preview(state),
+                "preview": preview or "（无）",
+            }
+        )
+        .content
+    )
     try:
         start = raw.find("{")
         end = raw.rfind("}")
@@ -100,17 +162,38 @@ def reason_decide(state: AgentState) -> dict[str, Any]:
         return {"next_action": "generate"}
     if not isinstance(parsed, dict):
         return {"next_action": "generate"}
-    if str(parsed.get("action") or "") == "search":
-        query = str(parsed.get("query") or "").strip()
-        if query:
-            return {"next_action": "search", "search_query": query}
-    return {"next_action": "generate"}
+    extra: dict[str, Any] = {}
+    can_write_plan = int(state.get("loop_count") or 0) == 0 and not clip_subtasks(state.get("subtasks") or [])
+    if can_write_plan:
+        planned = clip_subtasks(parsed.get("subtasks"))
+        if planned:
+            extra["subtasks"] = planned
+    action = str(parsed.get("action") or "")
+    query = str(parsed.get("query") or "").strip() or _current_subtask(state, extra.get("subtasks"))
+    if action in ("rag", "search") and query:
+        return {"next_action": "search", "search_query": query, **extra}
+    if action == "web" and query and state.get("allow_web"):
+        return {"next_action": "web", "search_query": query, **extra}
+    return {"next_action": "generate", **extra}
 
 
 def node_reason(state: AgentState) -> dict[str, Any]:
     if int(state.get("loop_count") or 0) >= int(state.get("max_loops") or MAX_LOOPS):
         return {"next_action": "generate"}
-    return reason_decide(state)
+    existing = clip_subtasks(state.get("subtasks") or [])
+    idx = int(state.get("subtask_index") or 0)
+    if existing and idx >= len(existing):
+        return {"next_action": "generate"}
+    updates = reason_decide(state)
+    if existing or int(state.get("loop_count") or 0) != 0:
+        updates.pop("subtasks", None)
+        return updates
+    planned = clip_subtasks(updates.get("subtasks"))
+    if planned:
+        updates["subtasks"] = planned
+    else:
+        updates.pop("subtasks", None)
+    return updates
 
 
 def node_run_tool(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
@@ -118,12 +201,26 @@ def node_run_tool(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     user_id = (config.get("configurable") or {}).get("user_id")
     kb_raw = state.get("knowledge_base_id")
     kb_id = uuid.UUID(kb_raw) if kb_raw else None
-    hits = search_knowledge(session, state.get("search_query") or "", user_id=user_id, knowledge_base_id=kb_id)
+    query = state.get("search_query") or ""
+    loop_count = int(state.get("loop_count") or 0) + 1
+    tasks = clip_subtasks(state.get("subtasks") or [])
+    idx = int(state.get("subtask_index") or 0)
+    if tasks and idx < len(tasks):
+        idx += 1
+    if state.get("next_action") == "web":
+        if not state.get("allow_web"):
+            return {"loop_count": loop_count, "subtask_index": idx}
+        web_hits = list(state.get("web_hits") or [])
+        web_hits.extend(web_search(query))
+        if len(web_hits) > MAX_CITATIONS:
+            web_hits = web_hits[-MAX_CITATIONS:]
+        return {"web_hits": web_hits, "loop_count": loop_count, "subtask_index": idx}
+    hits = search_knowledge(session, query, user_id=user_id, knowledge_base_id=kb_id)
     cites = list(state.get("citations") or [])
     cites.extend(_hit_to_citation(hit) for hit in hits)
     if len(cites) > MAX_CITATIONS:
         cites = cites[-MAX_CITATIONS:]
-    return {"citations": cites, "loop_count": int(state.get("loop_count") or 0) + 1}
+    return {"citations": cites, "loop_count": loop_count, "subtask_index": idx}
 
 
 def generate_answer(state: AgentState) -> str:
@@ -131,6 +228,10 @@ def generate_answer(state: AgentState) -> str:
 
     messages = list(state.get("messages") or [])
     question = _user_question(state)
+    subtasks = clip_subtasks(state.get("subtasks") or [])
+    if subtasks:
+        listed = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(subtasks))
+        question = f"请综合下列子任务的资料汇总作答。\n{listed}\n\n原问题：{question}"
     prior = messages[:-1] if messages and messages[-1].get("role") == "user" else messages
     history = [
         (str(item.get("role") or ""), str(item.get("content") or ""))
@@ -139,6 +240,13 @@ def generate_answer(state: AgentState) -> str:
     ]
     cites = state.get("citations") or []
     context = "\n\n".join(f"[{c.get('document_name')}]\n{c.get('content')}" for c in cites)
+    web_hits = state.get("web_hits") or []
+    if web_hits:
+        web_block = "\n\n".join(
+            f"[{h.get('title') or h.get('url')}]\n{h.get('url') or ''}\n{h.get('snippet') or ''}".strip()
+            for h in web_hits
+        )
+        context = f"{context}\n\n{web_block}".strip() if context else web_block
     if state.get("task") == "report":
         question = (
             "请根据资料写成研究报告：先列简短大纲，再按「摘要 / 要点 / 依据 / 结论」分节撰写。"
@@ -162,7 +270,10 @@ def node_generate(state: AgentState) -> dict[str, Any]:
 
 
 def route_after_reason(state: AgentState) -> Literal["run_tool", "generate"]:
-    if state.get("next_action") == "search" and int(state.get("loop_count") or 0) < int(
+    action = state.get("next_action")
+    if action == "web" and not state.get("allow_web"):
+        return "generate"
+    if action in ("search", "rag", "web") and int(state.get("loop_count") or 0) < int(
         state.get("max_loops") or MAX_LOOPS
     ):
         return "run_tool"
@@ -203,6 +314,7 @@ def initial_state(
     history: list[dict[str, str]] | None = None,
     summary: str | None = None,
     ltm_hits: list[dict[str, Any]] | None = None,
+    allow_web: bool = False,
 ) -> AgentState:
     messages = list(history or [])
     messages.append({"role": "user", "content": query})
@@ -213,9 +325,13 @@ def initial_state(
         "summary": (summary or "").strip(),
         "ltm_hits": list(ltm_hits or []),
         "citations": [],
+        "web_hits": [],
         "loop_count": 0,
         "max_loops": MAX_LOOPS,
         "next_action": "generate",
         "search_query": "",
         "answer": "",
+        "subtasks": [],
+        "subtask_index": 0,
+        "allow_web": bool(allow_web),
     }

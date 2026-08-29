@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { getHealth, getMe, logout, type AppUser } from "../api";
+import { getChunkSettings, getHealth, getMe, logout, putChunkSettings, type AppUser } from "../api";
 import Icon from "../components/Icon.vue";
 import { debugEnabled, setDebugEnabled } from "../debugFlag";
 
@@ -9,6 +9,10 @@ const router = useRouter();
 const configured = ref<boolean | null>(null);
 const me = ref<AppUser | null>(null);
 const leaving = ref(false);
+const chunkSize = ref(800);
+const chunkOverlap = ref(120);
+const savingChunk = ref(false);
+const chunkHint = ref("");
 const initial = computed(() => (me.value?.username?.trim().charAt(0) || "?").toUpperCase());
 const keyLabel = computed(() => {
   if (configured.value === true) return "已配置";
@@ -16,10 +20,46 @@ const keyLabel = computed(() => {
   return "读取中";
 });
 
+async function loadChunkSettings() {
+  try {
+    const s = await getChunkSettings();
+    chunkSize.value = s.chunk_size;
+    chunkOverlap.value = s.chunk_overlap;
+  } catch (e) {
+    chunkHint.value = String(e);
+  }
+}
+
+async function saveChunkSettings() {
+  const size = Math.max(1, Math.round(Number(chunkSize.value)) || 800);
+  const overlap = Math.max(0, Math.round(Number(chunkOverlap.value)) || 0);
+  if (overlap >= size) {
+    chunkHint.value = "Overlap 必须小于 Chunk Size。";
+    return;
+  }
+  savingChunk.value = true;
+  try {
+    const s = await putChunkSettings({ chunk_size: size, chunk_overlap: overlap });
+    chunkSize.value = s.chunk_size;
+    chunkOverlap.value = s.chunk_overlap;
+    chunkHint.value = `切片配置已保存（Size ${s.chunk_size} / Overlap ${s.chunk_overlap}）。之后新导入或单篇重新向量化生效。`;
+  } catch (e) {
+    chunkHint.value = String(e);
+  } finally {
+    savingChunk.value = false;
+  }
+}
+
 onMounted(async () => {
   const [h, user] = await Promise.all([getHealth(), getMe().catch(() => null)]);
   configured.value = h.ai_configured;
   me.value = user;
+  if (debugEnabled.value) await loadChunkSettings();
+});
+
+watch(debugEnabled, (on) => {
+  if (on) loadChunkSettings();
+  else chunkHint.value = "";
 });
 
 async function signOut() {
@@ -82,6 +122,30 @@ function onDebugToggle(ev: Event) {
           </label>
         </li>
       </ul>
+      <div v-if="debugEnabled" class="chunk-cfg">
+        <div class="chunk-cfg-row">
+          <p class="label">切片配置</p>
+          <label>
+            <span>Chunk Size</span>
+            <span class="input-wrap">
+              <input v-model.number="chunkSize" type="number" min="1" max="20000" />
+              <em>tokens</em>
+            </span>
+          </label>
+          <label>
+            <span>Overlap</span>
+            <span class="input-wrap">
+              <input v-model.number="chunkOverlap" type="number" min="0" max="19999" />
+              <em>tokens</em>
+            </span>
+          </label>
+          <button class="btn btn-primary chunk-save" type="button" :disabled="savingChunk" @click="saveChunkSettings">
+            {{ savingChunk ? "保存中…" : "保存配置" }}
+          </button>
+        </div>
+        <p class="desc">默认 800 / 120。仅对后续向量化文档生效，不自动重切已有文档。</p>
+        <p v-if="chunkHint" class="chunk-hint">{{ chunkHint }}</p>
+      </div>
     </section>
 
     <section class="panel" aria-labelledby="env-title">
@@ -125,17 +189,16 @@ function onDebugToggle(ev: Event) {
   background: transparent;
 }
 .head {
-  margin-bottom: 1.25rem;
+  margin-bottom: 0.45rem;
 }
 .head h1 {
-  margin: 0 0 0.35rem;
-  font-size: 1.35rem;
-  letter-spacing: -0.03em;
+  margin: 0 0 0.25rem;
+  font-size: 1.05rem;
   line-height: 1.25;
 }
 .lede {
   margin: 0;
-  font-size: 0.88rem;
+  font-size: 0.75rem;
   line-height: 1.5;
   color: var(--muted);
 }
@@ -324,6 +387,83 @@ function onDebugToggle(ev: Event) {
 .toggle input:focus-visible {
   outline: 2px solid var(--teal);
   outline-offset: 2px;
+}
+.chunk-cfg {
+  margin-top: 0.9rem;
+  padding: 1rem 1.15rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.chunk-cfg-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  align-items: flex-end;
+}
+.chunk-cfg-row .label {
+  margin: 0 0 auto;
+  align-self: center;
+}
+.chunk-cfg-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 550;
+  color: var(--muted);
+}
+.input-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.input-wrap input {
+  width: 8.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.45rem 3.9rem 0.45rem 0.6rem;
+  font: inherit;
+  font-size: 0.85rem;
+  background: #fff;
+  color: var(--text);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.input-wrap input:focus-visible {
+  outline: none;
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px var(--teal-soft);
+}
+.input-wrap input::-webkit-outer-spin-button,
+.input-wrap input::-webkit-inner-spin-button {
+  margin-left: 2px;
+}
+.input-wrap em {
+  position: absolute;
+  right: 0.6rem;
+  font-style: normal;
+  font-size: 0.7rem;
+  color: var(--muted);
+  pointer-events: none;
+}
+.chunk-cfg .desc {
+  margin: 0.7rem 0 0;
+}
+.chunk-save {
+  margin-left: auto;
+}
+.chunk-hint {
+  margin: 0.7rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+@media (max-width: 560px) {
+  .chunk-save {
+    margin-left: 0;
+    width: 100%;
+    justify-content: center;
+  }
 }
 @media (max-width: 520px) {
   .profile-row {

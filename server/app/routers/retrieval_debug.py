@@ -39,7 +39,7 @@ def retrieval_debug_api(
         plan = plan_agent_search(original)
         next_action = str(plan.get("next_action") or "generate")
         rewritten = str(plan.get("search_query") or "").strip()
-        if next_action == "search" and rewritten:
+        if next_action in ("search", "rag") and rewritten:
             search_query = rewritten
     try:
         result = search_debug(
@@ -59,7 +59,7 @@ def retrieval_debug_api(
         return result.model_copy(
             update={
                 "search_query": search_query,
-                "next_action": "search" if next_action == "search" else "generate",
+                "next_action": "search" if next_action in ("search", "rag") else "generate",
             }
         )
     except KnowledgeBaseAccessError as exc:

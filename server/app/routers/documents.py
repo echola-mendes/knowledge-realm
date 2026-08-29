@@ -26,7 +26,8 @@ from app.schemas import (
     RelatedDocumentOut,
     UrlCreate,
 )
-from app.chunk import CHUNK_OVERLAP, CHUNK_SIZE, split_markdown
+from app.chunk import split_markdown
+from app.chunk_settings import get_user_chunk_settings
 from app import index as index_mod
 from app.index import STATUS_INDEXING
 from app.es_bm25 import EsNotConfiguredError, delete_document_chunks
@@ -99,8 +100,6 @@ def _document_out(doc: Document, session: Session, user_id: uuid.UUID, *, existe
             "tag_ids": tag_ids,
             "is_favorite": fav,
             "created_by": owner.username if owner else "",
-            "chunk_size": CHUNK_SIZE,
-            "chunk_overlap": CHUNK_OVERLAP,
         }
     )
 
@@ -128,7 +127,16 @@ def _chunks_for_document(doc: Document, session: Session) -> list[DocumentChunkO
     md_path = parsed_dir(doc.id) / "document.md"
     if not md_path.is_file():
         return []
-    pieces = split_markdown(md_path.read_text(encoding="utf-8"))
+    kb = session.get(KnowledgeBase, doc.knowledge_base_id)
+    owner_id = kb.user_id if kb is not None else None
+    if owner_id is None:
+        return []
+    chunk_cfg = get_user_chunk_settings(session, owner_id)
+    pieces = split_markdown(
+        md_path.read_text(encoding="utf-8"),
+        chunk_size=chunk_cfg.chunk_size,
+        chunk_overlap=chunk_cfg.chunk_overlap,
+    )
     vector_status = "indexing" if doc.status == STATUS_INDEXING else "pending"
     return [
         DocumentChunkOut(

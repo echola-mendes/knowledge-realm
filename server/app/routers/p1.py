@@ -102,6 +102,7 @@ def _agent_out(body: AgentRequest, session: Session, user_id: uuid.UUID) -> Agen
             history=history_msgs,
             summary=summary_text,
             ltm_hits=ltm_hits,
+            allow_web=bool(body.allow_web),
         ),
         config={
             "configurable": {

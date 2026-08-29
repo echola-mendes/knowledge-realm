@@ -3,6 +3,8 @@ export type KnowledgeBase = {
   name: string;
   is_default: boolean;
   is_enabled: boolean;
+  document_count: number;
+  byte_size: number;
   created_at?: string | null;
 };
 
@@ -21,8 +23,8 @@ export type DocumentItem = {
   byte_size: number;
   created_at?: string | null;
   created_by?: string;
-  chunk_size?: number;
-  chunk_overlap?: number;
+  chunk_size?: number | null;
+  chunk_overlap?: number | null;
 };
 
 export type TagItem = { id: string; name: string };
@@ -457,6 +459,23 @@ export function putRetrievalLabel(body: {
   relevance: number;
 }) {
   return api<{ chunk_id: string; document_id: string; relevance: number }>("/api/retrieval-debug/labels", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export type ChunkSettings = {
+  chunk_size: number;
+  chunk_overlap: number;
+};
+
+export function getChunkSettings() {
+  return api<ChunkSettings>("/api/chunk-settings");
+}
+
+export function putChunkSettings(body: ChunkSettings) {
+  return api<ChunkSettings>("/api/chunk-settings", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

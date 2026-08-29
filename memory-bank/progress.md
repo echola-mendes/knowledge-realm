@@ -314,7 +314,7 @@
 
 ## 步骤 P2-RAG-3 — 相关性判断
 
-- 状态：已执行，待提出人确认阈值
+- 状态：已执行并验证（提出人确认阈值先不变，默认 0.5）
 - 结果：Rerank 后逐条 `score >= RELEVANCE_MIN_SCORE`（默认 0.5）。低于门槛不进 Context、无 Citation；Chat 仍回答。pytest 58 passed。
 - 下一步：P2-DEBUG-UI 已落地，见下
 
@@ -350,8 +350,43 @@
 
 ## 步骤 P2-Agent-4 — Long-term Memory 表
 
-- 状态：已执行，待提出人确认
+- 状态：已执行并验证（提出人回复 1 确认）
 - 结果：迁移 `user_memory`（user_id/kind/content）；`load_ltm_hits` / `write_user_memory`；Agent 请求灌入 `ltm_hits`，`generate` 经 `llm.chat(..., ltm=)`；不写入 `document_chunk`、不做向量检索。`test_p1_ltm` + `test_p1_agent` 通过。
-- 下一步：提出人确认后进入 **P2-Agent-5（web_search 与统一路由）**
+- 下一步：P2-Agent-5 已落地，见下
+
+## 步骤 P2-Agent-5 — web_search 与统一路由
+
+- 状态：已执行并验证（提出人回复继续执行计划）
+- 结果：`web_search`（httpx POST 配置端点，禁止 Playwright）；`reason` 只选 DIRECT / RAG / WEB；`run_tool` 只执行指定 Tool；RAG 空结果不强制 WEB；`max_loops` 仍为 3。无 PLAN。`test_p1_graph` + `test_p1_tools` 覆盖 WEB 调用 / 空 citations 不强制 WEB / 未指定不调用。
+- 下一步：P2-Agent-6 已落地，见下
+
+## 步骤 P2-CHUNK-1 — 用户级 Chunk Size / Overlap
+
+- 状态：已执行并验证（提出人回复继续执行计划）
+- 结果：迁移 `user_chunk_setting`；`split_markdown` 参数化；`GET/PUT /api/chunk-settings`；`index_document` / 文档预览按用户配置切块；成功索引写入 `document.chunk_size`/`chunk_overlap`（迁移 `0014`）；列表展示索引时参数而非当前设置；设置页「调试」panel 开启调试后可保存 Size/Overlap；`/debug` 无切片配置；去初始演示 hint。改配置不扫全库、不改已有文档两字段。
+- 下一步：P2-Agent-6 已落地，见下
+
+## 步骤 P2-Agent-6 — 轻量 Planning
+
+- 状态：已执行并验证（提出人回复 1 确认）
+- 结果：同一张 `p1/graph.py`；`AgentState.subtasks`（≤3）仅首圈可写，超额截断；之后每圈 `reason` 仍只选 DIRECT / RAG / WEB；`run_tool` 推进 `subtask_index`；子任务全部完成后 generate 汇总。无第二套 Graph、不提高 `max_loops=3`。`test_p1_graph` 覆盖截断与单图。
+- 下一步：P2-7 已落地，见下
+
+## 步骤 P2-7 — 阶段文档收口
+
+- 状态：已执行并验证（提出人确认 P2 结束）
+- 结果：`PRD-P2.md` §7 范围收口。阈值保持 `RELEVANCE_MIN_SCORE=0.5`。未开始 P3；未开始 `search_graph` / 力导向可视化。P2-DEBUG-UI 代码已有、待看 UI（非 PRD §7 必做）；DEBUG-1 / AUTH-1 代码已写、无独立 progress 验收条。
+- 下一步：KB-ENABLE 已落地，见下
+
+## 步骤 KB-ENABLE — 检索默认已开启库
+
+- 状态：已执行，待提出人确认
+- 结果：本步代码先前已落地；本次核对并跑测。迁移 `20260827_0006`；`KnowledgeBase.is_enabled` 默认 true；`search_kb_ids` 未传 id → 已开启库，传 id → 单库（不因关闭拒绝对该 id 检索）；导入/文档列表仍 `resolve_knowledge_base_id`；管理页可开关；向量与 ES 共用同一 `kb_ids`。`test_kb_api` + `test_search` 6 passed。
+- 下一步：提出人确认后再开下一计划项；勿开 P3 / `search_graph` / 可视化
 
 
+## 步骤 AGENT-SMART-SEARCH — Agent/Report「智能搜索」开关
+
+- 状态：已执行并验证（待提出人确认）
+- 结果：对话页仅 Agent/Report 输入框下「智能搜索」开关（默认关）。`AgentRequest.allow_web`；关则 reason/route/run_tool 禁止 WEB。`test_p1_graph` 8 passed（含 allow_web=false 阻断）。未做网页来源单独 UI。
+- 下一步：提出人确认；勿开 P3 / search_graph / 可视化

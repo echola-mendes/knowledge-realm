@@ -24,6 +24,24 @@ defineProps<{ name: string }>();
     <template v-else-if="name === 'chat'">
       <path d="M7.4 18.2 4.2 20.4V7.6A2.6 2.6 0 0 1 6.8 5h10.4A2.6 2.6 0 0 1 19.8 7.6v6.4a2.6 2.6 0 0 1-2.6 2.6H9.2Z" />
     </template>
+    <template v-else-if="name === 'session'">
+      <path d="M12 4.6c-4.1 0-7.4 2.6-7.4 5.9 0 1.9 1.1 3.5 2.8 4.6v3.4l3.1-1.7c.5.1 1 .1 1.5.1 4.1 0 7.4-2.6 7.4-5.9S16.1 4.6 12 4.6Z" />
+      <circle cx="8.8" cy="10.5" r="0.7" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="10.5" r="0.7" fill="currentColor" stroke="none" />
+      <circle cx="15.2" cy="10.5" r="0.7" fill="currentColor" stroke="none" />
+    </template>
+    <template v-else-if="name === 'paperclip'">
+      <path d="m20.3 11.2-7.9 7.9a5 5 0 0 1-7.1-7.1l8.3-8.3a3.4 3.4 0 0 1 4.8 4.8l-8.3 8.3a1.8 1.8 0 0 1-2.5-2.5l7.6-7.6" />
+    </template>
+    <template v-else-if="name === 'image'">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+      <circle cx="9" cy="9.8" r="1.6" />
+      <path d="m5 18.5 4.8-5 3.2 3.2 2.8-2.8 3.7 3.7" />
+    </template>
+    <template v-else-if="name === 'tools'">
+      <path d="M14.3 6.3a3.6 3.6 0 0 1 4.9-4.5l-2.8 2.8 1.5 1.5 2.8-2.8a3.6 3.6 0 0 1-4.5 4.9L7.6 16.8a2 2 0 1 1-2.8-2.8L13.2 5.4" />
+      <path d="m4.5 19.5 1.5-1.5" />
+    </template>
     <template v-else-if="name === 'report'">
       <path d="M7.2 4h9.6a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7.2a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z" />
       <path d="M9 15.5 11.5 12l2 1.5 2.5-3.5" />
@@ -47,13 +65,19 @@ defineProps<{ name: string }>();
       <path d="m12 3.8 2.2 4.5 4.9.7-3.5 3.4.8 4.9L12 14.8l-4.4 2.3.8-4.9-3.5-3.4 4.9-.7L12 3.8Z" />
     </template>
     <template v-else-if="name === 'more'">
-      <circle cx="6" cy="12" r="1.2" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
-      <circle cx="18" cy="12" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="5.5" cy="12" r="1.6" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+      <circle cx="18.5" cy="12" r="1.6" fill="currentColor" stroke="none" />
     </template>
     <template v-else-if="name === 'panel-close'">
-      <rect x="5" y="5" width="14" height="14" rx="2" />
-      <path d="m10 8-2 2 2 2M14 8l2 2-2 2" />
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M10 5v14" />
+      <path d="M6.8 9.5 8.8 12l-2 2.5" />
+    </template>
+    <template v-else-if="name === 'panel-open'">
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M10 5v14" />
+      <path d="m6.8 9.5 2 2.5-2 2.5" />
     </template>
     <template v-else-if="name === 'brand'">
       <rect x="8.2" y="4.2" width="8.8" height="8.8" rx="2" fill="currentColor" stroke="none" opacity="0.42" />

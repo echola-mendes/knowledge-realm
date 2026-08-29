@@ -5,8 +5,10 @@ from dataclasses import dataclass
 
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
-CHUNK_SIZE = 800
-CHUNK_OVERLAP = 120
+DEFAULT_CHUNK_SIZE = 800
+DEFAULT_CHUNK_OVERLAP = 120
+CHUNK_SIZE = DEFAULT_CHUNK_SIZE
+CHUNK_OVERLAP = DEFAULT_CHUNK_OVERLAP
 PAGE_RE = re.compile(r"Page\s+(\d+)", re.IGNORECASE)
 TABLE_RE = re.compile(r"(?:^\|[^\n]+\|(?:\n|$))+", re.MULTILINE)
 FAQ_Q_RE = re.compile(r"[?？]\s*$")
@@ -71,9 +73,20 @@ def _page_of(heading: str | None, content: str) -> int | None:
     return None
 
 
-def split_markdown(text: str) -> list[TextChunk]:
+def split_markdown(
+    text: str,
+    *,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+) -> list[TextChunk]:
     if not text.strip():
         return []
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be > 0")
+    if chunk_overlap < 0:
+        raise ValueError("chunk_overlap must be >= 0")
+    if chunk_overlap >= chunk_size:
+        raise ValueError("chunk_overlap must be < chunk_size")
     prepared = _bind_faq(text)
     prepared, tables = _protect_tables(prepared)
     header_splitter = MarkdownHeaderTextSplitter(
@@ -83,17 +96,17 @@ def split_markdown(text: str) -> list[TextChunk]:
     sections = header_splitter.split_text(prepared)
     if not sections:
         return []
-    rec = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+    rec = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     chunks: list[TextChunk] = []
     for section in sections:
         heading = _heading_from_meta(section.metadata)
         body = section.page_content
-        if any(token in body for token in tables) and len(_restore_tables(body, tables)) > CHUNK_SIZE:
+        if any(token in body for token in tables) and len(_restore_tables(body, tables)) > chunk_size:
             restored = _restore_tables(body, tables).strip()
             if restored:
                 chunks.append(TextChunk(restored, _page_of(heading, restored), heading))
             continue
-        pieces = rec.split_text(body) if len(body) > CHUNK_SIZE else [body]
+        pieces = rec.split_text(body) if len(body) > chunk_size else [body]
         for piece in pieces:
             restored = _restore_tables(piece, tables).strip()
             if not restored:

@@ -4,8 +4,8 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from app.chunk import CHUNK_OVERLAP, CHUNK_SIZE
-from pydantic import BaseModel, Field
+from app.chunk import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
+from pydantic import BaseModel, Field, model_validator
 
 
 class NoteCreate(BaseModel):
@@ -46,8 +46,8 @@ class DocumentOut(BaseModel):
     summary: str | None = None
     created_at: datetime | None = None
     created_by: str = ""
-    chunk_size: int = CHUNK_SIZE
-    chunk_overlap: int = CHUNK_OVERLAP
+    chunk_size: int | None = None
+    chunk_overlap: int | None = None
 
     model_config = {"from_attributes": True}
 
@@ -157,6 +157,7 @@ class AgentRequest(BaseModel):
     query: str = Field(min_length=1)
     knowledge_base_id: uuid.UUID | None = None
     conversation_id: uuid.UUID | None = None
+    allow_web: bool = False
 
 
 class AgentOut(BaseModel):
@@ -180,6 +181,8 @@ class KnowledgeBaseOut(BaseModel):
     name: str
     is_default: bool
     is_enabled: bool
+    document_count: int = 0
+    byte_size: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -302,3 +305,20 @@ class DebugDatasetChunkOut(BaseModel):
     knowledge_base_name: str
     chunk_index: int
     content: str
+
+
+class ChunkSettingsOut(BaseModel):
+    chunk_size: int = DEFAULT_CHUNK_SIZE
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
+
+
+class ChunkSettingsPut(BaseModel):
+    chunk_size: int = Field(gt=0)
+    chunk_overlap: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def overlap_lt_size(self) -> ChunkSettingsPut:
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be < chunk_size")
+        return self
+

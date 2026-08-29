@@ -6,11 +6,12 @@ from time import sleep
 from sqlalchemy import delete, select
 
 from app.chunk import split_markdown
+from app.chunk_settings import get_user_chunk_settings
 from app.chunk_label import allocate_chunk_labels
 from app.config import get_settings
 from app.db import session_scope
 from app.es_bm25 import EsNotConfiguredError, delete_document_chunks, upsert_chunks
-from app.models import Document, DocumentChunk
+from app.models import Document, DocumentChunk, KnowledgeBase
 from app.parse import DOCX_KIND, PDF_KIND, TEXT_KINDS, URL_KIND, parse_docx_document, parse_pdf_document, parse_text_document
 from app.url_import import process_url_document
 from app.storage import parsed_dir
@@ -108,7 +109,18 @@ def index_document(document_id: uuid.UUID) -> None:
             session.commit()
             return
         text = md_path.read_text(encoding="utf-8")
-        pieces = split_markdown(text)
+        kb = session.get(KnowledgeBase, doc.knowledge_base_id)
+        if kb is None:
+            doc.status = STATUS_INDEX_FAILED
+            doc.error_message = "knowledge_base_missing"
+            session.commit()
+            return
+        chunk_cfg = get_user_chunk_settings(session, kb.user_id)
+        pieces = split_markdown(
+            text,
+            chunk_size=chunk_cfg.chunk_size,
+            chunk_overlap=chunk_cfg.chunk_overlap,
+        )
         if not pieces:
             doc.status = STATUS_INDEX_FAILED
             doc.error_message = "no_chunks"
@@ -147,6 +159,8 @@ def index_document(document_id: uuid.UUID) -> None:
             )
         doc.status = STATUS_READY
         doc.error_message = None
+        doc.chunk_size = chunk_cfg.chunk_size
+        doc.chunk_overlap = chunk_cfg.chunk_overlap
         session.commit()
         rows = session.scalars(select(DocumentChunk).where(DocumentChunk.document_id == doc.id)).all()
         try:

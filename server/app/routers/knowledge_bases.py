@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,12 +32,49 @@ def _owned(session: Session, kb_id: uuid.UUID, user_id: uuid.UUID) -> KnowledgeB
     return kb
 
 
+def _kb_stats(session: Session, kb_ids: list[uuid.UUID]) -> dict[uuid.UUID, tuple[int, int]]:
+    if not kb_ids:
+        return {}
+    rows = session.execute(
+        select(
+            Document.knowledge_base_id,
+            func.count(Document.id),
+            func.coalesce(func.sum(Document.byte_size), 0),
+        )
+        .where(Document.knowledge_base_id.in_(kb_ids))
+        .group_by(Document.knowledge_base_id)
+    ).all()
+    return {kb_id: (int(count), int(total)) for kb_id, count, total in rows}
+
+
+def _out(kb: KnowledgeBase, document_count: int = 0, byte_size: int = 0) -> KnowledgeBaseOut:
+    return KnowledgeBaseOut(
+        id=kb.id,
+        name=kb.name,
+        is_default=kb.is_default,
+        is_enabled=kb.is_enabled,
+        document_count=document_count,
+        byte_size=byte_size,
+        created_at=kb.created_at,
+        updated_at=kb.updated_at,
+    )
+
+
+def _out_with_stats(session: Session, kb: KnowledgeBase) -> KnowledgeBaseOut:
+    stats = _kb_stats(session, [kb.id])
+    count, size = stats.get(kb.id, (0, 0))
+    return _out(kb, count, size)
+
+
 @router.get("", response_model=list[KnowledgeBaseOut])
 def list_kbs(session: Session = Depends(get_db), user: User = Depends(current_user)):
-    rows = session.scalars(
-        select(KnowledgeBase).where(KnowledgeBase.user_id == user.id).order_by(KnowledgeBase.created_at)
-    ).all()
-    return rows
+    rows = list(
+        session.scalars(
+            select(KnowledgeBase).where(KnowledgeBase.user_id == user.id).order_by(KnowledgeBase.created_at)
+        ).all()
+    )
+    stats = _kb_stats(session, [kb.id for kb in rows])
+    return [_out(kb, *stats.get(kb.id, (0, 0))) for kb in rows]
 
 
 @router.post("", response_model=KnowledgeBaseOut, status_code=201)
@@ -50,12 +87,12 @@ def create_kb(body: KnowledgeBaseCreate, session: Session = Depends(get_db), use
         session.rollback()
         raise HTTPException(status_code=409, detail="知识库名称已存在")
     session.refresh(kb)
-    return kb
+    return _out(kb)
 
 
 @router.get("/{kb_id}", response_model=KnowledgeBaseOut)
 def get_kb(kb_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)):
-    return _owned(session, kb_id, user.id)
+    return _out_with_stats(session, _owned(session, kb_id, user.id))
 
 
 @router.put("/{kb_id}", response_model=KnowledgeBaseOut)
@@ -78,7 +115,7 @@ def update_kb(
         session.rollback()
         raise HTTPException(status_code=409, detail="知识库名称已存在")
     session.refresh(kb)
-    return kb
+    return _out_with_stats(session, kb)
 
 
 @router.delete("/{kb_id}", status_code=204)

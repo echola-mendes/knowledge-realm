@@ -111,7 +111,7 @@ const running = ref(false);
 const cands = ref<Cand[]>([]);
 const gtMap = ref<Record<string, number>>({});
 const formulaId = ref<string | null>(null);
-const hint = ref("点运行后检索当前账号已开启的知识库（pgvector + Elasticsearch），不是演示文档。");
+const hint = ref("");
 const lat = ref({ vector: 0, bm25: 0, rrf: 0, rerank: 0, total: 0 });
 
 function gtOf(id: string) {
@@ -430,11 +430,12 @@ onMounted(() => {
         </button>
       </div>
     </div>
-    <p class="hint">{{ hint }}</p>
+
+    <p v-if="hint" class="hint">{{ hint }}</p>
 
     <section class="top-grid">
       <div class="card pad">
-        <label>测试查询（用户问题）</label>
+        <label>Test Query</label>
         <p class="tiny">模拟 Agent 输入；运行后先经 reason 生成 search_query，再对该词做向量化与混合检索。</p>
         <textarea v-model="query" rows="3" placeholder="例如：帮我查一下那个代号" />
         <p v-if="ran && searchQuery" class="tiny sq">
@@ -855,6 +856,11 @@ onMounted(() => {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.85rem;
   margin-bottom: 1rem;
+}
+.top-grid > .card.pad > label {
+  margin: 0 0 0.45rem;
+  font-size: 0.8rem;
+  color: var(--text);
 }
 .top-grid .btn {
   margin-top: 0.4rem;

@@ -36,6 +36,9 @@ class Settings:
     session_secret: str
     initial_username: str
     initial_password: str
+    web_search_url: str
+    web_search_api_key: str
+    web_search_timeout: int
     host: str = HOST
     port: int = PORT
 
@@ -101,6 +104,9 @@ def load_settings(environ: dict[str, str] | None = None, *, load_file: bool = Fa
         session_secret=(env.get("SESSION_SECRET") or "local-dev-session-secret-min-32-chars").strip(),
         initial_username=(env.get("INITIAL_USERNAME") or "echola").strip() or "echola",
         initial_password=(env.get("INITIAL_PASSWORD") or "").strip(),
+        web_search_url=(env.get("WEB_SEARCH_URL") or "").strip(),
+        web_search_api_key=(env.get("WEB_SEARCH_API_KEY") or "").strip(),
+        web_search_timeout=_positive_int("WEB_SEARCH_TIMEOUT", env.get("WEB_SEARCH_TIMEOUT"), 10),
         host=HOST,
         port=PORT,
     )

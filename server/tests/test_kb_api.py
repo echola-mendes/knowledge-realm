@@ -35,9 +35,53 @@ def test_toggle_enabled():
     with _client() as client:
         created = client.post("/api/knowledge-bases", json={"name": f"开关-{uuid.uuid4().hex[:8]}"}).json()
         assert created["is_enabled"] is True
+        assert created["document_count"] == 0
+        assert created["byte_size"] == 0
         off = client.put(f"/api/knowledge-bases/{created['id']}", json={"is_enabled": False})
         assert off.status_code == 200
         assert off.json()["is_enabled"] is False
+
+
+def test_list_includes_document_count_and_byte_size():
+    with _client() as client:
+        created = client.post("/api/knowledge-bases", json={"name": f"统计-{uuid.uuid4().hex[:8]}"}).json()
+        kb_id = uuid.UUID(created["id"])
+        session = session_scope()
+        try:
+            session.add(
+                Document(
+                    id=uuid.uuid4(),
+                    knowledge_base_id=kb_id,
+                    filename="a.txt",
+                    ext=".txt",
+                    kind="txt",
+                    checksum=uuid.uuid4().hex,
+                    status="ready",
+                    byte_size=10,
+                )
+            )
+            session.add(
+                Document(
+                    id=uuid.uuid4(),
+                    knowledge_base_id=kb_id,
+                    filename="b.txt",
+                    ext=".txt",
+                    kind="txt",
+                    checksum=uuid.uuid4().hex,
+                    status="ready",
+                    byte_size=15,
+                )
+            )
+            session.commit()
+        finally:
+            session.close()
+        rows = {row["id"]: row for row in client.get("/api/knowledge-bases").json()}
+        assert rows[str(kb_id)]["document_count"] == 2
+        assert rows[str(kb_id)]["byte_size"] == 25
+        one = client.get(f"/api/knowledge-bases/{kb_id}").json()
+        assert one["document_count"] == 2
+        assert one["byte_size"] == 25
+    reset_app_state()
 
 
 def test_rename_and_duplicate_name():

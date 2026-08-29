@@ -11,6 +11,9 @@ import {
   type Conversation,
 } from "../api";
 import Icon from "../components/Icon.vue";
+import MarkdownIt from "markdown-it";
+
+const md = new MarkdownIt({ breaks: true });
 
 const route = useRoute();
 const router = useRouter();
@@ -23,8 +26,10 @@ const streaming = ref(false);
 const mode = ref<"chat" | "agent" | "report">(
   route.query.mode === "report" ? "report" : route.query.mode === "agent" ? "agent" : "chat",
 );
+const smartSearch = ref(false);
 const CHAT_KEY = "zhiyu-chat-id";
 const userInitial = computed(() => (username.value.trim().charAt(0) || "U").toUpperCase());
+const mdContent = (text: string) => md.render(text.replace(/^\s+/, ""));
 
 function syncRouteQuery() {
   const query: Record<string, string> = {};
@@ -53,10 +58,50 @@ const greetingMsg = computed<ChatMessage>(() => ({
 const threadMessages = computed(() => (messages.value.length ? messages.value : [greetingMsg.value]));
 const sidebarOpen = ref(true);
 const listSearch = ref("");
+const listAction = ref<"new" | "search">("new");
+
+function toggleListAction(action: "search" | "new") {
+  listAction.value = listAction.value === action && action === "search" ? "new" : action;
+}
+
+function openSidebar(action: "new" | "search" = "new") {
+  sidebarOpen.value = true;
+  listAction.value = action;
+}
+
+const listSearchInput = ref<HTMLInputElement | null>(null);
+watch(listAction, (action) => {
+  if (action === "search") nextTick(() => listSearchInput.value?.focus());
+});
 const box = ref<HTMLElement | null>(null);
-const activeCite = ref<string>("");
-const citeFocus = ref(false);
+const activeDoc = ref<string>("");
 const showAllSources = ref(false);
+
+type DocCite = {
+  document_id: string;
+  document_name: string;
+  score: number;
+  chunks: Citation[];
+};
+
+function groupCitesByDoc(rows: Citation[]): DocCite[] {
+  const map = new Map<string, DocCite>();
+  for (const c of rows) {
+    const cur = map.get(c.document_id);
+    if (!cur) {
+      map.set(c.document_id, {
+        document_id: c.document_id,
+        document_name: c.document_name,
+        score: typeof c.score === "number" ? c.score : 0,
+        chunks: [c],
+      });
+      continue;
+    }
+    cur.chunks.push(c);
+    if (typeof c.score === "number" && c.score > cur.score) cur.score = c.score;
+  }
+  return [...map.values()];
+}
 
 const chatTitle = computed(() => {
   const row = conversations.value.find((c) => c.id === conversationId.value);
@@ -95,10 +140,18 @@ const conversationGroups = computed(() => {
   return labels.filter((label) => buckets[label].length).map((label) => ({ label, items: buckets[label] }));
 });
 
+const panelDocs = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const m = messages.value[i];
+    if (m.role === "assistant" && m.citations?.length) return groupCitesByDoc(m.citations);
+  }
+  return [] as DocCite[];
+});
+
 const citeStats = computed(() => {
-  const rows = panelCites.value;
-  if (!rows.length) return [] as Array<Citation & { pct: number; color: string; start: number; end: number }>;
-  const weights = rows.map((c) => Math.max(c.score ?? 0.01, 0.01));
+  const rows = panelDocs.value;
+  if (!rows.length) return [] as Array<DocCite & { pct: number; color: string; start: number; end: number }>;
+  const weights = rows.map((c) => Math.max(c.score || 0.01, 0.01));
   const total = weights.reduce((s, w) => s + w, 0);
   const colors = ["#2563eb", "#60a5fa", "#93c5fd", "#cbd5e1"];
   let acc = 0;
@@ -116,20 +169,12 @@ const donutStyle = computed(() => {
   return { background: `conic-gradient(${parts.join(", ")})` };
 });
 
-const sourceList = computed(() => (showAllSources.value ? panelCites.value : panelCites.value.slice(0, 3)));
+const sourceList = computed(() => (showAllSources.value ? panelDocs.value : panelDocs.value.slice(0, 3)));
 
-const panelCites = computed(() => {
-  for (let i = messages.value.length - 1; i >= 0; i--) {
-    const m = messages.value[i];
-    if (m.role === "assistant" && m.citations?.length) return m.citations;
-  }
-  return [] as Citation[];
-});
-
-const shownCite = computed(() => {
-  const rows = panelCites.value;
+const shownDoc = computed(() => {
+  const rows = panelDocs.value;
   if (!rows.length) return null;
-  return rows.find((c) => c.chunk_id === activeCite.value) || rows[0];
+  return rows.find((c) => c.document_id === activeDoc.value) || rows[0];
 });
 
 async function refreshConversations() {
@@ -148,8 +193,12 @@ async function openConversation(id: string) {
 const CITE_LIMIT = 2;
 const citeOpen = ref<Record<string, boolean>>({});
 
-function visibleCites(m: ChatMessage) {
-  const rows = m.citations || [];
+function docCites(m: ChatMessage) {
+  return groupCitesByDoc(m.citations || []);
+}
+
+function visibleDocs(m: ChatMessage) {
+  const rows = docCites(m);
   if (citeOpen.value[m.id] || rows.length <= CITE_LIMIT) return rows;
   return rows.slice(0, CITE_LIMIT);
 }
@@ -159,19 +208,14 @@ function isThinking(m: ChatMessage) {
   return m.role === "assistant" && !m.content.trim() && streaming.value && last === m;
 }
 
-function formatSimScore(score: number | undefined) {
-  return typeof score === "number" && Number.isFinite(score) ? score.toFixed(2) : "—";
-}
-
 function citePreview(content: string, limit = 72) {
   const text = content.replace(/\s+/g, " ").trim();
   if (text.length <= limit) return text;
   return `${text.slice(0, limit)}…`;
 }
 
-function hashFor(c: Citation) {
-  if (c.page_start != null) return `#page-${c.page_start}`;
-  return "";
+function chunksPath(documentId: string) {
+  return `/documents/${documentId}/chunks`;
 }
 
 function scrollBottom() {
@@ -209,6 +253,7 @@ async function ask() {
               task: mode.value === "report" ? "report" : "agent",
               query: q,
               conversation_id: conversationId.value || undefined,
+              allow_web: smartSearch.value,
             }
           : {
               query: q,
@@ -283,9 +328,8 @@ onMounted(async () => {
   if (draft.value) ask();
 });
 
-watch(panelCites, (rows) => {
-  citeFocus.value = false;
-  activeCite.value = rows[0]?.chunk_id || "";
+watch(panelDocs, (rows) => {
+  activeDoc.value = rows[0]?.document_id || "";
   showAllSources.value = false;
 });
 
@@ -304,89 +348,128 @@ function setMode(next: "chat" | "agent" | "report") {
   syncRouteQuery();
 }
 
-function pickCite(id: string) {
-  activeCite.value = id;
-  citeFocus.value = true;
+function pickDoc(id: string) {
+  activeDoc.value = id;
 }
 </script>
 
 <template>
   <main class="chat-page">
-    <aside v-if="sidebarOpen" class="chat-list card">
-      <header class="list-head">
-        <h2>对话</h2>
-      </header>
-      <div class="new-chat-row">
-        <button class="btn btn-primary new-chat" type="button" @click="newChat">
-          <Icon name="plus" />
-          新建对话
-        </button>
-        <button class="list-panel-toggle" type="button" title="收起" @click="sidebarOpen = false">
-          <Icon name="panel-close" />
-        </button>
-      </div>
-      <label class="list-search">
-        <Icon name="search" />
-        <input v-model="listSearch" type="search" placeholder="搜索对话" />
-      </label>
-      <div class="list-scroll">
-        <section v-for="group in conversationGroups" :key="group.label" class="list-group">
-          <h3>{{ group.label }}</h3>
-          <button
-            v-for="c in group.items"
-            :key="c.id"
-            type="button"
-            class="list-item"
-            :class="{ on: c.id === conversationId }"
-            @click="openConversation(c.id)"
-          >
-            <Icon name="chat" class="list-icon" />
-            <span class="list-title">{{ c.title }}</span>
-            <span class="list-time">{{ formatConvTime(c.updated_at) }}</span>
-          </button>
-        </section>
-        <p v-if="!conversations.length" class="list-empty">暂无对话</p>
-        <p v-else-if="!conversationGroups.length" class="list-empty">无匹配对话</p>
-      </div>
-    </aside>
-    <button v-else class="list-expand" type="button" title="展开对话列表" @click="sidebarOpen = true">
-      <Icon name="chat" />
-    </button>
-
-    <div class="chat-main">
-      <div class="chat-workspace">
-        <div class="chat-column">
-          <header class="chat-head">
-            <div class="chat-head-top">
-              <div class="title-row">
-                <h1>{{ chatTitle }}</h1>
-                <button class="icon-btn" type="button" aria-label="编辑标题">
-                  <Icon name="edit" />
-                </button>
-              </div>
-              <div class="head-tools">
-                <div class="mode-switch" role="group" aria-label="Question mode">
-                  <button type="button" :class="{ on: mode === 'chat' }" :disabled="streaming" @click="setMode('chat')">Chat</button>
-                  <button type="button" :class="{ on: mode === 'agent' }" :disabled="streaming" @click="setMode('agent')">Agent</button>
-                  <button type="button" :class="{ on: mode === 'report' }" :disabled="streaming" @click="setMode('report')">Report</button>
-                </div>
-                <button class="icon-btn" type="button" aria-label="分享">
-                  <Icon name="share" />
-                </button>
-                <button class="icon-btn" type="button" aria-label="收藏">
-                  <Icon name="star" />
-                </button>
-                <button class="icon-btn" type="button" aria-label="更多">
-                  <Icon name="more" />
-                </button>
-              </div>
+    <div class="chat-canvas card">
+      <aside v-if="sidebarOpen" class="chat-list">
+        <header class="list-head">
+          <div class="list-head-row">
+            <h2>对话</h2>
+            <div class="list-tools">
+              <button
+                class="list-tool-btn"
+                type="button"
+                title="收起"
+                @click="sidebarOpen = false"
+              >
+                <Icon name="panel-close" />
+              </button>
+              <button
+                class="list-tool-btn"
+                :class="{ on: listAction === 'search' }"
+                type="button"
+                title="搜索对话"
+                @click="toggleListAction('search')"
+              >                <Icon name="search" />
+              </button>
+              <button
+                class="list-tool-btn"
+                type="button"
+                title="新建对话"
+                @click="toggleListAction('new')"
+              >
+                <Icon name="plus" />
+              </button>
             </div>
+          </div>
+          <p class="sub">智能问答与任务协作</p>
+        </header>
+        <div class="new-chat-row">
+          <button
+            v-if="listAction === 'new'"
+            class="btn btn-primary new-chat"
+            type="button"
+            @click="newChat"
+          >
+            <Icon name="plus" />
+            新建对话
+          </button>
+          <label v-else class="list-search">
+            <Icon name="search" />
+            <input ref="listSearchInput" v-model="listSearch" type="search" placeholder="搜索对话" />
+          </label>
+        </div>
+        <div class="list-scroll">
+          <section v-for="group in conversationGroups" :key="group.label" class="list-group">
+            <h3>{{ group.label }}</h3>
+            <button
+              v-for="c in group.items"
+              :key="c.id"
+              type="button"
+              class="list-item"
+              :class="{ on: c.id === conversationId }"
+              @click="openConversation(c.id)"
+            >
+              <Icon name="session" class="list-icon" />
+              <span class="list-title">{{ c.title }}</span>
+              <span class="list-time">{{ formatConvTime(c.updated_at) }}</span>
+            </button>
+          </section>
+          <p v-if="!conversations.length" class="list-empty">暂无对话</p>
+          <p v-else-if="!conversationGroups.length" class="list-empty">无匹配对话</p>
+        </div>
+      </aside>
+      <div v-else class="list-rail">
+        <button class="list-tool-btn" type="button" title="展开对话列表" @click="openSidebar()">
+          <Icon name="panel-open" />
+        </button>
+        <button class="list-tool-btn" type="button" title="搜索对话" @click="openSidebar('search')">
+          <Icon name="search" />
+        </button>
+        <button class="list-tool-btn" type="button" title="新建对话" @click="openSidebar('new')">
+          <Icon name="plus" />
+        </button>
+      </div>
+
+      <div class="chat-column">
+        <header class="chat-head">
+          <div class="chat-head-top">
+            <div class="title-row">
+              <h1>{{ chatTitle }}</h1>
+              <button class="icon-btn" type="button" aria-label="编辑标题">
+                <Icon name="edit" />
+              </button>
+            </div>
+          </div>
+          <div class="chat-head-sub">
             <p class="sub">默认检索全部已开启的知识库，回答会标注引用来源</p>
-          </header>
+            <div class="head-tools">
+              <div class="mode-switch" role="group" aria-label="Question mode">
+                <button type="button" :class="{ on: mode === 'chat' }" :disabled="streaming" @click="setMode('chat')">Chat</button>
+                <button type="button" :class="{ on: mode === 'agent' }" :disabled="streaming" @click="setMode('agent')">Agent</button>
+                <button type="button" :class="{ on: mode === 'report' }" :disabled="streaming" @click="setMode('report')">Report</button>
+              </div>
+              <button class="icon-btn" type="button" aria-label="分享">
+                <Icon name="share" />
+              </button>
+              <button class="icon-btn" type="button" aria-label="收藏">
+                <Icon name="star" />
+              </button>
+              <button class="icon-btn" type="button" aria-label="更多">
+                <Icon name="more" />
+              </button>
+            </div>
+          </div>
+        </header>
 
-          <p v-if="error" class="hint err">{{ error }}</p>
+        <p v-if="error" class="hint err">{{ error }}</p>
 
-          <div ref="box" class="thread">
+        <div ref="box" class="thread">
           <div v-for="m in threadMessages" :key="m.id" :class="['msg', m.role]">
             <div v-if="m.role === 'user'" class="avatar user-avatar">{{ userInitial }}</div>
             <div v-else class="avatar bot-avatar"><Icon name="brand" /></div>
@@ -399,22 +482,22 @@ function pickCite(id: string) {
                   <span class="spin" aria-hidden="true"></span>
                   思考中……
                 </div>
+                <div v-else-if="m.role === 'assistant'" class="md-body" v-html="mdContent(m.content)"></div>
                 <pre v-else>{{ m.content.replace(/^\s+/, "") }}</pre>
                 <div v-if="m.role === 'assistant' && m.citations?.length" class="cites">
-                  <p class="cites-label">引用来源 ({{ m.citations.length }})</p>
+                  <p class="cites-label">引用来源 ({{ docCites(m).length }})</p>
                   <button
-                    v-for="c in visibleCites(m)"
-                    :key="c.chunk_id"
+                    v-for="d in visibleDocs(m)"
+                    :key="d.document_id"
                     type="button"
                     class="cite-chip"
-                    :class="{ on: c.chunk_id === shownCite?.chunk_id }"
-                    @click="pickCite(c.chunk_id)"
+                    :class="{ on: d.document_id === shownDoc?.document_id }"
+                    @click="pickDoc(d.document_id)"
                   >
-                    <span class="cite-name">{{ c.document_name }}</span>
-                    <span class="cite-score">{{ formatSimScore(c.score) }}</span>
+                    <span class="cite-name">{{ d.document_name }}</span>
                   </button>
                   <button
-                    v-if="m.citations.length > CITE_LIMIT && !citeOpen[m.id]"
+                    v-if="docCites(m).length > CITE_LIMIT && !citeOpen[m.id]"
                     type="button"
                     class="cite-more"
                     @click="citeOpen[m.id] = true"
@@ -427,6 +510,7 @@ function pickCite(id: string) {
           </div>
         </div>
 
+        <div class="composer-wrap">
           <div class="composer card">
             <textarea
               v-model="draft"
@@ -441,64 +525,93 @@ function pickCite(id: string) {
               @keydown="onKey"
             ></textarea>
             <div class="composer-bar">
-              <span class="composer-hint">Enter 发送 · Shift+Enter 换行</span>
-              <button class="btn btn-primary send-btn" type="button" :disabled="streaming" @click="ask">
-                <Icon name="send" />
-              </button>
+              <div class="composer-left">
+                <button class="tool-btn" type="button" title="附件（暂未开放）" disabled>
+                  <Icon name="paperclip" />
+                </button>
+                <button class="tool-btn" type="button" title="图片（暂未开放）" disabled>
+                  <Icon name="image" />
+                </button>
+                <button class="tool-btn tools-btn" type="button" title="工具（暂未开放）" disabled>
+                  <Icon name="tools" />
+                  <span>工具</span>
+                  <i class="chev"></i>
+                </button>
+              </div>
+              <div class="composer-right">
+                <span class="composer-hint">Enter 发送，Shift+Enter 换行</span>
+                <button class="btn btn-primary send-btn" type="button" :disabled="streaming" @click="ask">
+                  <Icon name="send" />
+                </button>
+              </div>
             </div>
           </div>
+          <button
+            class="smart-toggle"
+            :class="{ on: smartSearch }"
+            type="button"
+            :disabled="streaming"
+            @click="smartSearch = !smartSearch"
+          >
+            <Icon name="spark" />
+            智能搜索
+          </button>
         </div>
-
-        <aside v-if="panelCites.length" class="source-side card">
-          <header class="source-head">
-            <h2>资料来源</h2>
-          </header>
-          <section class="source-overview">
-            <h3>来源概览</h3>
-            <div class="donut-row">
-              <div class="donut" :style="donutStyle">
-                <div class="donut-hole">
-                  <strong>{{ panelCites.length }}</strong>
-                  <span>总片段</span>
-                </div>
-              </div>
-              <ul class="donut-legend">
-                <li v-for="(s, i) in citeStats" :key="s.chunk_id">
-                  <span class="dot" :style="{ background: s.color }"></span>
-                  {{ s.document_name }} #{{ i + 1 }} · {{ s.pct }}%
-                </li>
-              </ul>
-            </div>
-          </section>
-          <section class="source-all">
-            <h3>所有来源</h3>
-            <article
-              v-for="(c, i) in sourceList"
-              :key="c.chunk_id"
-              class="source-card"
-              :class="{ on: c.chunk_id === activeCite }"
-              @click="pickCite(c.chunk_id)"
-            >
-              <div class="source-card-top">
-                <RouterLink class="source-doc" :to="{ path: `/documents/${c.document_id}`, hash: hashFor(c) }" @click.stop>
-                  {{ c.document_name }}
-                </RouterLink>
-                <span class="source-score">{{ formatSimScore(c.score) }}</span>
-              </div>
-              <p class="source-snippet">{{ citePreview(c.content, 120) }}</p>
-              <span class="source-meta">片段 #{{ i + 1 }}</span>
-            </article>
-            <button
-              v-if="panelCites.length > 3 && !showAllSources"
-              class="btn source-more"
-              type="button"
-              @click="showAllSources = true"
-            >
-              查看全部来源
-            </button>
-          </section>
-        </aside>
       </div>
+
+      <aside v-if="panelDocs.length" class="source-side">
+        <header class="source-head">
+          <h2>资料来源</h2>
+        </header>
+        <section class="source-overview">
+          <h3>来源概览</h3>
+          <div class="donut-row">
+            <div class="donut" :style="donutStyle">
+              <div class="donut-hole">
+                <strong>{{ panelDocs.length }}</strong>
+                <span>文档</span>
+              </div>
+            </div>
+            <ul class="donut-legend">
+              <li v-for="s in citeStats" :key="s.document_id">
+                <span class="dot" :style="{ background: s.color }"></span>
+                {{ s.document_name }} · {{ s.pct }}%
+              </li>
+            </ul>
+          </div>
+        </section>
+        <section class="source-all">
+          <h3>所有来源</h3>
+          <article
+            v-for="d in sourceList"
+            :key="d.document_id"
+            class="source-card"
+            :class="{ on: d.document_id === activeDoc }"
+            @click="pickDoc(d.document_id)"
+          >
+            <div class="source-card-top">
+              <RouterLink class="source-doc" :to="chunksPath(d.document_id)" @click.stop>
+                {{ d.document_name }}
+              </RouterLink>
+              <span class="source-meta">{{ d.chunks.length }} 段</span>
+            </div>
+            <div v-for="(c, i) in d.chunks" :key="c.chunk_id" class="source-chunk">
+              <p class="source-snippet">{{ citePreview(c.content, 120) }}</p>
+              <RouterLink class="source-chunk-link" :to="chunksPath(d.document_id)" @click.stop>
+                相关切片 {{ i + 1 }}
+              </RouterLink>
+            </div>
+          </article>
+          <button
+            v-if="panelDocs.length > 3 && !showAllSources"
+            class="btn source-more"
+            type="button"
+            @click="showAllSources = true"
+          >
+            查看全部来源
+          </button>
+        </section>
+      </aside>
     </div>
   </main>
 </template>
@@ -506,9 +619,8 @@ function pickCite(id: string) {
 <style scoped>
 .chat-page {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: stretch;
-  gap: 0.75rem;
   width: 100%;
   max-width: 100%;
   margin: 0;
@@ -520,55 +632,95 @@ function pickCite(id: string) {
   font-size: 12.5px;
   background: var(--bg);
 }
+.chat-canvas {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
 .chat-list {
   width: 15.5rem;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow);
-  background: #fff;
+  border: none;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
 }
 .list-head {
-  padding: 0.85rem 0.85rem 0.35rem;
+  padding: 1.15rem 0.85rem 0.35rem;
 }
-.list-head h2 {
-  margin: 0;
-  font-size: 0.92rem;
-  font-weight: 700;
-}
-.new-chat-row {
+.list-head-row {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  margin: 0 0.75rem 0.55rem;
-}
-.new-chat {
-  flex: 1;
-  min-width: 0;
-  justify-content: center;
+  justify-content: space-between;
   gap: 0.35rem;
 }
-.new-chat :deep(.ico) {
-  width: 14px;
-  height: 14px;
+.list-head-row h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.05rem;
+  font-weight: 700;
 }
-.list-panel-toggle {
+.list-head .sub {
+  margin: 0.25rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.list-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.list-tool-btn {
   flex-shrink: 0;
-  border: 1px solid var(--line);
-  background: #fff;
+  border: 1px solid transparent;
+  background: none;
   border-radius: 8px;
-  width: 2rem;
-  height: 2rem;
+  width: 1.75rem;
+  height: 1.75rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   color: var(--muted);
 }
-.list-panel-toggle :deep(.ico) {
+.list-tool-btn:hover {
+  background: #f1f5f9;
+}
+.list-tool-btn.on {
+  background: #eff6ff;
+  color: var(--teal);
+  border-color: var(--line);
+}
+.list-tool-btn :deep(.ico) {
+  width: 15px;
+  height: 15px;
+}
+.new-chat-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
+  margin: 0 0.75rem 0.55rem;
+  height: 1.85rem;
+}
+.new-chat {
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+  gap: 0.35rem;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.new-chat :deep(.ico) {
   width: 14px;
   height: 14px;
 }
@@ -576,9 +728,10 @@ function pickCite(id: string) {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  margin: 0 0.75rem 0.55rem;
-  padding: 0.35rem 0.55rem;
-  border: 1px solid var(--line);
+  flex: 1;
+  min-width: 0;
+  padding: 0 0.55rem;
+  border: 1px solid #2563eb;
   border-radius: 8px;
   background: #f8fafc;
   color: var(--muted);
@@ -657,32 +810,25 @@ function pickCite(id: string) {
   color: var(--teal);
   font-weight: 600;
 }
-.list-expand {
+.list-rail {
   flex-shrink: 0;
-  align-self: flex-start;
-  margin: 0.75rem 0 0 1rem;
-  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.75rem 0.35rem;
+  border-right: 1px solid var(--line);
+}
+.list-rail .list-tool-btn {
   background: #fff;
-  border-radius: 8px;
-  padding: 0.45rem;
-  cursor: pointer;
-  color: var(--muted);
+  border-color: var(--line);
 }
-.list-expand :deep(.ico) {
-  width: 18px;
-  height: 18px;
-}
-.chat-main {
+.chat-column {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  overflow: hidden;
 }
 .chat-head {
   display: flex;
@@ -721,8 +867,8 @@ function pickCite(id: string) {
 .icon-btn {
   border: none;
   background: none;
-  width: 1.85rem;
-  height: 1.85rem;
+  width: 2.1rem;
+  height: 2.1rem;
   border-radius: 8px;
   display: inline-flex;
   align-items: center;
@@ -735,13 +881,26 @@ function pickCite(id: string) {
   color: var(--text);
 }
 .icon-btn :deep(.ico) {
-  width: 15px;
-  height: 15px;
+  width: 19px;
+  height: 19px;
 }
 .chat-head .sub {
   margin: 0;
   font-size: 0.72rem;
   color: var(--muted);
+}
+.chat-head-sub {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.chat-head-sub .sub {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .hint {
   padding: 0 1rem;
@@ -750,23 +909,6 @@ function pickCite(id: string) {
 }
 .hint.err {
   color: var(--danger);
-}
-.chat-workspace {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: row;
-  overflow: hidden;
-}
-.chat-column {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.chat-column .chat-head {
-  border-right: none;
 }
 .thread {
   flex: 1;
@@ -778,13 +920,36 @@ function pickCite(id: string) {
   padding: 1rem 1.25rem;
 }
 .msg {
-  display: flex;
-  gap: 0.55rem;
+  display: grid;
+  grid-template-columns: 2.4rem minmax(0, 1fr) 2.4rem;
+  gap: 0.4rem;
   align-items: flex-start;
-  max-width: min(44rem, 100%);
+  max-width: 100%;
+}
+.msg.assistant {
+  align-self: stretch;
+}
+.msg.user {
+  align-self: stretch;
+}
+.msg.user .avatar {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+}
+.msg.user .bubble-wrap {
+  grid-column: 2;
+  grid-row: 1;
+}
+.msg.assistant .bubble-wrap {
+  grid-column: 2;
+  grid-row: 1;
 }
 .msg-meta {
   margin-bottom: 0.25rem;
+}
+.msg.user .msg-meta {
+  text-align: right;
 }
 .msg-who {
   font-size: 0.68rem;
@@ -818,6 +983,9 @@ function pickCite(id: string) {
   min-width: 0;
   flex: 1;
 }
+.msg.user .bubble-wrap {
+  flex: 1;
+}
 .bubble {
   border-radius: 12px;
   padding: 0.65rem 0.8rem;
@@ -835,6 +1003,63 @@ pre {
   font: inherit;
   font-size: 0.8rem;
   line-height: 1.55;
+}
+.md-body {
+  font-size: 0.8rem;
+  line-height: 1.55;
+  word-break: break-word;
+}
+.md-body > :first-child {
+  margin-top: 0;
+}
+.md-body > :last-child {
+  margin-bottom: 0;
+}
+.md-body p {
+  margin: 0.35rem 0;
+}
+.md-body ul,
+.md-body ol {
+  margin: 0.35rem 0;
+  padding-left: 1.25rem;
+}
+.md-body li {
+  margin: 0.15rem 0;
+}
+.md-body blockquote {
+  margin: 0.4rem 0;
+  padding: 0.25rem 0.7rem;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+.md-body code {
+  background: #f1f5f9;
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  font-size: 0.75rem;
+}
+.md-body pre {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  overflow-x: auto;
+}
+.md-body pre code {
+  background: none;
+  padding: 0;
+}
+.md-body table {
+  border-collapse: collapse;
+  margin: 0.4rem 0;
+}
+.md-body th,
+.md-body td {
+  border: 1px solid var(--line);
+  padding: 0.25rem 0.5rem;
+}
+.md-body a {
+  color: var(--teal);
 }
 .thinking {
   display: flex;
@@ -867,35 +1092,29 @@ pre {
   color: var(--muted);
 }
 .cite-chip {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
+  display: inline-flex;
+  align-items: center;
   gap: 0.5rem;
-  border: 1px solid #dbeafe;
-  background: #f8fbff;
-  border-radius: 8px;
-  padding: 0.4rem 0.55rem;
-  margin-bottom: 0.35rem;
+  width: auto;
+  max-width: 100%;
+  border: none;
+  background: #e2e8f0;
+  color: #fff;
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  margin: 0 0.3rem 0.3rem 0;
   cursor: pointer;
-  font-size: 0.72rem;
+  font-size: 0.6rem;
 }
 .cite-chip.on,
 .cite-chip:hover {
-  border-color: var(--teal);
-  background: #eff6ff;
+  background: #d3dce6;
+  color: #fff;
 }
 .cite-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.cite-score {
-  color: #ea580c;
-  background: #fff7ed;
-  border-radius: 6px;
-  padding: 0.05rem 0.35rem;
-  font-size: 0.65rem;
-  flex-shrink: 0;
 }
 .cite-more {
   border: none;
@@ -1007,16 +1226,18 @@ pre {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.source-score {
-  font-size: 0.62rem;
-  color: #ea580c;
-  background: #fff7ed;
-  border-radius: 6px;
-  padding: 0.05rem 0.35rem;
-  flex-shrink: 0;
+.source-chunk {
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed var(--line);
+}
+.source-chunk:first-of-type {
+  margin-top: 0.15rem;
+  padding-top: 0;
+  border-top: none;
 }
 .source-snippet {
-  margin: 0 0 0.25rem;
+  margin: 0 0 0.2rem;
   font-size: 0.68rem;
   line-height: 1.45;
   color: var(--muted);
@@ -1025,53 +1246,145 @@ pre {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.source-chunk-link {
+  font-size: 0.62rem;
+  color: var(--teal);
+  text-decoration: none;
+}
+.source-chunk-link:hover {
+  text-decoration: underline;
+}
 .source-meta {
   font-size: 0.62rem;
   color: var(--muted);
+  flex-shrink: 0;
 }
 .source-more {
   width: 100%;
   justify-content: center;
   margin-top: 0.25rem;
 }
+.composer-wrap {
+  flex-shrink: 0;
+  padding: 0.75rem 1rem 0.6rem;
+}
 .composer {
   margin: 0;
-  border-radius: 0;
-  border: none;
-  border-top: 1px solid var(--line);
-  box-shadow: none;
-  padding: 0.75rem 1rem 0.85rem;
-  flex-shrink: 0;
+  border-radius: 14px;
+  padding: 0.7rem 0.75rem 0.55rem;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
 }
 .composer textarea {
   width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 0.55rem 0.65rem;
-  resize: vertical;
+  border: none;
+  border-radius: 0;
+  padding: 0.15rem 0.35rem 0.4rem;
+  resize: none;
   font-size: inherit;
-  min-height: 2.6rem;
+  min-height: 2.4rem;
+  background: transparent;
+  outline: none;
 }
 .composer-bar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 0.45rem;
+  margin-top: 0.35rem;
+}
+.composer-left {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.composer-right {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+.tool-btn {
+  border: none;
+  background: none;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  color: #475569;
+  font-size: 0.8rem;
+}
+.tool-btn :deep(.ico) {
+  width: 16px;
+  height: 16px;
+}
+.tool-btn:not(:disabled):hover {
+  background: #f1f5f9;
+}
+.tool-btn:disabled {
+  cursor: not-allowed;
+  color: #94a3b8;
+}
+.tools-btn {
+  width: auto;
+  padding: 0 0.7rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  white-space: nowrap;
+}
+.tools-btn .chev {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+  display: inline-block;
+  margin-left: 0.15rem;
+  vertical-align: 2px;
 }
 .composer-hint {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.7rem;
+  white-space: nowrap;
 }
 .send-btn {
-  width: 2.2rem;
-  height: 2.2rem;
+  width: 2.5rem;
+  height: 2.5rem;
   padding: 0;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 12px;
 }
 .send-btn :deep(.ico) {
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
+}
+.smart-toggle {
+  margin-top: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.smart-toggle :deep(.ico) {
+  width: 13px;
+  height: 13px;
+}
+.smart-toggle.on {
+  border-color: var(--teal);
+  color: var(--teal);
+  background: #eff6ff;
+  font-weight: 600;
+}
+.smart-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 .mode-switch {
   display: inline-flex;

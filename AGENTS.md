@@ -4,13 +4,6 @@
 
 长期事实以 `memory-bank/` 为准，不以闲聊记忆为准。`PRD.md` 仍保留；实现细节以 `memory-bank/design-document.md` 为准。
 
-## 写代码前
-
-1. 读完 `memory-bank/architecture.md`（若几乎为空，再读设计文档里的数据流）。  
-2. 读完 `memory-bank/design-document.md`。  
-3. 读 `memory-bank/tech-stack.md`。  
-4. 若已有 `memory-bank/implementation-plan.md` 与 `memory-bank/progress.md`：只做当前未验证的那一步，不要跳步。
-
 ## 技术硬约束（不要自行改栈）
 
 - 后端 FastAPI；前端 Vue 3 + TypeScript + Vite。  
@@ -23,7 +16,7 @@
 
 ## 范围
 
-只做当前计划步骤。P0 / P1.1–P1.4 已收口。**当前步骤 P2-Agent-4（Long-term Memory，代码已写待确认）。** P2-Agent-1～3 / P2-RAG-4 已确认。P2-DEBUG-1 与 AUTH-1 代码已落地。P2-RAG-3 待确认阈值。未在 `implementation-plan.md` 列出的功能不要做。改需求先改 `design-document.md`（及 `PRD.md` / `PRD-P2.md`）。
+只做当前计划步骤。P0 / P1.1–P1.4 / **P2（PRD-P2 §7）已收口。** **当前步骤 AGENT-SMART-SEARCH**（进行中）。KB-ENABLE 代码已验证、待提出人确认。P2-DEBUG-UI 待看 UI；DEBUG-1 / AUTH-1 代码已落地。未在 `implementation-plan.md` 列出的功能不要做。改需求先改 `design-document.md`（及 `PRD.md` / `PRD-P2.md`）。
 
 ## 文档维护
 
@@ -33,6 +26,4 @@
 
 ## 重要提示
 
-- 写任何代码前必须完整阅读 memory-bank/@architecture.md
-- 写任何代码前必须完整阅读 memory-bank/@design-document.md
 - 每完成一个重大功能或里程碑后，必须更新 memory-bank/@architecture.md

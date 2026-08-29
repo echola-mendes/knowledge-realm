@@ -133,7 +133,9 @@ pending → parsing → parsed → indexing → ready
 
 ### 4.2 切块
 
-LangChain 按标题切，过长再 **800 字符 / overlap 120**。表格尽量整块；FAQ 问句与随后段落绑定（启发式）。
+LangChain 按标题切，过长再按字符上限与 overlap 切。**默认** Chunk Size **800**、Overlap **120**。每用户可覆盖：表 `user_chunk_setting`（按 Session 用户）；无行则用默认。切块时按文档所属知识库的 `user_id` 读取配置。成功写入向量后，把**本次所用**的 size/overlap 记在 `document.chunk_size` / `document.chunk_overlap`。表格尽量整块；FAQ 问句与随后段落绑定（启发式）。
+
+**生效边界：** 改配置**不**自动全库 reindex，也**不**改写已有文档上的 `chunk_size` / `chunk_overlap`。只影响该用户之后的新导入、`process_document` / `index_document`、以及用户手动触发的单篇 `reindex`。已向量化切片保持不变，直到该文档被手动 reindex。
 
 ### 4.3 检索与问答
 
@@ -148,7 +150,9 @@ LangChain 按标题切，过长再 **800 字符 / overlap 120**。表格尽量�
   4. 筛选：现有库/标签/`kind`；P2 可加 `created_at` 时间窗。来源用现有 `kind`（`pdf|docx|md|txt|url|note`），不新造 upload/manual/web。  
 - **P2 Debug UI（演示页）：** 全站主导航为左侧栏。独立路由 `/debug` 可用演示数据；**不改** Chat/Agent/Report 返回体。  
 - **P2 Retrieval Debug（对话页旁路）：** 右上角 Debug 开关（`localStorage`）。不新增 Chat/Agent/Report 一级 Tab，不跳转新页。开则在对话页右侧抽屉展示一次 Query 的向量 / BM25 / RRF / Rerank / Final。`POST /api/retrieval-debug` 单独返回各阶段 Rank/Score；线上 `search_chunks` 与 Chat JSON 不变。可调参数只作用于该请求。Ground Truth 文档级、0–3 分，表 `retrieval_label`（含 `user_id`），评测只认 GT≥2，不算检索分。重新检索不重跑 LLM。  
-- 对话页仅在有引用时于气泡下方列出；超过 2 条先显示省略。 
+- 对话页引用展示（API 仍返回切片级 `citations`，前端聚合）：  
+  - 气泡「引用来源」按 `document_id` 去重，**只显示文档名、不显示分数**；超过 2 篇先省略。  
+  - 右侧「资料来源」按文档分组；组内展示本回答用到的切片正文；同文档多切片合并展示，相关切片链到 `/documents/:id/chunks`。  
 
 - 多轮：最近 **6 条** 消息给 LLM；**检索只用当前句**，不改写。  
 - 引用字段：`document_id`、`document_name`、`chunk_id`、`page_start`、`page_end`、`content`、`score`。无页码则页码为 null。  
@@ -204,7 +208,8 @@ P2-Agent-6          复杂问句可先写入 ≤3 条子任务；
 - DIRECT = 不调 Tool，走现有 generate  
 - RAG = `search_knowledge`（内部 `search_chunks`）  
 - WEB = `web_search`（httpx，禁止 Playwright；禁止 RAG 空结果强制 WEB）  
-- Agent-6 的 PLAN 不是第四张子图、不是动态 DAG、不是 Multi-Agent。子任务必须能在 3 圈内跑完，最后 generate 汇总。
+- Agent-6 的 PLAN 不是第四张子图、不是动态 DAG、禁止 Multi-Agent。子任务必须能在 3 圈内跑完，最后 generate 汇总。  
+- **智能搜索开关（对话页）：** 仅 Agent / Report 模式、输入框下方显示「智能搜索」。默认关闭。关闭时 `reason` 不得选 WEB、不得调用 `web_search`（仅 DIRECT / RAG）。开启时才允许 WEB。请求体字段 `allow_web`（bool）。Chat 模式无此开关、不调 `web_search`。
 
 ---
 
@@ -226,7 +231,7 @@ P2-Agent-6          复杂问句可先写入 ≤3 条子任务；
 
 **knowledge_base：** id, user_id FK CASCADE, name, is_default BOOL, is_enabled BOOL（默认真）, timestamps。UNIQUE(user_id, name)。每用户至多一个 is_default。  
 
-**document：** id, knowledge_base_id FK CASCADE, filename, ext, kind, source_url 可空, checksum, status, error_message, byte_size, summary 可空, timestamps。UNIQUE(knowledge_base_id, checksum) 对文件；笔记可无 checksum 或对正文哈希。  
+**document：** id, knowledge_base_id FK CASCADE, filename, ext, kind, source_url 可空, checksum, status, error_message, byte_size, summary 可空, chunk_size INT 可空, chunk_overlap INT 可空（最近一次成功索引所用参数；未成功索引则为 null）, timestamps。UNIQUE(knowledge_base_id, checksum) 对文件；笔记可无 checksum 或对正文哈希。  
 
 **document_chunk：** id, document_id FK CASCADE, chunk_index, content, page 可空, heading 可空, metadata JSONB, embedding vector(N)。HNSW cosine。  
 
@@ -250,6 +255,8 @@ P2-Agent-6          复杂问句可先写入 ≤3 条子任务；
 
 **P2 user_memory（LTM）：** 独立表，**不是** `document_chunk`。字段：id、**user_id**、kind、content TEXT、timestamps。禁止第二套知识库向量集合。读写由 reason 决定后调用内部函数或 Tool；细则在 LTM 那一步计划写死。  
 
+**P2 user_chunk_setting：** user_id PK/FK CASCADE → users.id，chunk_size INT NOT NULL，chunk_overlap INT NOT NULL，timestamps。无行 = 默认 800/120。应用层校验：chunk_size > 0、chunk_overlap ≥ 0、chunk_overlap < chunk_size。不写 `.env`；不改 `users` 表加列。  
+
 **P2 retrieval_label：** id, user_id FK CASCADE, query_norm, knowledge_base_id 可空 FK SET NULL, document_id FK CASCADE, relevance INT 0–3, timestamps。UNIQUE(user_id, query_norm, knowledge_base_id, document_id)。文档级标注。  
 
 不建：fragment_favorite、Neo4j、第二套 **向量** 表。P2 允许本机 Elasticsearch 仅作 BM25 关键词索引。  
@@ -271,6 +278,8 @@ P2-Agent-6          复杂问句可先写入 ≤3 条子任务；
 搜索：`POST /search`  
 
 Retrieval Debug：`POST /retrieval-debug`；`GET/PUT /retrieval-debug/labels`。不改变 Chat/Agent 响应字段。  
+
+切片配置（当前用户）：`GET /chunk-settings`、`PUT /chunk-settings`（body：`chunk_size`、`chunk_overlap`）。身份只来自 Session，禁止请求参数 `user_id`。设置页「调试」面板内、调试模式开启后可改并保存；与 `/debug` 页 localStorage 检索参数分离。`DocumentOut.chunk_size` / `chunk_overlap` 展示该文档**最近一次成功索引所用**参数（可空）；改用户设置不改已有文档这两字段。  
 
 Chat：`POST /chat`，`POST /chat/stream`，会话 CRUD  
 

@@ -12,6 +12,7 @@ const isLogin = computed(() => route.name === "login");
 const initial = computed(() => (me.value?.username?.trim().charAt(0) || "?").toUpperCase());
 
 const allLinks = [
+  { to: "/", label: "首页", icon: "home", match: "home" },
   { to: "/chat", label: "对话", icon: "chat", match: "chat" },
   { to: "/knowledge-bases", label: "知识库", icon: "db", match: "kbs" },
   { to: "/documents", label: "文档", icon: "doc", match: "docs" },
@@ -25,6 +26,7 @@ const links = computed(() => allLinks.filter((item) => item.match !== "debug" ||
 function navOn(match: string) {
   const p = route.path;
   const qMode = typeof route.query.mode === "string" ? route.query.mode : "";
+  if (match === "home") return p === "/";
   if (match === "chat") return p === "/chat" && qMode !== "report";
   if (match === "kbs") return p === "/knowledge-bases";
   if (match === "docs") return p === "/documents" || p.startsWith("/documents/");

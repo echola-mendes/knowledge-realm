@@ -162,7 +162,7 @@ watch(pageCount, (n) => {
               <th>字符数</th>
               <th>状态</th>
               <th>创建时间</th>
-              <th>操作</th>
+              <th class="ops">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -265,9 +265,14 @@ watch(pageCount, (n) => {
   font-weight: 500;
 }
 .ops {
+  text-align: left;
+  white-space: nowrap;
+  width: 1%;
+  vertical-align: middle;
+}
+td.ops {
   display: flex;
   gap: 0.35rem;
-  white-space: nowrap;
   align-items: center;
   justify-content: flex-start;
 }

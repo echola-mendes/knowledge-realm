@@ -75,6 +75,13 @@ function formatTime(raw?: string | null) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
+function formatSize(n: number) {
+  if (!n) return "0 B";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 async function addKb() {
   const n = createName.value.trim();
   if (!n || busy.value) return;
@@ -188,6 +195,8 @@ async function removeKb(kb: KnowledgeBase) {
               <th>序号</th>
               <th>知识库</th>
               <th>类型</th>
+              <th>文档数</th>
+              <th>大小</th>
               <th>创建时间</th>
               <th>开启</th>
               <th>操作</th>
@@ -203,6 +212,8 @@ async function removeKb(kb: KnowledgeBase) {
                 <strong v-else>{{ displayName(kb) }}</strong>
               </td>
               <td>{{ kbKind(kb) }}</td>
+              <td>{{ kb.document_count ?? 0 }}</td>
+              <td class="muted">{{ formatSize(kb.byte_size || 0) }}</td>
               <td class="muted">{{ formatTime(kb.created_at) }}</td>
               <td>
                 <label class="toggle">
@@ -227,7 +238,7 @@ async function removeKb(kb: KnowledgeBase) {
               </td>
             </tr>
             <tr v-if="!filteredRows.length">
-              <td colspan="6" class="empty">没有匹配的知识库</td>
+              <td colspan="8" class="empty">没有匹配的知识库</td>
             </tr>
           </tbody>
         </table>

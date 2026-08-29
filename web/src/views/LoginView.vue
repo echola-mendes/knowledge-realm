@@ -91,6 +91,20 @@ async function submit() {
           <p class="pitch">
             知域，帮助你高效管理知识、智能检索信息，让每一次提问都有价值的答案。
           </p>
+          <ul class="points">
+            <li>
+              <span class="pt-ico" aria-hidden="true"><Icon name="search" /></span>
+              多维度检索，答案标注引用来源
+            </li>
+            <li>
+              <span class="pt-ico" aria-hidden="true"><Icon name="chat" /></span>
+              Agent 任务协作，自动查库作答
+            </li>
+            <li>
+              <span class="pt-ico" aria-hidden="true"><Icon name="lock" /></span>
+              数据全部保存在本机，隐私可控
+            </li>
+          </ul>
           <img class="hero" src="/login-hero.jpg" alt="" width="640" height="640" />
         </section>
 
@@ -221,7 +235,7 @@ async function submit() {
   display: flex;
   align-items: center;
   gap: 0.7rem;
-  margin-bottom: 1.8rem;
+  margin-bottom: 1.4rem;
 }
 .mark {
   width: 2rem;
@@ -276,9 +290,38 @@ async function submit() {
   line-height: 1.7;
   color: #666;
 }
+.points {
+  list-style: none;
+  margin: 1.1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+.points li {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.82rem;
+  color: #475569;
+}
+.pt-ico {
+  width: 1.7rem;
+  height: 1.7rem;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #dbeafe;
+  color: #2d5cf7;
+}
+.pt-ico :deep(.ico) {
+  width: 0.95rem;
+  height: 0.95rem;
+}
 .hero {
   display: block;
-  width: min(16.5rem, 86%);
+  width: min(15rem, 80%);
   height: auto;
   margin: auto auto 0.25rem 0;
   pointer-events: none;
@@ -479,6 +522,9 @@ async function submit() {
   .hero {
     width: min(12rem, 55%);
     margin: 1rem auto 0.5rem;
+  }
+  .points {
+    margin-top: 1rem;
   }
   .form {
     order: -1;
