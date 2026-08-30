@@ -169,7 +169,10 @@ onUnmounted(() => {
               />
             </svg>
           </span>
-          <span class="chunk-ms-label">{{ c.chunk_label }}</span>
+          <span class="chunk-ms-item-main">
+            <span class="chunk-ms-label">{{ c.chunk_label }}</span>
+            <span v-if="c.content" class="chunk-ms-preview">{{ c.content }}</span>
+          </span>
         </li>
       </ul>
       <div class="chunk-ms-foot">
@@ -251,8 +254,13 @@ onUnmounted(() => {
   font-size: 0.68rem;
 }
 
-.chunk-ms-label {
+.chunk-ms-item .chunk-ms-label {
   font-family: ui-monospace, monospace;
+  font-weight: 400;
+  color: var(--text);
+}
+
+.chunk-ms-chip .chunk-ms-label {
   font-weight: 600;
   color: #1d4ed8;
 }
@@ -392,6 +400,24 @@ onUnmounted(() => {
 
 .chunk-ms-item.selected .chunk-ms-check {
   border-color: var(--teal);
+}
+
+.chunk-ms-item-main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.chunk-ms-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.7rem;
+  color: var(--muted);
 }
 
 .chunk-ms-empty {

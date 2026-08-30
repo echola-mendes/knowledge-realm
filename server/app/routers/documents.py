@@ -26,7 +26,7 @@ from app.schemas import (
     RelatedDocumentOut,
     UrlCreate,
 )
-from app.chunk import split_markdown
+from app.chunk import DEFAULT_CHUNK_SIZE, chunk_meta, quality_labels, split_markdown
 from app.chunk_settings import get_user_chunk_settings
 from app import index as index_mod
 from app.index import STATUS_INDEXING
@@ -111,6 +111,7 @@ def _chunks_for_document(doc: Document, session: Session) -> list[DocumentChunkO
         .order_by(DocumentChunk.chunk_index)
     ).all()
     if rows:
+        chunk_size = doc.chunk_size or DEFAULT_CHUNK_SIZE
         return [
             DocumentChunkOut(
                 id=c.id,
@@ -121,6 +122,8 @@ def _chunks_for_document(doc: Document, session: Session) -> list[DocumentChunkO
                 heading=c.heading,
                 vector_status="ready",
                 created_at=c.created_at,
+                quality_labels=quality_labels(c.content, chunk_size=chunk_size),
+                meta=chunk_meta(c.content, c.heading, c.page),
             )
             for c in rows
         ]
@@ -145,6 +148,8 @@ def _chunks_for_document(doc: Document, session: Session) -> list[DocumentChunkO
             page=piece.page,
             heading=piece.heading,
             vector_status=vector_status,
+            quality_labels=quality_labels(piece.content, chunk_size=chunk_cfg.chunk_size),
+            meta=chunk_meta(piece.content, piece.heading, piece.page),
         )
         for i, piece in enumerate(pieces)
     ]

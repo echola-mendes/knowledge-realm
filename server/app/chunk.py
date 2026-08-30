@@ -12,6 +12,46 @@ CHUNK_OVERLAP = DEFAULT_CHUNK_OVERLAP
 PAGE_RE = re.compile(r"Page\s+(\d+)", re.IGNORECASE)
 TABLE_RE = re.compile(r"(?:^\|[^\n]+\|(?:\n|$))+", re.MULTILINE)
 FAQ_Q_RE = re.compile(r"[?？]\s*$")
+HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)
+SHORT_CHUNK_CHARS = 50
+SENTENCE_END_RE = re.compile(r"[。！？.!?”』」）)\]]\s*$")
+TABLE_SEP_RE = re.compile(r"^\|[\s:|-]+\|\s*$", re.MULTILINE)
+
+
+def quality_labels(content: str, *, chunk_size: int = DEFAULT_CHUNK_SIZE) -> list[str]:
+    """Chunk 质量标签：正常 / 过短切片 / 超长切片 / 疑似断句 / 残缺表格。"""
+    text = content.strip()
+    if not text:
+        return ["过短切片"]
+    labels: list[str] = []
+    length = len(text)
+    if length < SHORT_CHUNK_CHARS:
+        labels.append("过短切片")
+    if length > chunk_size * 1.5:
+        labels.append("超长切片")
+    lines = [ln for ln in text.split("\n") if ln.lstrip().startswith("|")]
+    if lines and not TABLE_SEP_RE.search(text):
+        labels.append("残缺表格")
+    if length >= SHORT_CHUNK_CHARS and not SENTENCE_END_RE.search(text) and not lines:
+        labels.append("疑似断句")
+    return labels or ["正常"]
+
+
+def chunk_meta(content: str, heading: str | None, page: int | None) -> dict:
+    """切片元数据：标题层级 / 页码 / 特殊处理标记（表格保护、FAQ 合并）。"""
+    meta: dict = {"heading": heading, "page": page, "level": None, "table": False, "faq": False}
+    match = HEADING_RE.search(content)
+    if match:
+        meta["level"] = len(match.group(1))
+        meta["heading"] = match.group(2).strip()
+    elif heading:
+        meta["heading"] = heading
+    if TABLE_RE.search(content):
+        meta["table"] = True
+    non_empty = [ln for ln in content.split("\n") if ln.strip()]
+    if len(non_empty) >= 2 and FAQ_Q_RE.search(non_empty[0]) and not non_empty[1].lstrip().startswith("#"):
+        meta["faq"] = True
+    return meta
 
 
 @dataclass
