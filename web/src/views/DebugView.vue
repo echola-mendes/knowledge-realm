@@ -4,10 +4,15 @@ import ChunkMultiSelect from "../components/ChunkMultiSelect.vue";
 import {
   getMe,
   listDebugDatasetChunks,
+  listKnowledgeBases,
   listRetrievalLabels,
   putRetrievalLabel,
   runRetrievalDebug,
+  streamAgentTrace,
+  type AgentTraceEvent,
+  type AgentTraceStep,
   type DebugDatasetChunk,
+  type KnowledgeBase,
   type RetrievalDebugRow,
 } from "../api";
 
@@ -43,6 +48,14 @@ const gtQueryHint = computed(() => (query.value.trim() ? "" : "请先填写测�
 
 function optionLabel(chunkId: string) {
   return datasetChunks.value.find((c) => c.chunk_id === chunkId)?.chunk_label || chunkId.slice(0, 8);
+}
+
+function chunkLabelOf(chunkId: string) {
+  return datasetChunks.value.find((c) => c.chunk_id === chunkId)?.chunk_label || chunkId.slice(0, 8);
+}
+
+function chunkContentOf(chunkId: string) {
+  return datasetChunks.value.find((c) => c.chunk_id === chunkId)?.content || "";
 }
 
 async function loadDatasetChunks() {
@@ -112,7 +125,200 @@ const cands = ref<Cand[]>([]);
 const gtMap = ref<Record<string, number>>({});
 const formulaId = ref<string | null>(null);
 const hint = ref("");
-const lat = ref({ vector: 0, bm25: 0, rrf: 0, rerank: 0, total: 0 });
+const lat = ref({ plan: 0, vector: 0, bm25: 0, rrf: 0, rerank: 0, final: 0, total: 0 });
+const hits = ref({ vector: 0, bm25: 0, final: 0 });
+const hybridStatus = computed<"idle" | "running" | "done" | "error">(() => {
+  if (running.value) return "running";
+  if (ran.value) return "done";
+  if (hint.value && /失败|错误|Error|Exception/i.test(hint.value)) return "error";
+  return "idle";
+});
+const hybridStatusText = computed(() => {
+  const map = { idle: "未运行", running: "检索中…", done: "检索完成", error: "失败" } as const;
+  return map[hybridStatus.value];
+});
+const primaryEvalK = computed(() => evalKs.value[0] ?? 5);
+
+const activeTab = ref<"trace" | "hybrid">("trace");
+
+// ---- Agent 执行轨迹（AGENT-TRACE）----
+const traceQuery = ref("");
+const traceKbId = ref("");
+const traceAllowWeb = ref(false);
+const traceRunning = ref(false);
+const traceSteps = ref<AgentTraceStep[]>([]);
+const traceFinal = ref<{ answer: string; citations: { document_name: string; score: number }[]; loop_count: number } | null>(null);
+const traceError = ref("");
+const knowledgeBases = ref<KnowledgeBase[]>([]);
+const traceStatus = ref<"idle" | "running" | "done" | "error">("idle");
+const traceTab = ref<"result" | "chain" | "tools" | "model" | "json">("result");
+const traceEvents = ref<AgentTraceEvent[]>([]);
+
+const TRACE_SCENARIOS: { category: string; note: string; items: { title: string; expect: string; question: string }[] }[] = [
+  {
+    category: "知识库问答",
+    note: "验证知识库检索与引用来源。",
+    items: [
+      {
+        title: "会议室预约需要提前多久申请？",
+        expect: "预期：命中知识库并以引用来源标注出处。",
+        question: "会议室预约需要提前多久申请？",
+      },
+      {
+        title: "帮我总结员工考勤制度里关于请假和加班的规定",
+        expect: "预期：多片段综合，回答覆盖请假与加班两部分。",
+        question: "帮我总结员工考勤制度里关于请假和加班的规定",
+      },
+    ],
+  },
+  {
+    category: "知识边界",
+    note: "验证无真实数据源时不编造事实。",
+    items: [
+      {
+        title: "我们公司的年假能累计到明年吗？具体有效期多久？",
+        expect: "预期：知识库没有的规定应明确说明查不到，不编造。",
+        question: "我们公司的年假能累计到明年吗？具体有效期多久？",
+      },
+    ],
+  },
+  {
+    category: "上下文理解",
+    note: "验证直接生成路径（不调用 Tool）。",
+    items: [
+      {
+        title: "你好",
+        expect: "预期：reason 选 DIRECT，0 次工具调用直接回答。",
+        question: "你好",
+      },
+    ],
+  },
+  {
+    category: "复合推理",
+    note: "验证子任务拆分与多轮检索。",
+    items: [
+      {
+        title: "对比一下会议室使用规范和请假流程里对提前申请的要求",
+        expect: "预期：reason 拆分子任务，多轮 RAG 后汇总对比。",
+        question: "对比一下会议室使用规范和请假流程里对提前申请的要求",
+      },
+    ],
+  },
+];
+const traceScenarioTab = ref(0);
+const activeScenario = computed(() => TRACE_SCENARIOS[traceScenarioTab.value]);
+
+const traceToolSteps = computed(() => traceSteps.value.filter((s) => s.node === "run_tool"));
+const traceModelCalls = computed(() => traceSteps.value.filter((s) => s.node === "reason" || s.node === "generate").length);
+const traceTotalMs = computed(() => traceSteps.value.reduce((sum, s) => sum + (s.elapsed_ms || 0), 0));
+const traceStatusText = computed(() => {
+  if (traceStatus.value === "running") return "RUNNING";
+  if (traceStatus.value === "error") return "ERROR";
+  if (traceStatus.value === "done") return "DONE";
+  return "IDLE";
+});
+const traceStopReason = computed(() => {
+  if (traceStatus.value === "running") return "—";
+  if (traceStatus.value === "error") return traceError.value || "执行异常";
+  if (traceFinal.value) return `正常结束 · ${traceFinal.value.loop_count} 轮工具调用`;
+  return "—";
+});
+const traceDelayBars = computed(() => {
+  const total = traceTotalMs.value;
+  return traceSteps.value.map((s) => ({
+    label: traceStepTitle(s),
+    ms: s.elapsed_ms || 0,
+    pct: total ? Math.round(((s.elapsed_ms || 0) / total) * 100) : 0,
+  }));
+});
+const traceTips = computed(() => {
+  const tips: string[] = [];
+  if (traceStatus.value === "idle") return ["输入问题并点击「运行测试」查看执行链。"];
+  if (traceStatus.value === "running") return ["执行中，每完成一个节点会实时追加。"];
+  const bars = traceDelayBars.value.slice().sort((a, b) => b.ms - a.ms);
+  if (bars.length && bars[0].ms > 0) {
+    tips.push(`主要延迟来自「${bars[0].label}」（${bars[0].pct}%）；如果需要优化，优先检查该阶段。`);
+  }
+  if (traceFinal.value && !traceFinal.value.citations.length) {
+    tips.push("本轮没有引用来源：可能 reason 选择了直接生成，或知识库未命中（可在 Hybrid Search 页检查检索得分）。");
+  }
+  if (traceFinal.value) {
+    tips.push(`Agent 正常结束，共 ${traceModelCalls.value} 次模型调用、${traceToolSteps.value.length} 次工具调用。`);
+  }
+  return tips;
+});
+const traceRawJson = computed(() => JSON.stringify(traceEvents.value, null, 2));
+
+function applyScenario(question: string) {
+  traceQuery.value = question;
+}
+
+function copyRawJson() {
+  navigator.clipboard?.writeText(traceRawJson.value).catch(() => undefined);
+}
+
+function copyAnswer() {
+  if (traceFinal.value) navigator.clipboard?.writeText(traceFinal.value.answer).catch(() => undefined);
+}
+
+async function loadKnowledgeBases() {
+  try {
+    knowledgeBases.value = await listKnowledgeBases();
+    if (!traceKbId.value) {
+      traceKbId.value = knowledgeBases.value[0]?.id || "";
+    }
+  } catch (e) {
+    traceError.value = String(e);
+  }
+}
+
+function traceStepTitle(step: AgentTraceStep) {
+  if (step.node === "reason") {
+    const action = step.action === "search" ? "RAG 检索" : step.action === "web" ? "WEB 联网" : "直接生成";
+    return `reason → ${action}`;
+  }
+  if (step.node === "run_tool") return `工具 ${step.tool || ""} · 命中 ${step.hits ?? 0} 条`;
+  if (step.node === "generate") return `生成回答（${step.answer_len ?? 0} 字）`;
+  return step.node;
+}
+
+async function runTrace() {
+  const q = traceQuery.value.trim();
+  if (!q) {
+    traceError.value = "请输入测试问题";
+    return;
+  }
+  traceRunning.value = true;
+  traceStatus.value = "running";
+  traceError.value = "";
+  traceSteps.value = [];
+  traceEvents.value = [];
+  traceFinal.value = null;
+  try {
+    await streamAgentTrace(
+      {
+        query: q,
+        knowledge_base_id: traceKbId.value || undefined,
+        task: "agent",
+        allow_web: traceAllowWeb.value,
+      },
+      (event: AgentTraceEvent) => {
+        traceEvents.value.push(event);
+        if (event.type === "step") traceSteps.value.push(event);
+        else {
+          traceFinal.value = { answer: event.answer, citations: event.citations, loop_count: event.loop_count };
+          traceStatus.value = "done";
+        }
+      },
+    );
+    if (traceStatus.value === "running") traceStatus.value = "error";
+  } catch (e) {
+    traceError.value = e instanceof Error ? e.message : String(e);
+    traceStatus.value = "error";
+  } finally {
+    traceRunning.value = false;
+  }
+}
 
 function gtOf(id: string) {
   return gtMap.value[id] ?? 0;
@@ -199,7 +405,21 @@ async function run() {
     searchQuery.value = body.search_query || q;
     nextAction.value = body.next_action === "generate" ? "generate" : "search";
     rerankModel.value = body.rerank.model || rerankModel.value;
-    lat.value = { vector: 0, bm25: 0, rrf: 0, rerank: 0, total: ms };
+    const tm = body.timings;
+    lat.value = {
+      plan: tm?.plan_ms ?? 0,
+      vector: (tm?.embed_ms ?? 0) + (tm?.vector_ms ?? 0),
+      bm25: tm?.bm25_ms ?? 0,
+      rrf: tm?.rrf_ms ?? 0,
+      rerank: tm?.rerank_ms ?? 0,
+      final: tm?.final_ms ?? 0,
+      total: ms,
+    };
+    hits.value = {
+      vector: body.vector.actual_count ?? 0,
+      bm25: body.bm25.actual_count ?? 0,
+      final: body.final.length,
+    };
     ran.value = true;
     formulaId.value = null;
     const sqNote =
@@ -250,7 +470,6 @@ function save() {
       evalKs: evalKs.value,
     }),
   );
-  hint.value = "配置已写入本机 localStorage。";
 }
 
 function load() {
@@ -405,6 +624,7 @@ onMounted(() => {
   loadDatasetChunks().catch((e) => {
     hint.value = String(e);
   });
+  loadKnowledgeBases();
   getMe()
     .then((row) => {
       userTag.value = row.username;
@@ -421,28 +641,234 @@ onMounted(() => {
         <h1>调试模式</h1>
         <p class="sub">检索已开启的知识库。分数体系不同，勿横向比较大小。</p>
       </div>
-      <div class="head-actions">
-        <button class="btn" type="button" @click="save">保存配置</button>
-        <button class="btn" type="button" @click="load">加载配置</button>
-        <button class="btn" type="button" @click="reset">重置</button>
-        <button class="btn btn-primary" type="button" :disabled="running" @click="run">
-          {{ running ? "检索中…" : "运行 Evaluation" }}
-        </button>
-      </div>
     </div>
 
-    <p v-if="hint" class="hint">{{ hint }}</p>
+    <div class="debug-tabs">
+      <button type="button" class="debug-tab" :class="{ on: activeTab === 'trace' }" @click="activeTab = 'trace'">
+        Agent Trace
+      </button>
+      <button type="button" class="debug-tab" :class="{ on: activeTab === 'hybrid' }" @click="activeTab = 'hybrid'">
+        Hybrid Search
+      </button>
+    </div>
 
-    <section class="top-grid">
+    <section v-show="activeTab === 'trace'" class="trace-wrap">
+      <div class="trace-stats">
+        <div class="stat-card">
+          <p class="stat-label">运行状态</p>
+          <p class="stat-value" :class="traceStatus">{{ traceStatusText }}</p>
+        </div>
+        <div class="stat-card">
+          <p class="stat-label">终止原因</p>
+          <p class="stat-value small">{{ traceStopReason }}</p>
+        </div>
+        <div class="stat-card">
+          <p class="stat-label">总 Token</p>
+          <p class="stat-value">—</p>
+        </div>
+        <div class="stat-card">
+          <p class="stat-label">总耗时</p>
+          <p class="stat-value">{{ traceTotalMs }} ms</p>
+        </div>
+      </div>
+
+      <section class="card pad trace-panel">
+        <div class="trace-cols">
+          <div class="trace-left">
+            <h2 class="trace-sec-title">请求</h2>
+            <p class="tiny">旁路运行 Agent 图，逐节点记录执行链。不影响真实会话。</p>
+            <label class="trace-field-label">知识库</label>
+            <select v-model="traceKbId" class="trace-kb">
+              <option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
+                {{ kb.name }}{{ kb.is_default ? "（默认）" : "" }}
+              </option>
+            </select>
+            <div class="trace-scenarios">
+              <p class="trace-field-label">快速场景</p>
+              <div class="scenario-tabs">
+                <button
+                  v-for="(sc, i) in TRACE_SCENARIOS"
+                  :key="sc.category"
+                  type="button"
+                  class="scenario-tab"
+                  :class="{ on: traceScenarioTab === i }"
+                  @click="traceScenarioTab = i"
+                >
+                  {{ sc.category }}
+                </button>
+              </div>
+              <p class="tiny">{{ activeScenario.note }}</p>
+              <button
+                v-for="item in activeScenario.items"
+                :key="item.title"
+                type="button"
+                class="scenario-card"
+                @click="applyScenario(item.question)"
+              >
+                <strong>{{ item.title }}</strong>
+                <span>{{ item.expect }}</span>
+              </button>
+            </div>
+            <label class="trace-field-label">消息</label>
+            <textarea
+              v-model="traceQuery"
+              rows="6"
+              placeholder="输入测试问题，例如：会议室预约需要提前多久申请？"
+              @keydown.ctrl.enter="runTrace"
+              @keydown.meta.enter="runTrace"
+            />
+            <label class="trace-web">
+              <input v-model="traceAllowWeb" type="checkbox" />
+              智能搜索（允许联网）
+            </label>
+            <button class="btn btn-primary trace-run" type="button" :disabled="traceRunning" @click="runTrace">
+              {{ traceRunning ? "运行中…" : "▶ 运行测试" }}
+            </button>
+          </div>
+
+          <div class="trace-right">
+            <div class="trace-right-head">
+              <h2 class="trace-sec-title">响应</h2>
+              <span class="status-badge" :class="traceStatus">{{ traceStatusText }}</span>
+            </div>
+            <p v-if="traceError" class="hint">{{ traceError }}</p>
+            <div class="trace-subtabs">
+              <button type="button" :class="{ on: traceTab === 'result' }" @click="traceTab = 'result'">结果与诊断</button>
+              <button type="button" :class="{ on: traceTab === 'chain' }" @click="traceTab = 'chain'">执行链 {{ traceSteps.length }}</button>
+              <button type="button" :class="{ on: traceTab === 'tools' }" @click="traceTab = 'tools'">Tool 与证据 {{ traceToolSteps.length }}</button>
+              <button type="button" :class="{ on: traceTab === 'model' }" @click="traceTab = 'model'">模型调用 {{ traceModelCalls }}</button>
+              <button type="button" :class="{ on: traceTab === 'json' }" @click="traceTab = 'json'">原始 JSON</button>
+            </div>
+
+            <div v-show="traceTab === 'result'" class="trace-result-grid">
+              <div class="trace-answer-card">
+                <div class="trace-answer-head">
+                  <h3>最终回复</h3>
+                  <button v-if="traceFinal" class="linkish" type="button" @click="copyAnswer">
+                    复制回复
+                  </button>
+                </div>
+                <p v-if="traceFinal" class="trace-answer-text">{{ traceFinal.answer }}</p>
+                <p v-else-if="traceRunning" class="tiny">生成中…</p>
+                <p v-else class="tiny">运行后在这里显示最终回复。</p>
+              </div>
+              <div class="trace-delay-card">
+                <div class="trace-delay-head">
+                  <h3>延迟归因</h3>
+                  <span class="tiny">总耗时 {{ traceTotalMs }} ms</span>
+                </div>
+                <div v-for="bar in traceDelayBars" :key="bar.label + bar.ms" class="delay-row">
+                  <p class="delay-label">
+                    <span>{{ bar.label }}</span>
+                    <span>{{ bar.ms }} ms · {{ bar.pct }}%</span>
+                  </p>
+                  <div class="delay-bar"><i :style="{ width: bar.pct + '%' }" /></div>
+                </div>
+                <p v-if="!traceSteps.length" class="tiny">暂无数据。</p>
+              </div>
+              <div class="trace-tips">
+                <div class="trace-tips-head">
+                  <h3>问题定位提示</h3>
+                  <span class="tiny">先看结论，再进入执行链验证</span>
+                </div>
+                <p v-for="(tip, i) in traceTips" :key="i">{{ tip }}</p>
+              </div>
+            </div>
+
+            <ol v-show="traceTab === 'chain'" class="trace-steps">
+              <li v-for="(step, i) in traceSteps" :key="i" class="trace-step">
+                <span class="trace-idx">{{ i + 1 }}</span>
+                <div class="trace-body">
+                  <p class="trace-title">
+                    {{ traceStepTitle(step) }}
+                    <span class="trace-ms">{{ step.elapsed_ms }}ms</span>
+                  </p>
+                  <p v-if="step.query" class="trace-detail">query：{{ step.query }}</p>
+                  <p v-if="step.subtasks?.length" class="trace-detail">子任务：{{ step.subtasks.join(" / ") }}</p>
+                </div>
+              </li>
+            </ol>
+            <p v-show="traceTab === 'chain' && !traceSteps.length" class="tiny">运行后逐步显示执行链。</p>
+
+            <div v-show="traceTab === 'tools'" class="trace-tools">
+              <div v-for="(step, i) in traceToolSteps" :key="i" class="trace-step">
+                <div class="trace-body">
+                  <p class="trace-title">{{ step.tool }} · 命中 {{ step.hits ?? 0 }} 条 <span class="trace-ms">{{ step.elapsed_ms }}ms</span></p>
+                  <p class="trace-detail">query：{{ step.query }}</p>
+                </div>
+              </div>
+              <p v-if="!traceToolSteps.length" class="tiny">本轮未调用 Tool；若问题需要知识库数据，请检查知识库选择或 reason 决策（执行链 Tab）。</p>
+              <div v-if="traceFinal?.citations.length" class="trace-cites">
+                <h3>证据（引用来源）</h3>
+                <p v-for="(c, i) in traceFinal.citations" :key="i" class="trace-detail">
+                  [{{ i + 1 }}] {{ c.document_name }} · score {{ c.score.toFixed(3) }}
+                </p>
+              </div>
+            </div>
+
+            <div v-show="traceTab === 'model'" class="trace-model">
+              <table v-if="traceModelCalls" class="trace-table">
+                <thead>
+                  <tr><th>#</th><th>节点</th><th>说明</th><th>耗时</th></tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(step, i) in traceSteps.filter((s) => s.node === 'reason' || s.node === 'generate')" :key="i">
+                    <td>{{ i + 1 }}</td>
+                    <td>{{ step.node }}</td>
+                    <td>{{ traceStepTitle(step) }}</td>
+                    <td>{{ step.elapsed_ms }} ms</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p v-else class="tiny">运行后显示模型调用明细（reason / generate 各计一次）。</p>
+            </div>
+
+            <div v-show="traceTab === 'json'" class="trace-json">
+              <button class="btn" type="button" @click="copyRawJson">复制调试响应 JSON</button>
+              <pre>{{ traceEvents.length ? traceRawJson : "运行后显示原始事件。" }}</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <div v-show="activeTab === 'hybrid'">
+      <div class="trace-stats">
+        <div class="stat-card">
+          <p class="stat-label">检索状态</p>
+          <p class="stat-value small" :class="hybridStatus">{{ hybridStatusText }}</p>
+        </div>
+        <div class="stat-card">
+          <p class="stat-label">总耗时</p>
+          <p class="stat-value">{{ ran ? lat.total : "—" }}<span v-if="ran" class="stat-unit"> ms</span></p>
+        </div>
+        <div class="stat-card">
+          <p class="stat-label">命中漏斗</p>
+          <p class="stat-value small funnel">
+            向量 {{ ran ? hits.vector : "—" }} · BM25 {{ ran ? hits.bm25 : "—" }} · Final {{ ran ? hits.final : "—" }}
+          </p>
+          <p class="stat-sub">召回 → 最终送入 LLM</p>
+        </div>
+        <div class="stat-card">
+          <p class="stat-label">Recall@{{ primaryEvalK }} / MRR@{{ primaryEvalK }}</p>
+          <p class="stat-value">{{ recallAt(primaryEvalK) }}<span class="stat-unit"> / {{ mrrAt(primaryEvalK) }}</span></p>
+          <p class="stat-sub">基于 GT 标注；未标注时为 —</p>
+        </div>
+      </div>
+      <p v-if="hint && /失败|错误|Error|未配置/i.test(hint)" class="hint">{{ hint }}</p>
+      <section class="top-grid">
       <div class="card pad">
         <label>Test Query</label>
         <p class="tiny">模拟 Agent 输入；运行后先经 reason 生成 search_query，再对该词做向量化与混合检索。</p>
         <textarea v-model="query" rows="3" placeholder="例如：帮我查一下那个代号" />
-        <p v-if="ran && searchQuery" class="tiny sq">
-          search_query：{{ searchQuery }}
-          <span v-if="searchQuery !== query.trim()">（已改写）</span>
-        </p>
-        <p v-if="ran && nextAction === 'generate'" class="tiny warn">Agent reason：不检索</p>
+        <div class="hybrid-actions">
+          <button class="btn" type="button" @click="save">保存</button>
+          <button class="btn" type="button" @click="load">加载</button>
+          <button class="btn" type="button" @click="reset">重置</button>
+          <button class="btn btn-primary" type="button" :disabled="running" @click="run">
+            {{ running ? "检索中…" : "运行" }}
+          </button>
+        </div>
       </div>
       <div class="card pad gt-card">
         <label id="gt-chunk-label">数据集 / Ground Truth</label>
@@ -536,7 +962,7 @@ onMounted(() => {
     <section class="card pad pipe">
       <div class="pipe-head">
         <h2>Pipeline Trace</h2>
-        <div class="pipe-actions">
+        <div v-if="ran" class="pipe-actions">
           <label class="toggle">
             <span>显示详情</span>
             <input v-model="showDetails" type="checkbox" role="switch" />
@@ -560,37 +986,37 @@ onMounted(() => {
         <div class="pipe-node query">
           <h3>Query</h3>
           <p class="pipe-q">{{ query || "—" }}</p>
-          <p class="pipe-stat">整次 {{ ran ? lat.total : "—" }}ms</p>
+          <p class="pipe-stat">整次 {{ ran ? lat.total : "—" }}ms<span v-if="ran"> · 改写 {{ lat.plan }}ms</span></p>
         </div>
         <span class="pipe-arrow" aria-hidden="true">→</span>
         <div class="pipe-node vector">
           <h3>Vector Search</h3>
           <p>召回 {{ ran ? vectorRows.length : k }} 条</p>
-          <p class="pipe-stat">pgvector</p>
+          <p class="pipe-stat">pgvector<span v-if="ran"> · {{ lat.vector }}ms</span></p>
         </div>
         <span class="pipe-arrow" aria-hidden="true">→</span>
         <div class="pipe-node bm25">
           <h3>BM25 Search</h3>
           <p>召回 {{ ran ? bm25Rows.length : bm25K }} 条</p>
-          <p class="pipe-stat">Elasticsearch</p>
+          <p class="pipe-stat">Elasticsearch<span v-if="ran"> · {{ lat.bm25 }}ms</span></p>
         </div>
         <span class="pipe-arrow" aria-hidden="true">→</span>
         <div class="pipe-node rrf">
           <h3>RRF Fusion</h3>
           <p>融合后 {{ ran ? rrfRows.length : n }} 条</p>
-          <p class="pipe-stat">应用层</p>
+          <p class="pipe-stat">应用层<span v-if="ran"> · {{ lat.rrf }}ms</span></p>
         </div>
         <span class="pipe-arrow" aria-hidden="true">→</span>
         <div class="pipe-node rerank">
           <h3>Rerank</h3>
           <p>精排后 {{ ran ? rerankRows.length : m }} 条</p>
-          <p class="pipe-stat">{{ rerankModel || "模型见配置" }}</p>
+          <p class="pipe-stat">{{ rerankModel || "模型见配置" }}<span v-if="ran"> · {{ lat.rerank }}ms</span></p>
         </div>
         <span class="pipe-arrow" aria-hidden="true">→</span>
         <div class="pipe-node final">
           <h3>Final Context</h3>
           <p>送入 LLM {{ ran ? finalRows.length : m }} 条</p>
-          <p class="pipe-stat">相关过滤后</p>
+          <p class="pipe-stat">相关过滤后<span v-if="ran"> · {{ lat.final }}ms</span></p>
         </div>
       </div>
     </section>
@@ -605,7 +1031,7 @@ onMounted(() => {
               <tr>
                 <th>Vector Rank</th>
                 <th>Similarity</th>
-                <th>Document ID</th>
+                <th>Chunk</th>
                 <th>Title</th>
               </tr>
             </thead>
@@ -613,7 +1039,7 @@ onMounted(() => {
               <tr v-for="c in vectorRows" :key="c.chunkId">
                 <td>{{ c.vectorRank }}</td>
                 <td>{{ c.vectorScore?.toFixed(3) }}</td>
-                <td>{{ c.documentId }}</td>
+                <td class="chunk-cell"><span class="chunk-code">{{ chunkLabelOf(c.chunkId) }}</span><span class="chunk-content">{{ chunkContentOf(c.chunkId) }}</span></td>
                 <td>{{ c.title }}</td>
               </tr>
             </tbody>
@@ -629,7 +1055,7 @@ onMounted(() => {
               <tr>
                 <th>BM25 Rank</th>
                 <th>BM25 Score</th>
-                <th>Document ID</th>
+                <th>Chunk</th>
                 <th>Title</th>
               </tr>
             </thead>
@@ -637,7 +1063,7 @@ onMounted(() => {
               <tr v-for="c in bm25Rows" :key="c.chunkId">
                 <td>{{ c.bm25Rank }}</td>
                 <td>{{ c.bm25Score?.toFixed(2) }}</td>
-                <td>{{ c.documentId }}</td>
+                <td class="chunk-cell"><span class="chunk-code">{{ chunkLabelOf(c.chunkId) }}</span><span class="chunk-content">{{ chunkContentOf(c.chunkId) }}</span></td>
                 <td>{{ c.title }}</td>
               </tr>
             </tbody>
@@ -655,7 +1081,7 @@ onMounted(() => {
                 <th>RRF Score</th>
                 <th>Vector Rank</th>
                 <th>BM25 Rank</th>
-                <th>Document ID</th>
+                <th>Chunk</th>
                 <th>Title</th>
               </tr>
             </thead>
@@ -671,7 +1097,7 @@ onMounted(() => {
                 <td>{{ c.rrfScore?.toFixed(4) }}</td>
                 <td>{{ c.vectorRank ?? "—" }}</td>
                 <td>{{ c.bm25Rank ?? "—" }}</td>
-                <td>{{ c.documentId }}</td>
+                <td class="chunk-cell"><span class="chunk-code">{{ chunkLabelOf(c.chunkId) }}</span><span class="chunk-content">{{ chunkContentOf(c.chunkId) }}</span></td>
                 <td>{{ c.title }}</td>
               </tr>
             </tbody>
@@ -688,7 +1114,7 @@ onMounted(() => {
               <tr>
                 <th>Rerank Rank</th>
                 <th>Rerank Score</th>
-                <th>Document ID</th>
+                <th>Chunk</th>
                 <th>Title</th>
               </tr>
             </thead>
@@ -696,7 +1122,7 @@ onMounted(() => {
               <tr v-for="c in rerankRows" :key="c.chunkId">
                 <td>{{ c.rerankRank }}</td>
                 <td>{{ c.rerankScore?.toFixed(3) }}</td>
-                <td>{{ c.documentId }}</td>
+                <td class="chunk-cell"><span class="chunk-code">{{ chunkLabelOf(c.chunkId) }}</span><span class="chunk-content">{{ chunkContentOf(c.chunkId) }}</span></td>
                 <td>{{ c.title }}</td>
               </tr>
             </tbody>
@@ -798,17 +1224,7 @@ onMounted(() => {
         <p class="tiny">Ground Truth 命中位置分布（本次查询）：{{ gtHits.length }}</p>
       </div>
     </section>
-
-    <section class="card pad gt-foot">
-      <h2>Ground Truth（本次查询）</h2>
-      <p v-if="!gtHits.length" class="tiny">在上方多选标准切片，或在结果表 GT 列标注 2/3。</p>
-      <ul>
-        <li v-for="c in gtHits" :key="c.chunk_id">
-          <strong>{{ c.chunk_label }}</strong>
-          <span>{{ c.knowledge_base_name }} · {{ c.document_name }}</span>
-        </li>
-      </ul>
-    </section>
+    </div>
     </div>
   </main>
 </template>
@@ -1240,14 +1656,45 @@ td {
   font-family: ui-monospace, monospace;
   font-size: 0.82rem;
 }
-.gt-foot ul {
+.gt-inline {
+  margin-top: 0.6rem;
+  padding-top: 0.55rem;
+  border-top: 1px dashed var(--line);
+}
+.gt-inline h3 {
+  margin: 0 0 0.3rem;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+.gt-inline ul {
   margin: 0;
   padding-left: 1.1rem;
 }
-.gt-foot span {
+.gt-inline li {
+  font-size: 0.8rem;
+}
+.gt-inline span {
   margin-left: 0.5rem;
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
+}
+.chunk-cell {
+  max-width: 16rem;
+}
+.chunk-cell .chunk-code {
+  display: block;
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  color: var(--text);
+}
+.chunk-cell .chunk-content {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 15rem;
+  font-size: 0.72rem;
+  color: var(--muted);
 }
 @media (max-width: 720px) {
   .bottom-grid,
@@ -1258,6 +1705,454 @@ td {
 @media (max-width: 560px) {
   .top-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+.trace-wrap {
+  margin-bottom: 1rem;
+}
+.trace-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+}
+.stat-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 0.8rem 1rem;
+}
+.stat-label {
+  margin: 0 0 0.3rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.stat-value {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.stat-value.small {
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.stat-value.running {
+  color: var(--teal);
+}
+.stat-value.error {
+  color: var(--danger);
+}
+.stat-value.done {
+  color: #15803d;
+}
+.stat-unit {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+.stat-sub {
+  margin: 0.2rem 0 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.stat-value.funnel {
+  font-size: 0.95rem;
+}
+.trace-panel {
+  padding: 1rem 1.15rem;
+}
+.trace-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+  gap: 1.5rem;
+}
+.trace-sec-title {
+  margin: 0 0 0.3rem;
+  font-size: 1rem;
+  color: var(--text);
+}
+.trace-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.trace-field-label {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.trace-left textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.55rem 0.65rem;
+  font: inherit;
+  font-size: 0.88rem;
+  background: #fff;
+  color: var(--text);
+  resize: vertical;
+}
+.trace-left textarea:focus-visible,
+.trace-kb:focus-visible {
+  outline: none;
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px var(--teal-soft);
+}
+.trace-kb {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.45rem 0.5rem;
+  font: inherit;
+  font-size: 0.85rem;
+  background: #fff;
+  color: var(--text);
+}
+.trace-web {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.trace-scenarios {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.3rem;
+}
+.scenario-tabs {
+  display: flex;
+  gap: 0.9rem;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  margin-bottom: 0.2rem;
+}
+.scenario-tab {
+  border: none;
+  background: none;
+  padding: 0.4rem 0;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+.scenario-tab.on {
+  color: var(--teal);
+  font-weight: 600;
+  border-bottom-color: var(--teal);
+}
+.scenario-card {
+  text-align: left;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font: inherit;
+}
+.scenario-card:hover {
+  border-color: var(--teal);
+}
+.scenario-card strong {
+  font-size: 0.82rem;
+  color: var(--text);
+}
+.scenario-card span {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.trace-run {
+  margin-top: 0.5rem;
+  align-self: flex-start;
+}
+.trace-right {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.trace-right-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.status-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.status-badge.running {
+  color: var(--teal);
+  border-color: var(--teal);
+}
+.status-badge.done {
+  color: #15803d;
+  border-color: #86efac;
+}
+.status-badge.error {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.trace-subtabs {
+  display: flex;
+  gap: 1rem;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+.trace-subtabs button {
+  border: none;
+  background: none;
+  padding: 0.45rem 0;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+.trace-subtabs button.on {
+  color: var(--teal);
+  font-weight: 600;
+  border-bottom-color: var(--teal);
+}
+.trace-result-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 0.9rem;
+}
+.trace-answer-card,
+.trace-delay-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  background: #fff;
+  min-height: 12rem;
+}
+.trace-answer-head,
+.trace-delay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+.trace-answer-head h3,
+.trace-delay-head h3,
+.trace-tips h3,
+.trace-cites h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+.trace-answer-text {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+.delay-row {
+  margin-bottom: 0.65rem;
+}
+.delay-label {
+  margin: 0 0 0.25rem;
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--text);
+}
+.delay-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--teal-soft);
+  overflow: hidden;
+}
+.delay-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--teal);
+}
+.trace-tips {
+  grid-column: 1 / -1;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+}
+.trace-tips-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+.trace-tips p {
+  margin: 0.25rem 0;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+.trace-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.debug-tabs {
+  display: flex;
+  gap: 0.3rem;
+  margin-bottom: 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+.debug-tab {
+  border: none;
+  background: none;
+  padding: 0.5rem 0.9rem;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.debug-tab:hover {
+  color: var(--text);
+}
+.debug-tab.on {
+  color: var(--teal);
+  font-weight: 600;
+  border-bottom-color: var(--teal);
+}
+.hybrid-actions {
+  display: flex;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  gap: 0.4rem;
+  margin: 0.6rem 0 0;
+}
+.hybrid-actions .btn {
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+.trace-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.trace-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+.trace-idx {
+  flex-shrink: 0;
+  width: 1.4rem;
+  height: 1.4rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--teal-soft);
+  color: var(--teal);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.trace-body {
+  min-width: 0;
+}
+.trace-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.trace-ms {
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+.trace-detail {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+.trace-tools,
+.trace-model,
+.trace-json {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.trace-cites {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--line);
+}
+.trace-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.trace-table th,
+.trace-table td {
+  text-align: left;
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+}
+.trace-table th {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+.trace-json pre {
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  overflow: auto;
+  max-height: 26rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+}
+@media (max-width: 900px) {
+  .trace-cols,
+  .trace-result-grid {
+    grid-template-columns: 1fr;
+  }
+  .trace-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

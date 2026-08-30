@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -153,6 +154,79 @@ async def agent_stream(
                 return
             yield f"data: {json.dumps({'type': 'token', 'text': char}, ensure_ascii=False)}\n\n"
         payload = {"type": "citations", **result.model_dump(mode="json")}
+        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
+@router.post("/agent/trace")
+async def agent_trace(
+    body: AgentRequest, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    """旁路调试：逐节点推送 Agent 图执行轨迹。不落库，不影响 /api/agent 与 /api/agent/stream。"""
+    if body.task not in ("agent", "report"):
+        raise HTTPException(status_code=400, detail="task 须为 agent 或 report")
+    if not llm_keys_ready():
+        raise HTTPException(status_code=503, detail="未配置 LLM API Key")
+    try:
+        kb_id = resolve_knowledge_base_id(session, body.knowledge_base_id, user.id)
+    except KnowledgeBaseAccessError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    task = "report" if body.task == "report" else "agent"
+    state = initial_state(
+        body.query,
+        knowledge_base_id=kb_id,
+        task=task,
+        history=[],
+        summary="",
+        ltm_hits=load_ltm_hits(session, user.id),
+        allow_web=bool(body.allow_web),
+    )
+    config = {
+        "configurable": {
+            "thread_id": f"trace-{uuid.uuid4()}",
+            "session": session,
+            "user_id": user.id,
+        }
+    }
+
+    def events():
+        final: dict = dict(state)
+        last_ts = time.monotonic()
+        for chunk in build_graph().stream(state, config=config, stream_mode="updates"):
+            now = time.monotonic()
+            elapsed_ms = int((now - last_ts) * 1000)
+            last_ts = now
+            for node, updates in chunk.items():
+                if not isinstance(updates, dict):
+                    continue
+                final.update(updates)
+                event: dict[str, object] = {"type": "step", "node": node, "elapsed_ms": elapsed_ms}
+                if node == "reason":
+                    event["action"] = str(updates.get("next_action") or "")
+                    event["query"] = str(updates.get("search_query") or "")
+                    if updates.get("subtasks"):
+                        event["subtasks"] = list(updates["subtasks"])
+                elif node == "run_tool":
+                    if "web_hits" in updates:
+                        event["tool"] = "web_search"
+                        event["hits"] = len(updates["web_hits"])
+                    else:
+                        event["tool"] = "search_knowledge"
+                        event["hits"] = len(updates.get("citations") or [])
+                    event["query"] = str(final.get("search_query") or "")
+                elif node == "generate":
+                    event["answer_len"] = len(str(updates.get("answer") or ""))
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        cites = [CitationOut.model_validate(item) for item in (final.get("citations") or [])]
+        payload = {
+            "type": "final",
+            "task": task,
+            "knowledge_base_id": str(kb_id) if kb_id else None,
+            "answer": str(final.get("answer") or ""),
+            "citations": [c.model_dump(mode="json") for c in cites],
+            "loop_count": int(final.get("loop_count") or 0),
+        }
         yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")

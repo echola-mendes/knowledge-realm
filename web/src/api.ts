@@ -6,6 +6,7 @@ export type KnowledgeBase = {
   document_count: number;
   byte_size: number;
   created_at?: string | null;
+  updated_at?: string | null;
 };
 
 export type DocumentItem = {
@@ -225,6 +226,14 @@ export function listMessages(conversationId: string) {
   return api<ChatMessage[]>(`/api/conversations/${conversationId}/messages`);
 }
 
+export function renameConversation(conversationId: string, title: string) {
+  return api<Conversation>(`/api/conversations/${conversationId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+}
+
 export function getHealth() {
   return api<{ status: string; ai_configured: boolean; host: string }>("/health");
 }
@@ -264,6 +273,14 @@ export function getDocument(id: string) {
   return api<DocumentItem>(`/api/documents/${id}`);
 }
 
+export type DocumentChunkMeta = {
+  heading: string | null;
+  page: number | null;
+  level: number | null;
+  table: boolean;
+  faq: boolean;
+};
+
 export type DocumentChunkItem = {
   id: string | null;
   chunk_index: number;
@@ -273,6 +290,8 @@ export type DocumentChunkItem = {
   heading: string | null;
   vector_status: "ready" | "indexing" | "pending";
   created_at: string | null;
+  quality_labels: string[];
+  meta: DocumentChunkMeta | null;
 };
 
 export function listDocumentChunks(id: string) {
@@ -407,6 +426,16 @@ export type RetrievalDebugResponse = {
   candidates: RetrievalDebugRow[];
   evaluation: { k: number; recall: number | null; precision: number | null; relevant_chunk_count: number };
   labels: Record<string, number>;
+  timings?: {
+    plan_ms: number;
+    embed_ms: number;
+    vector_ms: number;
+    bm25_ms: number;
+    rrf_ms: number;
+    rerank_ms: number;
+    final_ms: number;
+    total_ms: number;
+  } | null;
 };
 
 export type DebugDatasetChunk = {
@@ -480,4 +509,64 @@ export function putChunkSettings(body: ChunkSettings) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+export type AgentTraceStep = {
+  type: "step";
+  node: "reason" | "run_tool" | "generate" | string;
+  elapsed_ms: number;
+  action?: string;
+  query?: string;
+  subtasks?: string[];
+  tool?: string;
+  hits?: number;
+  answer_len?: number;
+};
+
+export type AgentTraceFinal = {
+  type: "final";
+  task: string;
+  knowledge_base_id: string | null;
+  answer: string;
+  citations: Citation[];
+  loop_count: number;
+};
+
+export type AgentTraceEvent = AgentTraceStep | AgentTraceFinal;
+
+export type AgentTraceParams = {
+  query: string;
+  knowledge_base_id?: string;
+  task?: "agent" | "report";
+  allow_web?: boolean;
+};
+
+export async function streamAgentTrace(
+  body: AgentTraceParams,
+  onEvent: (event: AgentTraceEvent) => void,
+): Promise<void> {
+  const res = await fetch("/api/agent/trace", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(messageFromErrorBody(await res.text(), res.statusText));
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() || "";
+    for (const part of parts) {
+      const line = part.split("\n").find((l) => l.startsWith("data: "));
+      if (!line) continue;
+      onEvent(JSON.parse(line.slice(6)) as AgentTraceEvent);
+    }
+  }
 }
