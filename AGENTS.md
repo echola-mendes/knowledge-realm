@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本仓库是 **知域**：个人本机知识库 Web。**P0 / P1.1–P1.4 已完成**。P2 范围 `PRD-P2.md`，实施见 `implementation-plan.md` 文末 P2 步骤。不要开始 `search_graph` Tool，不要开始力导向/ vis.js / D3 可视化；新阶段须先改计划。
+本仓库是 **知域**：个人本机知识库 Web。**P0 / P1.1–P1.4 / P2 已完成**。**P3 第一批进行中**：范围 `PRD-P3.md`，实施见 `implementation-plan.md` 的 P3 段（冲突检测/缺口分析/自动整理、版本管理/增量更新/URL 自动更新、主动推荐、Token 统计、RAG 答案质量评估）。不要开始 `search_graph` Tool，不要开始力导向/ vis.js / D3 可视化；不要做去重增强、Metadata 增强、Multi-Agent（本批明确排除）；新阶段须先改计划。
 
 长期事实以 `memory-bank/` 为准，不以闲聊记忆为准。`PRD.md` 仍保留；实现细节以 `memory-bank/design-document.md` 为准。
 
@@ -16,13 +16,13 @@
 
 ## 范围
 
-只做当前计划步骤。P0 / P1.1–P1.4 / **P2（PRD-P2 §7）已收口。** **当前步骤 AGENT-SMART-SEARCH**（进行中）。KB-ENABLE 代码已验证、待提出人确认。P2-DEBUG-UI 待看 UI；DEBUG-1 / AUTH-1 代码已落地。未在 `implementation-plan.md` 列出的功能不要做。改需求先改 `design-document.md`（及 `PRD.md` / `PRD-P2.md`）。
+只做当前计划步骤。P0 / P1.1–P1.4 / P2（PRD-P2 §7）已收口。**P3 第一批已批准（2026-08-30），范围 `PRD-P3.md`，当前步骤见 `implementation-plan.md` P3 段「当前」。** 未在 `implementation-plan.md` 列出的功能不要做。改需求先改 `design-document.md`（及 `PRD.md` / `PRD-P2.md` / `PRD-P3.md`）。
 
 ## 文档维护
 
 - 里程碑完成后更新 `memory-bank/architecture.md`（真实文件路径与职责）。  
 - 每完成并经用户确认的计划步骤，追加 `memory-bank/progress.md`。  
-- 改需求先改 `design-document.md`（及必要时 `PRD.md` / `PRD-P2.md`），再改代码。P2 Agent：Checkpoint 不是记忆；`reason` 统一路由，见设计文档第 4.7 节。
+- 改需求先改 `design-document.md`（及必要时 `PRD.md` / `PRD-P2.md` / `PRD-P3.md`），再改代码。P2 Agent：Checkpoint 不是记忆；`reason` 统一路由，见设计文档第 4.7 节。P3：洞察报告不落库；增量更新单表差量；见设计文档 §4.8–4.10。
 
 ## 重要提示
 
