@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import MarkdownIt from "markdown-it";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRoute } from "vue-router";
 import {
   compareDocuments,
+  createKnowledgeBase,
   createNote,
   deleteDocument,
   documentFailureReason,
@@ -17,9 +18,11 @@ import {
   type DocumentItem,
   type TagItem,
 } from "../api";
+import Icon from "../components/Icon.vue";
 import { knowledgeBases, loadKnowledgeBases } from "../kb";
 
 const md = new MarkdownIt();
+const route = useRoute();
 const docs = ref<DocumentItem[]>([]);
 const tags = ref<TagItem[]>([]);
 const error = ref("");
@@ -33,9 +36,24 @@ const appliedKb = ref("");
 const appliedName = ref("");
 const appliedStatus = ref("");
 const appliedTag = ref("");
+{
+  const initialKb = typeof route.query.kb === "string" ? route.query.kb : "";
+  filterKb.value = initialKb;
+  appliedKb.value = initialKb;
+}
 const screen = ref<"list" | "import">("list");
 const ingest = ref<"file" | "url" | "note">("file");
 const uploadKbId = ref("");
+const kbMode = ref<"existing" | "new">("existing");
+const newKbName = ref("");
+const savingKb = ref(false);
+const chunkStrategy = ref<"fixed" | "paragraph" | "recursive" | "semantic">("recursive");
+const chunkStrategies = [
+  { key: "fixed", label: "固定长度" },
+  { key: "paragraph", label: "段落" },
+  { key: "recursive", label: "递归字符" },
+  { key: "semantic", label: "语义" },
+] as const;
 const uploading = ref(false);
 const importing = ref(false);
 const dragOver = ref(false);
@@ -72,12 +90,17 @@ const pagedDocs = computed(() => {
 let timer: number | undefined;
 
 async function refresh() {
-  await loadKnowledgeBases();
+  const kbLoad = loadKnowledgeBases();
+  const docLoad = listDocuments().then((rows) => {
+    docs.value = rows;
+  });
+  const tagLoad = listTags().then((rows) => {
+    tags.value = rows;
+  });
+  await Promise.all([kbLoad, docLoad, tagLoad]);
   if (!uploadKbId.value) {
     uploadKbId.value = knowledgeBases.value.find((k) => k.is_default)?.id || knowledgeBases.value[0]?.id || "";
   }
-  docs.value = await listDocuments();
-  tags.value = await listTags();
   const ids = new Set(docs.value.map((d) => d.id));
   picked.value = picked.value.filter((id) => ids.has(id));
   if (docs.value.length < 2) {
@@ -137,12 +160,36 @@ async function afterImport() {
   screen.value = "list";
 }
 
+const newKbCount = computed(() => [...newKbName.value].length);
+const pendingFile = ref<File | null>(null);
+
+async function ensureTargetKb(): Promise<string> {
+  if (kbMode.value === "existing") return uploadKbId.value;
+  const name = newKbName.value.trim();
+  if (!name) {
+    throw new Error("请输入新知识库名称，上传后将自动创建该知识库");
+  }
+  savingKb.value = true;
+  try {
+    const kb = await createKnowledgeBase(name);
+    await loadKnowledgeBases();
+    uploadKbId.value = kb.id;
+    kbMode.value = "existing";
+    newKbName.value = "";
+    return kb.id;
+  } finally {
+    savingKb.value = false;
+  }
+}
+
 async function sendFile(file: File) {
   if (uploading.value) return;
   error.value = "";
   uploading.value = true;
   try {
-    await uploadFile(uploadKbId.value, file);
+    const kbId = await ensureTargetKb();
+    await uploadFile(kbId, file);
+    pendingFile.value = null;
     await afterImport();
   } catch (e) {
     error.value = formatApiError(e);
@@ -154,7 +201,7 @@ async function sendFile(file: File) {
 async function onUpload(ev: Event) {
   const input = ev.target as HTMLInputElement;
   const file = input.files?.[0];
-  if (file) await sendFile(file);
+  if (file) pendingFile.value = file;
   input.value = "";
 }
 
@@ -162,7 +209,15 @@ function onDrop(ev: DragEvent) {
   ev.preventDefault();
   dragOver.value = false;
   const file = ev.dataTransfer?.files?.[0];
-  if (file) void sendFile(file);
+  if (file) {
+    pendingFile.value = file;
+    error.value = "";
+  }
+}
+
+async function onImportFile() {
+  if (!pendingFile.value) return;
+  await sendFile(pendingFile.value);
 }
 
 async function onNote() {
@@ -170,7 +225,8 @@ async function onNote() {
   error.value = "";
   importing.value = true;
   try {
-    await createNote(uploadKbId.value, note.value);
+    const kbId = await ensureTargetKb();
+    await createNote(kbId, note.value);
     note.value = "";
     await afterImport();
   } catch (e) {
@@ -185,7 +241,8 @@ async function onUrl() {
   error.value = "";
   importing.value = true;
   try {
-    await importUrl(uploadKbId.value, url.value);
+    const kbId = await ensureTargetKb();
+    await importUrl(kbId, url.value);
     url.value = "";
     await afterImport();
   } catch (e) {
@@ -196,7 +253,9 @@ async function onUrl() {
 }
 
 onMounted(() => {
-  refresh().catch((e) => (error.value = formatApiError(e)));
+  refresh()
+    .then(() => applyKbQuery())
+    .catch((e) => (error.value = formatApiError(e)));
   timer = window.setInterval(() => {
     if (docs.value.some((d) => busy(d.status)) || reindexingIds.value.size) {
       refresh().catch(() => undefined);
@@ -333,6 +392,29 @@ function applyFilters() {
   page.value = 1;
 }
 
+function applyKbQuery() {
+  const kb = typeof route.query.kb === "string" ? route.query.kb : "";
+  if (!kb || !knowledgeBases.value.some((k) => k.id === kb)) return;
+  screen.value = "list";
+  filterKb.value = kb;
+  appliedKb.value = kb;
+  filterName.value = "";
+  appliedName.value = "";
+  filterStatus.value = "";
+  appliedStatus.value = "";
+  filterTag.value = "";
+  appliedTag.value = "";
+  picked.value = [];
+  pickMode.value = false;
+  comparisonHtml.value = "";
+  page.value = 1;
+}
+
+watch(
+  () => route.query.kb,
+  () => applyKbQuery(),
+);
+
 watch(pageCount, (n) => {
   if (page.value > n) page.value = n;
 });
@@ -353,72 +435,170 @@ watch(pageCount, (n) => {
     </div>
     <p v-if="error" class="hint err">{{ error }}</p>
     <section class="card pad import-panel">
-      <label for="upload-kb">目标知识库</label>
-      <select id="upload-kb" v-model="uploadKbId">
-        <option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
-          {{ kb.is_default ? "默认" : kb.name }}
-        </option>
-      </select>
-      <div class="tabs" role="tablist" aria-label="导入方式">
-        <button type="button" role="tab" :class="{ on: ingest === 'file' }" :aria-selected="ingest === 'file'" @click="ingest = 'file'">
-          文件
-        </button>
-        <button type="button" role="tab" :class="{ on: ingest === 'url' }" :aria-selected="ingest === 'url'" @click="ingest = 'url'">
-          网址
-        </button>
-        <button type="button" role="tab" :class="{ on: ingest === 'note' }" :aria-selected="ingest === 'note'" @click="ingest = 'note'">
-          笔记
-        </button>
-      </div>
-
-      <div v-if="ingest === 'file'" class="ingest-body">
-        <p class="tiny">pdf / docx / md / txt，不超过 100MB</p>
-        <label
-          class="drop"
-          :class="{ over: dragOver, busy: uploading }"
-          @dragover.prevent="dragOver = true"
-          @dragleave.prevent="dragOver = false"
-          @drop="onDrop"
-        >
-          <input
-            class="sr-only"
-            type="file"
-            accept=".pdf,.docx,.md,.markdown,.txt"
-            :disabled="uploading"
-            @change="onUpload"
-          />
-          <span>{{ uploading ? "上传中…" : "选择文件或拖到此处" }}</span>
-        </label>
-      </div>
-      <div v-else-if="ingest === 'url'" class="ingest-body">
-        <label for="import-url">公开页 URL</label>
-        <input id="import-url" v-model="url" placeholder="https://…" :disabled="importing" />
-        <button class="btn btn-primary" type="button" :disabled="importing || !url.trim()" @click="onUrl">
-          {{ importing ? "导入中…" : "导入网址" }}
-        </button>
-      </div>
-      <div v-else class="ingest-body">
-        <label for="import-note">Markdown 笔记</label>
-        <p class="tiny">左侧写 Markdown 原文；右侧即时预览。首个标题会作为文件名。</p>
-        <div class="note-compose">
-          <div class="note-pane">
-            <span class="pane-label">原文</span>
-            <textarea
-              id="import-note"
-              v-model="note"
-              rows="10"
-              placeholder="# 标题&#10;&#10;正文…"
-              :disabled="importing"
-            ></textarea>
+      <div class="form-row">
+        <span class="form-label">目标知识库 <i class="req">*</i></span>
+        <div class="form-field">
+          <div class="kb-mode" role="radiogroup" aria-label="目标知识库">
+            <label class="radio-item">
+              <input type="radio" name="kb-mode" value="existing" :checked="kbMode === 'existing'" @change="kbMode = 'existing'" />
+              <span class="radio-dot" aria-hidden="true"></span>
+              <span>已有知识库</span>
+            </label>
+            <label class="radio-item">
+              <input type="radio" name="kb-mode" value="new" :checked="kbMode === 'new'" @change="kbMode = 'new'" />
+              <span class="radio-dot" aria-hidden="true"></span>
+              <span>新知识库</span>
+            </label>
           </div>
-          <div class="note-pane">
-            <span class="pane-label">预览</span>
-            <div class="note-preview" v-html="notePreviewHtml"></div>
+          <select v-if="kbMode === 'existing'" id="upload-kb" v-model="uploadKbId">
+            <option v-for="kb in knowledgeBases" :key="kb.id" :value="kb.id">
+              {{ kb.is_default ? "默认" : kb.name }}
+            </option>
+          </select>
+          <div v-else class="new-kb-form">
+            <div class="new-kb-line">
+              <div class="new-kb-input">
+                <input
+                  v-model="newKbName"
+                  type="text"
+                  placeholder="请输入知识库名称，最多 20 个字符"
+                  aria-label="知识库名称"
+                  maxlength="20"
+                  :disabled="savingKb"
+                />
+                <span class="char-count">{{ newKbCount }} / 20</span>
+              </div>
+            </div>
+            <p class="tiny new-kb-hint">导入时将自动创建该知识库</p>
           </div>
         </div>
-        <button class="btn btn-primary" type="button" :disabled="importing || !note.trim()" @click="onNote">
-          {{ importing ? "创建中…" : "创建笔记" }}
-        </button>
+      </div>
+
+      <div class="form-row">
+        <span class="form-label">导入方式 <i class="req">*</i></span>
+        <div class="form-field ingest-modes" role="radiogroup" aria-label="导入方式">
+          <label
+            v-for="mode in [
+              { key: 'file', label: '文件' },
+              { key: 'url', label: '网址' },
+              { key: 'note', label: '笔记' },
+            ]"
+            :key="mode.key"
+            class="radio-item"
+          >
+            <input
+              type="radio"
+              name="ingest-mode"
+              :value="mode.key"
+              :checked="ingest === mode.key"
+              @change="ingest = mode.key as 'file' | 'url' | 'note'"
+            />
+            <span class="radio-dot" aria-hidden="true"></span>
+            <span>{{ mode.label }}</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <span class="form-label">导入数据</span>
+        <div class="form-field">
+          <div class="strategy-line">
+            <span class="strategy-label">切片方式</span>
+            <div class="ingest-modes" role="radiogroup" aria-label="切片方式">
+              <label v-for="s in chunkStrategies" :key="s.key" class="radio-item">
+                <input
+                  type="radio"
+                  name="chunk-strategy"
+                  :value="s.key"
+                  :checked="chunkStrategy === s.key"
+                  @change="chunkStrategy = s.key"
+                />
+                <span class="radio-dot" aria-hidden="true"></span>
+                <span>{{ s.label }}</span>
+              </label>
+            </div>
+          </div>
+          <p class="tiny strategy-hint">切片方式暂未接入后端，导入仍按默认方式切分。</p>
+
+          <div v-if="ingest === 'file'" class="ingest-body file-body">
+            <label
+              class="drop"
+              :class="{ over: dragOver, busy: uploading }"
+              @dragover.prevent="dragOver = true"
+              @dragleave.prevent="dragOver = false"
+              @drop="onDrop"
+            >
+              <input
+                class="sr-only"
+                type="file"
+                accept=".pdf,.docx,.md,.markdown,.txt"
+                :disabled="uploading"
+                @change="onUpload"
+              />
+              <span class="drop-main">
+                <Icon name="upload" class="drop-ico" />
+                <span v-if="pendingFile" class="drop-file">{{ pendingFile.name }}</span>
+                <span v-else>{{ uploading ? "上传中…" : "点击或将文件拖拽到此处" }}</span>
+                <span class="drop-link">{{ pendingFile ? "点击可重新选择" : uploading ? "" : "上传文件" }}</span>
+              </span>
+              <span class="drop-hint">文件内容中如包含个人信息，可能存在泄露风险，请谨慎上传</span>
+              <span class="drop-hint">支持 pdf / docx / md / txt，单个不超过 100MB</span>
+            </label>
+            <button
+              class="btn btn-primary"
+              type="button"
+              :disabled="!pendingFile || uploading || savingKb"
+              @click="onImportFile"
+            >
+              {{ uploading || savingKb ? "导入中…" : `导入${pendingFile ? `：${pendingFile.name}` : ""}` }}
+            </button>
+          </div>
+
+          <div v-else-if="ingest === 'url'" class="ingest-body">
+            <label class="drop url-drop" :class="{ busy: importing }">
+              <span class="drop-hint top">粘贴公开网页地址，系统会抓取正文并入库</span>
+              <input
+                id="import-url"
+                v-model="url"
+                class="url-input"
+                type="url"
+                placeholder="https://…"
+                :disabled="importing"
+              />
+              <button
+                class="btn btn-primary"
+                type="button"
+                :disabled="importing || !url.trim()"
+                @click="onUrl"
+              >
+                {{ importing ? "导入中…" : "导入网址" }}
+              </button>
+            </label>
+          </div>
+
+          <div v-else class="ingest-body">
+            <p class="tiny">左侧写 Markdown 原文，右侧即时预览；首个标题会作为文件名。</p>
+            <div class="note-compose">
+              <div class="note-pane">
+                <span class="pane-label">原文</span>
+                <textarea
+                  id="import-note"
+                  v-model="note"
+                  rows="10"
+                  placeholder="# 标题&#10;&#10;正文…"
+                  :disabled="importing"
+                ></textarea>
+              </div>
+              <div class="note-pane">
+                <span class="pane-label">预览</span>
+                <div class="note-preview" v-html="notePreviewHtml"></div>
+              </div>
+            </div>
+            <button class="btn btn-primary" type="button" :disabled="importing || !note.trim()" @click="onNote">
+              {{ importing ? "创建中…" : "创建笔记" }}
+            </button>
+          </div>
+        </div>
       </div>
     </section>
   </main>
@@ -669,7 +849,7 @@ watch(pageCount, (n) => {
   margin: 0 0 0.4rem;
   font-size: 0.78rem;
 }
-.docs-page.pad label:not(.drop) {
+.docs-page.pad label:not(.drop):not(.radio-item):not(.url-drop) {
   display: block;
   font-size: 0.68rem;
   color: var(--muted);
@@ -804,43 +984,150 @@ watch(pageCount, (n) => {
     grid-template-columns: 1fr;
   }
 }
-.tabs {
+.form-row {
   display: flex;
-  flex-wrap: nowrap;
-  gap: 0;
-  margin: 0.55rem 0;
-  border-bottom: 1px solid var(--line);
-  overflow-x: auto;
+  align-items: flex-start;
+  gap: 0.8rem;
+  padding: 0.55rem 0;
 }
-.tabs button {
-  border: none;
-  background: none;
-  border-radius: 0;
-  padding: 0.35rem 0.7rem 0.45rem;
-  cursor: pointer;
-  color: var(--muted);
+.form-row + .form-row {
+  border-top: 1px solid var(--line);
+}
+.form-label {
+  flex: 0 0 5.5rem;
+  padding-top: 0.42rem;
   font-size: 0.72rem;
-  white-space: nowrap;
-  box-shadow: none;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-}
-.tabs button.on {
-  background: none;
-  color: var(--teal);
   font-weight: 600;
-  border-bottom-color: var(--teal);
+  color: var(--text);
 }
-.tabs button:focus-visible {
+.form-label .req {
+  color: var(--danger);
+  font-style: normal;
+}
+.form-field {
+  flex: 1;
+  min-width: 0;
+}
+.kb-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.4rem;
+  padding: 0.3rem 0 0.45rem;
+}
+.form-field > select {
+  width: 55%;
+  min-width: 10rem;
+}
+.strategy-line {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  padding: 0.2rem 0 0.15rem;
+}
+.strategy-label {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: var(--text);
+}
+.strategy-hint {
+  margin: 0 0 0.35rem;
+}
+.new-kb-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.new-kb-line {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.new-kb-input {
+  position: relative;
+  flex: 0 1 55%;
+  min-width: 16rem;
+}
+.new-kb-input input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.4rem 4.2rem 0.4rem 0.5rem;
+  background: var(--bg);
+  font-size: 0.75rem;
+}
+.new-kb-input input:focus {
+  background: #fff;
+}
+.char-count {
+  position: absolute;
+  right: 0.55rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.68rem;
+  color: var(--muted);
+  pointer-events: none;
+}
+.new-kb-btn {
+  flex-shrink: 0;
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  font-size: 0.72rem;
+}
+.new-kb-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.ingest-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.4rem;
+  padding: 0.3rem 0;
+}
+.radio-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--text);
+  position: relative;
+}
+.radio-item input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.radio-dot {
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  display: inline-block;
+  position: relative;
+  transition: border-color 0.15s;
+}
+.radio-item input:checked + .radio-dot {
+  border-color: var(--teal);
+}
+.radio-item input:checked + .radio-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0.18rem;
+  border-radius: 50%;
+  background: var(--teal);
+}
+.radio-item input:focus-visible + .radio-dot {
   outline: 2px solid var(--teal);
   outline-offset: 2px;
 }
 .ingest-body {
-  margin-top: 0.35rem;
+  margin-top: 0.1rem;
 }
 .ingest-body .btn {
   width: 100%;
-  margin-top: 0.35rem;
+  margin-top: 0.55rem;
 }
 .sr-only {
   position: absolute;
@@ -854,21 +1141,89 @@ watch(pageCount, (n) => {
 }
 .drop {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 0.3rem;
   min-height: 10.5rem;
   padding: 1.2rem;
   text-align: center;
   border: 1px dashed var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--bg);
   cursor: pointer;
   color: var(--muted);
   margin: 0.3rem 0 0;
 }
+.drop-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+.drop-ico {
+  width: 1.1rem;
+  height: 1.1rem;
+  color: var(--teal);
+}
+.drop-link {
+  color: var(--teal);
+  font-weight: 600;
+}
+.drop-hint {
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.drop-hint.top {
+  font-size: 0.72rem;
+  margin-bottom: 0.2rem;
+}
+.url-drop {
+  cursor: default;
+  gap: 0.45rem;
+}
+.url-input {
+  width: 100%;
+  max-width: 30rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  background: #fff;
+  font-size: 0.75rem;
+}
+.url-drop .btn {
+  width: auto;
+  min-width: 8rem;
+  margin-top: 0;
+}
 .import-screen .drop {
   flex: 1;
-  min-height: 14rem;
+  min-height: 10rem;
+}
+.import-screen .file-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.import-screen .form-row:has(.file-body) {
+  flex: 1;
+  min-height: 0;
+}
+.import-screen .form-row:has(.file-body) .form-field {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.import-screen .file-body .drop {
+  margin-bottom: 0.1rem;
+}
+.drop-file {
+  color: var(--teal);
+  font-weight: 600;
+  word-break: break-all;
 }
 .import-screen .ingest-body {
   flex: 1;
