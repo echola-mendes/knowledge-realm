@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +19,7 @@ from app.schemas import (
     RetrievalDebugResponse,
     RetrievalLabelOut,
     RetrievalLabelPut,
+    RetrievalTimingsOut,
 )
 from app.search import normalize_query, search_debug
 
@@ -35,8 +37,11 @@ def retrieval_debug_api(
     original = body.query.strip()
     next_action: str = "search"
     search_query = original
+    plan_ms = 0
     if llm_mod.llm_keys_ready():
+        t_plan = time.perf_counter()
         plan = plan_agent_search(original)
+        plan_ms = round((time.perf_counter() - t_plan) * 1000)
         next_action = str(plan.get("next_action") or "generate")
         rewritten = str(plan.get("search_query") or "").strip()
         if next_action in ("search", "rag") and rewritten:
@@ -56,10 +61,12 @@ def retrieval_debug_api(
             rrf_k_const=body.rrf_k_const,
             eval_k=body.eval_k,
         )
+        timings = (result.timings or RetrievalTimingsOut()).model_copy(update={"plan_ms": plan_ms})
         return result.model_copy(
             update={
                 "search_query": search_query,
                 "next_action": "search" if next_action in ("search", "rag") else "generate",
+                "timings": timings,
             }
         )
     except KnowledgeBaseAccessError as exc:

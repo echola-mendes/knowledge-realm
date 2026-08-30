@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -18,6 +19,7 @@ from app.schemas import (
     RetrievalDebugRow,
     RetrievalEvalOut,
     RetrievalStageOut,
+    RetrievalTimingsOut,
 )
 
 SCORE_THRESHOLD = 0.30
@@ -266,6 +268,7 @@ def search_debug(
     eval_k: int = DEFAULT_K,
 ) -> RetrievalDebugResponse:
     require_elasticsearch_url()
+    t_start = time.perf_counter()
     kb_ids = search_kb_ids(session, user_id, knowledge_base_id)
     rq = (retrieval_query or query).strip() or query
     query_norm = normalize_query(query)
@@ -282,15 +285,20 @@ def search_debug(
             candidates=[],
             evaluation=RetrievalEvalOut(k=eval_k, relevant_chunk_count=0),
             labels={},
+            timings=RetrievalTimingsOut(),
         )
+    t0 = time.perf_counter()
     query_vec = embed_texts([rq])[0]
+    t1 = time.perf_counter()
     rows = _vector_stmt(session, query_vec, kb_ids, user_id, None, None, None, vector_k)
     vector_hits = [_hit_from_row(chunk, doc, dist) for chunk, doc, dist in rows]
+    t2 = time.perf_counter()
     bm25_pairs = search_chunk_scores(rq, knowledge_base_ids=kb_ids, k=bm25_k)
     bm25_ids = [cid for cid, _ in bm25_pairs]
     bm25_scores = {cid: score for cid, score in bm25_pairs}
     by_id = {hit.chunk_id: hit for hit in vector_hits}
     by_id.update(_hits_for_ids(session, query_vec, kb_ids, user_id, bm25_ids))
+    t3 = time.perf_counter()
     vector_rank = {hit.chunk_id: i for i, hit in enumerate(vector_hits, start=1)}
     bm25_rank = {cid: i for i, cid in enumerate(bm25_ids, start=1)}
     fused: dict[uuid.UUID, float] = {}
@@ -306,11 +314,23 @@ def search_debug(
         from_b[cid] = part
     rrf_ids = sorted(fused.keys(), key=lambda cid: fused[cid], reverse=True)[:rrf_k]
     rrf_hits = [by_id[cid] for cid in rrf_ids if cid in by_id]
+    t4 = time.perf_counter()
     gate_fail = not vector_hits or vector_hits[0].score < vector_threshold
     rerank_in = rrf_hits[: min(rerank_k, RERANK_CANDIDATE_MAX)]
     reranked = _rerank(rq, rerank_in)
+    t5 = time.perf_counter()
     kept = [] if gate_fail else _keep_relevant(reranked)
+    t6 = time.perf_counter()
     kept_ids = {h.chunk_id for h in kept}
+    timings = RetrievalTimingsOut(
+        embed_ms=round((t1 - t0) * 1000),
+        vector_ms=round((t2 - t1) * 1000),
+        bm25_ms=round((t3 - t2) * 1000),
+        rrf_ms=round((t4 - t3) * 1000),
+        rerank_ms=round((t5 - t4) * 1000),
+        final_ms=round((t6 - t5) * 1000),
+        total_ms=round((t6 - t_start) * 1000),
+    )
 
     def row_for(
         cid: uuid.UUID,
@@ -442,4 +462,5 @@ def search_debug(
             relevant_chunk_count=len(relevant),
         ),
         labels={str(k): v for k, v in labels.items()},
+        timings=timings,
     )
