@@ -12,10 +12,12 @@ import {
   documentStatusLabel,
   importUrl,
   listDocuments,
+  listDocumentVersions,
   listTags,
   reindexDocument,
   uploadFile,
   type DocumentItem,
+  type DocumentVersionItem,
   type TagItem,
 } from "../api";
 import Icon from "../components/Icon.vue";
@@ -58,6 +60,7 @@ const uploading = ref(false);
 const importing = ref(false);
 const dragOver = ref(false);
 const picked = ref<string[]>([]);
+const versionMap = ref<Map<string, DocumentVersionItem[]>>(new Map());
 const pickMode = ref(false);
 const comparing = ref(false);
 const comparisonHtml = ref("");
@@ -298,6 +301,16 @@ function formatTime(raw?: string | null) {
 function fileType(doc: DocumentItem) {
   const ext = (doc.ext || "").replace(/^\./, "");
   return ext || doc.kind || "—";
+}
+
+async function loadVersions(doc: DocumentItem) {
+  if (versionMap.value.has(doc.id)) return;
+  try {
+    const rows = await listDocumentVersions(doc.id);
+    versionMap.value = new Map(versionMap.value).set(doc.id, rows);
+  } catch {
+    /* 悬浮加载失败静默，下次 hover 重试 */
+  }
 }
 
 function togglePick(doc: DocumentItem) {
@@ -676,6 +689,7 @@ watch(pageCount, (n) => {
               <th>文件大小</th>
               <th>切片长度</th>
               <th>重叠长度</th>
+              <th>版本</th>
               <th class="status-cell">状态</th>
               <th>失败原因</th>
               <th>创建人</th>
@@ -718,6 +732,20 @@ watch(pageCount, (n) => {
               <td>{{ formatSize(doc.byte_size || 0) }}</td>
               <td>{{ doc.chunk_size ?? "—" }}</td>
               <td>{{ doc.chunk_overlap ?? "—" }}</td>
+              <td
+                class="ver-cell"
+                @mouseenter="loadVersions(doc)"
+              >
+                v{{ doc.version ?? 1 }}
+                <span class="tip">
+                  <template v-if="versionMap.get(doc.id)?.length">
+                    <div v-for="v in versionMap.get(doc.id)" :key="v.version">
+                      v{{ v.version }} · {{ formatSize(v.byte_size) }} · {{ formatTime(v.created_at) }}
+                    </div>
+                  </template>
+                  <template v-else>加载中…</template>
+                </span>
+              </td>
               <td class="status-cell">
                 <span class="pill status-pill" :class="documentStatusClass(doc.status)">
                   {{ documentStatusLabel(doc.status) }}
@@ -742,7 +770,7 @@ watch(pageCount, (n) => {
               </td>
             </tr>
             <tr v-if="!filteredDocs.length">
-              <td :colspan="pickMode ? 14 : 13" class="empty">没有符合条件的文档。可调整筛选，或点「导入」。</td>
+              <td :colspan="pickMode ? 15 : 14" class="empty">没有符合条件的文档。可调整筛选，或点「导入」。</td>
             </tr>
           </tbody>
         </table>
@@ -1372,6 +1400,31 @@ tbody tr.on {
   opacity: 0.55;
   cursor: not-allowed;
   text-decoration: none;
+}
+.ver-cell {
+  position: relative;
+  color: var(--muted);
+  cursor: default;
+}
+.ver-cell .tip {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: calc(100% - 0.15rem);
+  z-index: 6;
+  min-width: 13rem;
+  padding: 0.4rem 0.55rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  border-radius: 8px;
+  white-space: normal;
+  color: var(--text);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+.ver-cell:hover .tip {
+  display: block;
 }
 .seq {
   color: var(--muted);

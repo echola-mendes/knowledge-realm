@@ -73,6 +73,7 @@ class Document(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     byte_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     chunk_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     chunk_overlap: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -81,6 +82,24 @@ class Document(Base):
     )
     knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="documents")
     chunks: Mapped[list[DocumentChunk]] = relationship(back_populates="document")
+    versions: Mapped[list["DocumentVersion"]] = relationship(
+        back_populates="document", cascade="all, delete-orphan", order_by="DocumentVersion.version"
+    )
+
+
+class DocumentVersion(Base):
+    __tablename__ = "document_version"
+    __table_args__ = (UniqueConstraint("document_id", "version", name="uq_document_version"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("document.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    document: Mapped[Document] = relationship(back_populates="versions")
 
 
 class DocumentChunk(Base):

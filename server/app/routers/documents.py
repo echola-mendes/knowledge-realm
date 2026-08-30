@@ -13,13 +13,25 @@ from app.db import session_scope
 from app.deps import current_user
 from app.kb import KnowledgeBaseAccessError, owned_document, resolve_knowledge_base_id
 from app.llm import llm_keys_ready
-from app.models import Document, DocumentChunk, DocumentTag, Entity, EntityLink, Favorite, KnowledgeBase, Tag, User
+from app.models import (
+    Document,
+    DocumentChunk,
+    DocumentTag,
+    DocumentVersion,
+    Entity,
+    EntityLink,
+    Favorite,
+    KnowledgeBase,
+    Tag,
+    User,
+)
 from app.p1.chains import extract_graph, gather_document_text, suggest_tag_names, summarize_document
 from app.schemas import (
     DocumentChunkOut,
     DocumentGraphOut,
     DocumentOut,
     DocumentTagsPut,
+    DocumentVersionOut,
     GraphEntityOut,
     GraphLinkOut,
     NoteCreate,
@@ -102,6 +114,27 @@ def _document_out(doc: Document, session: Session, user_id: uuid.UUID, *, existe
             "created_by": owner.username if owner else "",
         }
     )
+
+
+def register_version(doc: Document) -> None:
+    """为文档当前内容写一条版本记录（创建=v1，内容变更=version 递增后调用）。"""
+    session = Session.object_session(doc)
+    if session is None:
+        return
+    exists = session.scalar(
+        select(DocumentVersion).where(DocumentVersion.document_id == doc.id, DocumentVersion.version == doc.version)
+    )
+    if exists is not None:
+        return
+    session.add(
+        DocumentVersion(
+            document_id=doc.id,
+            version=doc.version,
+            checksum=doc.checksum,
+            byte_size=doc.byte_size,
+        )
+    )
+    session.commit()
 
 
 def _chunks_for_document(doc: Document, session: Session) -> list[DocumentChunkOut]:
@@ -194,6 +227,7 @@ async def upload_document(
     session.add(doc)
     session.commit()
     session.refresh(doc)
+    register_version(doc)
     background.add_task(index_mod.process_document, doc.id)
     return _document_out(doc, session, user.id, existed=False)
 
@@ -237,6 +271,7 @@ def create_note(
     session.add(doc)
     session.commit()
     session.refresh(doc)
+    register_version(doc)
     background.add_task(index_mod.process_document, doc.id)
     return _document_out(doc, session, user.id, existed=False)
 
@@ -276,6 +311,7 @@ def create_url_document(
     session.add(doc)
     session.commit()
     session.refresh(doc)
+    register_version(doc)
     background.add_task(index_mod.process_document, doc.id)
     return _document_out(doc, session, user.id, existed=False)
 
@@ -362,6 +398,19 @@ def unfavorite_document(
 @router.get("/{document_id}", response_model=DocumentOut)
 def get_document(document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)):
     return _document_out(_owned_doc(session, document_id, user.id), session, user.id)
+
+
+@router.get("/{document_id}/versions", response_model=list[DocumentVersionOut])
+def list_document_versions(
+    document_id: uuid.UUID, session: Session = Depends(get_db), user: User = Depends(current_user)
+):
+    doc = _owned_doc(session, document_id, user.id)
+    rows = session.scalars(
+        select(DocumentVersion)
+        .where(DocumentVersion.document_id == doc.id)
+        .order_by(DocumentVersion.version.desc())
+    ).all()
+    return [DocumentVersionOut.model_validate(r) for r in rows]
 
 
 @router.get("/{document_id}/chunks", response_model=list[DocumentChunkOut])

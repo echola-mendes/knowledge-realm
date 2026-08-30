@@ -48,6 +48,16 @@ class DocumentOut(BaseModel):
     created_by: str = ""
     chunk_size: int | None = None
     chunk_overlap: int | None = None
+    version: int = 1
+
+    model_config = {"from_attributes": True}
+
+
+class DocumentVersionOut(BaseModel):
+    version: int
+    checksum: str | None = None
+    byte_size: int
+    created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

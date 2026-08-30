@@ -26,7 +26,19 @@ export type DocumentItem = {
   created_by?: string;
   chunk_size?: number | null;
   chunk_overlap?: number | null;
+  version?: number;
 };
+
+export type DocumentVersionItem = {
+  version: number;
+  checksum?: string | null;
+  byte_size: number;
+  created_at?: string | null;
+};
+
+export function listDocumentVersions(documentId: string) {
+  return api<DocumentVersionItem[]>(`/api/documents/${documentId}/versions`);
+}
 
 export type TagItem = { id: string; name: string };
 
