@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { RouterLink } from "vue-router";
 import {
   createKnowledgeBase,
   deleteKnowledgeBase,
+  listDocuments,
   updateKnowledgeBase,
+  type DocumentItem,
   type KnowledgeBase,
 } from "../api";
 import { knowledgeBases, loadKnowledgeBases } from "../kb";
@@ -17,8 +20,10 @@ const renaming = ref("");
 const renameValue = ref("");
 const error = ref("");
 const busy = ref(false);
+const docs = ref<DocumentItem[]>([]);
 const pageSize = 20;
 const page = ref(1);
+let timer: number | undefined;
 
 const filteredRows = computed(() => {
   const q = appliedQuery.value.trim();
@@ -38,9 +43,17 @@ const pagedRows = computed(() => {
 });
 
 onMounted(() => {
-  loadKnowledgeBases().catch((e: Error) => {
+  refresh().catch((e: Error) => {
     error.value = e.message;
   });
+  timer = window.setInterval(() => {
+    if (docs.value.some((d) => docBusy(d.status))) {
+      refresh().catch(() => undefined);
+    }
+  }, 2000);
+});
+onUnmounted(() => {
+  if (timer) window.clearInterval(timer);
 });
 
 watch(pageCount, (n) => {
@@ -49,6 +62,29 @@ watch(pageCount, (n) => {
 
 async function refresh() {
   await loadKnowledgeBases();
+  docs.value = await listDocuments();
+}
+
+function docBusy(status: string) {
+  return status !== "ready" && status !== "parse_failed" && status !== "index_failed";
+}
+
+interface KbStatus {
+  key: "on" | "off" | "error" | "processing";
+  label: string;
+  cls: string;
+}
+
+function kbStatus(kb: KnowledgeBase): KbStatus {
+  if (!kb.is_enabled) return { key: "off", label: "○ 已停用", cls: "idle" };
+  const rows = docs.value.filter((d) => d.knowledge_base_id === kb.id);
+  if (rows.some((d) => docBusy(d.status))) {
+    return { key: "processing", label: "⟳ 正在处理", cls: "busy" };
+  }
+  if (rows.some((d) => d.status === "parse_failed" || d.status === "index_failed")) {
+    return { key: "error", label: "⚠ 索引异常", cls: "bad" };
+  }
+  return { key: "on", label: "● 已启用", cls: "ok" };
 }
 
 function applyFilters() {
@@ -195,9 +231,11 @@ async function removeKb(kb: KnowledgeBase) {
               <th>序号</th>
               <th>知识库</th>
               <th>类型</th>
+              <th>状态</th>
               <th>文档数</th>
               <th>大小</th>
               <th>创建时间</th>
+              <th>更新时间</th>
               <th>开启</th>
               <th>操作</th>
             </tr>
@@ -212,9 +250,13 @@ async function removeKb(kb: KnowledgeBase) {
                 <strong v-else>{{ displayName(kb) }}</strong>
               </td>
               <td>{{ kbKind(kb) }}</td>
+              <td class="status-cell">
+                <span class="pill status-pill" :class="kbStatus(kb).cls">{{ kbStatus(kb).label }}</span>
+              </td>
               <td>{{ kb.document_count ?? 0 }}</td>
               <td class="muted">{{ formatSize(kb.byte_size || 0) }}</td>
               <td class="muted">{{ formatTime(kb.created_at) }}</td>
+              <td class="muted">{{ formatTime(kb.updated_at) }}</td>
               <td>
                 <label class="toggle">
                   <span class="sr">是否开启知识库</span>
@@ -232,13 +274,14 @@ async function removeKb(kb: KnowledgeBase) {
                   <button class="btn-link" type="button" @click="renaming = ''">取消</button>
                 </template>
                 <template v-else>
+                  <RouterLink class="btn-link" :to="`/documents?kb=${kb.id}`">进入</RouterLink>
                   <button class="btn-link" type="button" @click="startRename(kb)">改名</button>
                   <button class="btn-danger" type="button" :disabled="kb.is_default" @click="removeKb(kb)">删除</button>
                 </template>
               </td>
             </tr>
             <tr v-if="!filteredRows.length">
-              <td colspan="8" class="empty">没有匹配的知识库</td>
+              <td colspan="10" class="empty">没有匹配的知识库</td>
             </tr>
           </tbody>
         </table>
@@ -402,6 +445,31 @@ tbody tr:nth-child(even) {
 .muted {
   color: var(--muted);
   white-space: nowrap;
+}
+.status-cell .status-pill {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 0.08rem 0.45rem;
+  font-size: 0.62rem;
+  line-height: 1.45;
+  cursor: default;
+}
+.pill.ok {
+  background: #ecfdf5;
+  color: #059669;
+}
+.pill.busy {
+  background: #fff7ed;
+  color: #ea580c;
+}
+.pill.idle {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+.pill.bad {
+  background: #fef2f2;
+  color: #dc2626;
 }
 .ops {
   display: flex;
