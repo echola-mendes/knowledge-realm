@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import ChunkMultiSelect from "../components/ChunkMultiSelect.vue";
 import {
   getMe,
+  judgeAnswerQuality,
   listDebugDatasetChunks,
   listKnowledgeBases,
   listRetrievalLabels,
@@ -11,6 +12,7 @@ import {
   streamAgentTrace,
   type AgentTraceEvent,
   type AgentTraceStep,
+  type AnswerQuality,
   type DebugDatasetChunk,
   type KnowledgeBase,
   type RetrievalDebugRow,
@@ -148,7 +150,14 @@ const traceAllowWeb = ref(false);
 const traceRunning = ref(false);
 const traceSteps = ref<AgentTraceStep[]>([]);
 const traceTokens = ref<{ prompt_tokens: number; completion_tokens: number; total_tokens: number } | null>(null);
-const traceFinal = ref<{ answer: string; citations: { document_name: string; score: number }[]; loop_count: number } | null>(null);
+const traceFinal = ref<{
+  answer: string;
+  citations: { document_name: string; score: number; content?: string }[];
+  loop_count: number;
+} | null>(null);
+const answerQuality = ref<AnswerQuality | null>(null);
+const judging = ref(false);
+const judgeError = ref("");
 const traceError = ref("");
 const knowledgeBases = ref<KnowledgeBase[]>([]);
 const traceStatus = ref<"idle" | "running" | "done" | "error">("idle");
@@ -296,6 +305,8 @@ async function runTrace() {
   traceTokens.value = null;
   traceEvents.value = [];
   traceFinal.value = null;
+  answerQuality.value = null;
+  judgeError.value = "";
   try {
     await streamAgentTrace(
       {
@@ -318,6 +329,8 @@ async function runTrace() {
         } else {
           traceFinal.value = { answer: event.answer, citations: event.citations, loop_count: event.loop_count };
           if (event.tokens) traceTokens.value = event.tokens;
+          answerQuality.value = null;
+          judgeError.value = "";
           traceStatus.value = "done";
         }
       },
@@ -328,6 +341,23 @@ async function runTrace() {
     traceStatus.value = "error";
   } finally {
     traceRunning.value = false;
+  }
+}
+
+async function evaluateAnswer() {
+  if (!traceFinal.value || judging.value) return;
+  judging.value = true;
+  judgeError.value = "";
+  try {
+    answerQuality.value = await judgeAnswerQuality({
+      query: traceQuery.value.trim(),
+      answer: traceFinal.value.answer,
+      contexts: traceFinal.value.citations.map((c) => c.content || "").filter(Boolean),
+    });
+  } catch (e) {
+    judgeError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    judging.value = false;
   }
 }
 
@@ -755,13 +785,29 @@ onMounted(() => {
               <div class="trace-answer-card">
                 <div class="trace-answer-head">
                   <h3>最终回复</h3>
-                  <button v-if="traceFinal" class="linkish" type="button" @click="copyAnswer">
-                    复制回复
-                  </button>
+                  <div class="trace-answer-actions">
+                    <button v-if="traceFinal && !judging" class="linkish" type="button" @click="evaluateAnswer">
+                      评估回答
+                    </button>
+                    <span v-if="judging" class="tiny">评估中…</span>
+                    <button v-if="traceFinal" class="linkish" type="button" @click="copyAnswer">
+                      复制回复
+                    </button>
+                  </div>
                 </div>
                 <p v-if="traceFinal" class="trace-answer-text">{{ traceFinal.answer }}</p>
                 <p v-else-if="traceRunning" class="tiny">生成中…</p>
                 <p v-else class="tiny">运行后在这里显示最终回复。</p>
+                <div v-if="judgeError" class="tiny judge-err">{{ judgeError }}</div>
+                <div v-if="answerQuality" class="judge-result">
+                  <span class="judge-pill">忠实 {{ answerQuality.faithfulness }}/5</span>
+                  <span class="judge-pill">切题 {{ answerQuality.relevance }}/5</span>
+                  <span class="judge-pill">完整 {{ answerQuality.completeness }}/5</span>
+                  <ul v-if="answerQuality.issues.length" class="judge-issues">
+                    <li v-for="issue in answerQuality.issues" :key="issue">{{ issue }}</li>
+                  </ul>
+                  <p v-else class="tiny">无明显问题。</p>
+                </div>
               </div>
               <div class="trace-delay-card">
                 <div class="trace-delay-head">
@@ -2165,5 +2211,36 @@ td {
   .trace-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+.judge-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+.judge-pill {
+  padding: 0.08rem 0.5rem;
+  border-radius: 999px;
+  background: var(--teal-soft);
+  color: var(--teal);
+  font-size: 0.68rem;
+}
+.judge-issues {
+  margin: 0.2rem 0 0;
+  padding-left: 1.1rem;
+  width: 100%;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+.judge-err {
+  margin-top: 0.3rem;
+  color: var(--danger);
+}
+.trace-answer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 </style>

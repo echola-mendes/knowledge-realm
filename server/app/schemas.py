@@ -306,6 +306,19 @@ class RetrievalLabelPut(BaseModel):
     relevance: int = Field(ge=0, le=3)
 
 
+class AnswerQualityRequest(BaseModel):
+    query: str = Field(min_length=1)
+    answer: str = Field(min_length=1)
+    contexts: list[str] = []
+
+
+class AnswerQualityOut(BaseModel):
+    faithfulness: int
+    relevance: int
+    completeness: int
+    issues: list[str]
+
+
 class RetrievalLabelOut(BaseModel):
     chunk_id: uuid.UUID
     document_id: uuid.UUID

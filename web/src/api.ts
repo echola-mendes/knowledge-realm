@@ -517,6 +517,21 @@ export type TokenUsage = {
   total_tokens: number;
 };
 
+export type AnswerQuality = {
+  faithfulness: number;
+  relevance: number;
+  completeness: number;
+  issues: string[];
+};
+
+export function judgeAnswerQuality(body: { query: string; answer: string; contexts: string[] }) {
+  return api<AnswerQuality>("/api/retrieval-debug/answer-quality", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export type AgentTraceStep = {
   type: "step";
   node: "reason" | "run_tool" | "generate" | string;

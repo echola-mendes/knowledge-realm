@@ -14,6 +14,8 @@ from app.kb import KnowledgeBaseAccessError
 from app.models import Document, DocumentChunk, KnowledgeBase, RetrievalLabel, User
 from app.p1.graph import plan_agent_search
 from app.schemas import (
+    AnswerQualityOut,
+    AnswerQualityRequest,
     DebugDatasetChunkOut,
     RetrievalDebugRequest,
     RetrievalDebugResponse,
@@ -21,6 +23,7 @@ from app.schemas import (
     RetrievalLabelPut,
     RetrievalTimingsOut,
 )
+from app.quality import judge_answer, judge_keys_ready
 from app.search import normalize_query, search_debug
 
 router = APIRouter(prefix="/api", tags=["retrieval-debug"])
@@ -172,3 +175,14 @@ def put_label(
     session.commit()
     session.refresh(row)
     return RetrievalLabelOut(chunk_id=row.chunk_id, document_id=row.document_id, relevance=row.relevance)
+
+
+@router.post("/retrieval-debug/answer-quality", response_model=AnswerQualityOut)
+def answer_quality_api(body: AnswerQualityRequest, user: User = Depends(current_user)):
+    """调试用 LLM-as-judge：评估回答质量。不进生产问答链。"""
+    if not judge_keys_ready():
+        raise HTTPException(status_code=503, detail="未配置 LLM API Key")
+    try:
+        return AnswerQualityOut(**judge_answer(body.query, body.answer, body.contexts))
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
