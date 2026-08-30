@@ -128,6 +128,10 @@ class ConversationOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ConversationRename(BaseModel):
+    title: str
+
+
 class MessageOut(BaseModel):
     id: uuid.UUID
     role: str
@@ -268,6 +272,17 @@ class RetrievalEvalOut(BaseModel):
     relevant_chunk_count: int
 
 
+class RetrievalTimingsOut(BaseModel):
+    plan_ms: int = 0
+    embed_ms: int = 0
+    vector_ms: int = 0
+    bm25_ms: int = 0
+    rrf_ms: int = 0
+    rerank_ms: int = 0
+    final_ms: int = 0
+    total_ms: int = 0
+
+
 class RetrievalDebugResponse(BaseModel):
     query: str
     query_norm: str
@@ -281,6 +296,7 @@ class RetrievalDebugResponse(BaseModel):
     candidates: list[RetrievalDebugRow]
     evaluation: RetrievalEvalOut
     labels: dict[str, int]
+    timings: RetrievalTimingsOut | None = None
 
 
 class RetrievalLabelPut(BaseModel):

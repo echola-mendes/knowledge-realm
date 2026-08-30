@@ -6,6 +6,7 @@ import {
   listConversations,
   listMessages,
   messageFromErrorBody,
+  renameConversation,
   type ChatMessage,
   type Citation,
   type Conversation,
@@ -14,6 +15,8 @@ import Icon from "../components/Icon.vue";
 import MarkdownIt from "markdown-it";
 
 const md = new MarkdownIt({ breaks: true });
+
+const vFocus = { mounted: (el: HTMLInputElement) => el.focus() };
 
 const route = useRoute();
 const router = useRouter();
@@ -107,6 +110,28 @@ const chatTitle = computed(() => {
   const row = conversations.value.find((c) => c.id === conversationId.value);
   return row?.title || (messages.value.length ? "对话" : "新对话");
 });
+
+const editingTitle = ref(false);
+const titleDraft = ref("");
+
+function startEditTitle() {
+  if (!conversationId.value) return;
+  titleDraft.value = chatTitle.value;
+  editingTitle.value = true;
+}
+async function saveTitle() {
+  const id = conversationId.value;
+  editingTitle.value = false;
+  const title = titleDraft.value.trim();
+  if (!id || !title || title === chatTitle.value) return;
+  try {
+    const updated = await renameConversation(id, title);
+    const row = conversations.value.find((c) => c.id === id);
+    if (row) row.title = updated.title;
+  } catch (e) {
+    error.value = messageFromErrorBody(String(e), "标题保存失败");
+  }
+}
 
 function convBucket(iso?: string | null) {
   if (!iso) return "更早";
@@ -440,8 +465,24 @@ function pickDoc(id: string) {
         <header class="chat-head">
           <div class="chat-head-top">
             <div class="title-row">
-              <h1>{{ chatTitle }}</h1>
-              <button class="icon-btn" type="button" aria-label="编辑标题">
+              <h1 v-if="!editingTitle">{{ chatTitle }}</h1>
+              <input
+                v-else
+                v-model="titleDraft"
+                class="title-input"
+                v-focus
+                @keyup.enter="saveTitle"
+                @keyup.esc="editingTitle = false"
+                @blur="saveTitle"
+              />
+              <button
+                class="icon-btn"
+                type="button"
+                aria-label="编辑标题"
+                :disabled="!conversationId"
+                title="编辑标题"
+                @click="startEditTitle"
+              >
                 <Icon name="edit" />
               </button>
             </div>
@@ -857,6 +898,20 @@ function pickDoc(id: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.title-input {
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  border: 1px solid var(--teal);
+  border-radius: 8px;
+  padding: 0.2rem 0.5rem;
+  outline: none;
+  min-width: 0;
+  width: 22rem;
+  max-width: 100%;
+  background: #fff;
 }
 .head-tools {
   display: flex;

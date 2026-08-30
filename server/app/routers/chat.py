@@ -14,7 +14,7 @@ from app.deps import current_user
 from app.kb import KnowledgeBaseAccessError
 from app.models import Conversation, Message, User
 from app.routers.documents import get_db
-from app.schemas import ChatRequest, ChatResponse, CitationOut, ConversationOut, MessageOut
+from app.schemas import ChatRequest, ChatResponse, CitationOut, ConversationOut, ConversationRename, MessageOut
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -109,3 +109,22 @@ def delete_conversation(
     session.delete(convo)
     session.commit()
     return {"ok": True}
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ConversationOut)
+def rename_conversation(
+    conversation_id: uuid.UUID,
+    body: ConversationRename,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    convo = session.get(Conversation, conversation_id)
+    if convo is None or convo.user_id != user.id:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="标题不能为空")
+    convo.title = title[:80]
+    session.commit()
+    session.refresh(convo)
+    return convo
