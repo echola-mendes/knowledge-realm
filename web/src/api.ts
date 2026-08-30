@@ -511,6 +511,12 @@ export function putChunkSettings(body: ChunkSettings) {
   });
 }
 
+export type TokenUsage = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+};
+
 export type AgentTraceStep = {
   type: "step";
   node: "reason" | "run_tool" | "generate" | string;
@@ -521,6 +527,7 @@ export type AgentTraceStep = {
   tool?: string;
   hits?: number;
   answer_len?: number;
+  tokens?: TokenUsage;
 };
 
 export type AgentTraceFinal = {
@@ -530,6 +537,7 @@ export type AgentTraceFinal = {
   answer: string;
   citations: Citation[];
   loop_count: number;
+  tokens?: TokenUsage;
 };
 
 export type AgentTraceEvent = AgentTraceStep | AgentTraceFinal;

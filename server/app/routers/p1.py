@@ -193,6 +193,7 @@ async def agent_trace(
     def events():
         final: dict = dict(state)
         last_ts = time.monotonic()
+        token_sum = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         for chunk in build_graph().stream(state, config=config, stream_mode="updates"):
             now = time.monotonic()
             elapsed_ms = int((now - last_ts) * 1000)
@@ -202,6 +203,11 @@ async def agent_trace(
                     continue
                 final.update(updates)
                 event: dict[str, object] = {"type": "step", "node": node, "elapsed_ms": elapsed_ms}
+                usage = updates.get("usage")
+                if isinstance(usage, dict):
+                    event["tokens"] = usage
+                    for key in token_sum:
+                        token_sum[key] += int(usage.get(key) or 0)
                 if node == "reason":
                     event["action"] = str(updates.get("next_action") or "")
                     event["query"] = str(updates.get("search_query") or "")
@@ -226,6 +232,7 @@ async def agent_trace(
             "answer": str(final.get("answer") or ""),
             "citations": [c.model_dump(mode="json") for c in cites],
             "loop_count": int(final.get("loop_count") or 0),
+            "tokens": dict(token_sum),
         }
         yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 

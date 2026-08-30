@@ -33,6 +33,7 @@ class AgentState(TypedDict, total=False):
     subtasks: list[str]
     subtask_index: int
     allow_web: bool
+    usage: dict[str, int]
 
 
 def clip_subtasks(raw: Any) -> list[str]:
@@ -103,6 +104,10 @@ def plan_agent_search(
     return reason_decide(state)
 
 
+def _usage_extra(usage: dict[str, int] | None) -> dict[str, Any]:
+    return {"usage": usage} if usage else {}
+
+
 def reason_decide(state: AgentState) -> dict[str, Any]:
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_openai import ChatOpenAI
@@ -143,25 +148,25 @@ def reason_decide(state: AgentState) -> dict[str, Any]:
             ("human", "问题：{question}\n子任务：\n{plan}\n已有资料：\n{preview}"),
         ]
     )
-    raw = str(
-        (prompt | model)
-        .invoke(
-            {
-                "question": _user_question(state),
-                "plan": _plan_preview(state),
-                "preview": preview or "（无）",
-            }
-        )
-        .content
+    raw_resp = (prompt | model).invoke(
+        {
+            "question": _user_question(state),
+            "plan": _plan_preview(state),
+            "preview": preview or "（无）",
+        }
     )
+    raw = str(raw_resp.content)
+    from app.llm import _usage_of
+
+    usage = _usage_of(raw_resp)
     try:
         start = raw.find("{")
         end = raw.rfind("}")
         parsed = json.loads(raw[start : end + 1] if start >= 0 and end >= start else raw)
     except json.JSONDecodeError:
-        return {"next_action": "generate"}
+        return {"next_action": "generate", **_usage_extra(usage)}
     if not isinstance(parsed, dict):
-        return {"next_action": "generate"}
+        return {"next_action": "generate", **_usage_extra(usage)}
     extra: dict[str, Any] = {}
     can_write_plan = int(state.get("loop_count") or 0) == 0 and not clip_subtasks(state.get("subtasks") or [])
     if can_write_plan:
@@ -171,10 +176,10 @@ def reason_decide(state: AgentState) -> dict[str, Any]:
     action = str(parsed.get("action") or "")
     query = str(parsed.get("query") or "").strip() or _current_subtask(state, extra.get("subtasks"))
     if action in ("rag", "search") and query:
-        return {"next_action": "search", "search_query": query, **extra}
+        return {"next_action": "search", "search_query": query, **extra, **_usage_extra(usage)}
     if action == "web" and query and state.get("allow_web"):
-        return {"next_action": "web", "search_query": query, **extra}
-    return {"next_action": "generate", **extra}
+        return {"next_action": "web", "search_query": query, **extra, **_usage_extra(usage)}
+    return {"next_action": "generate", **extra, **_usage_extra(usage)}
 
 
 def node_reason(state: AgentState) -> dict[str, Any]:
@@ -223,9 +228,11 @@ def node_run_tool(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     return {"citations": cites, "loop_count": loop_count, "subtask_index": idx}
 
 
-def generate_answer(state: AgentState) -> str:
-    from app.llm import chat
+def generate_answer(state: AgentState) -> tuple[str, dict[str, int] | None]:
+    """生成回答并返回 (文本, token 用量)。经 app.llm.chat 晚绑定调用，兼容测试替换。"""
+    from app import llm as llm_mod
 
+    llm_mod.LAST_USAGE = None
     messages = list(state.get("messages") or [])
     question = _user_question(state)
     subtasks = clip_subtasks(state.get("subtasks") or [])
@@ -253,20 +260,25 @@ def generate_answer(state: AgentState) -> str:
             "只使用资料中的事实，不要编造出处。\n\n"
             f"主题：{question}"
         )
-    return chat(
+    answer = llm_mod.chat(
         question,
         context,
         history,
         summary=(state.get("summary") or "").strip() or None,
         ltm=state.get("ltm_hits") or None,
     )
+    return answer, getattr(llm_mod, "LAST_USAGE", None)
 
 
 def node_generate(state: AgentState) -> dict[str, Any]:
-    answer = generate_answer(state)
+    result = generate_answer(state)
+    answer, usage = result if isinstance(result, tuple) else (result, None)
     messages = list(state.get("messages") or [])
     messages.append({"role": "assistant", "content": answer})
-    return {"answer": answer, "messages": messages}
+    updates: dict[str, Any] = {"answer": answer, "messages": messages}
+    if usage:
+        updates["usage"] = usage
+    return updates
 
 
 def route_after_reason(state: AgentState) -> Literal["run_tool", "generate"]:

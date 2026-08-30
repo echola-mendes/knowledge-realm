@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from app.config import get_settings
 
 CHAT_CALLS = 0
@@ -13,6 +15,9 @@ def llm_keys_ready() -> bool:
     return bool(get_settings().llm_api_key.strip())
 
 
+LAST_USAGE: dict[str, int] | None = None
+
+
 def chat(
     question: str,
     context: str,
@@ -21,6 +26,22 @@ def chat(
     summary: str | None = None,
     ltm: list[dict[str, str]] | None = None,
 ) -> str:
+    """生成回答。真实调用时把 token 用量写入 LAST_USAGE（供 Agent generate 读取）。"""
+    global LAST_USAGE
+    answer, usage = chat_with_usage(question, context, history, summary=summary, ltm=ltm)
+    LAST_USAGE = usage
+    return answer
+
+
+def chat_with_usage(
+    question: str,
+    context: str,
+    history: list[tuple[str, str]] | None = None,
+    *,
+    summary: str | None = None,
+    ltm: list[dict[str, str]] | None = None,
+) -> tuple[str, dict[str, int] | None]:
+    """返回 (回答, token 用量)。usage 结构：prompt_tokens / completion_tokens / total_tokens。"""
     global CHAT_CALLS
     CHAT_CALLS += 1
     from langchain_core.prompts import ChatPromptTemplate
@@ -50,4 +71,19 @@ def chat(
     prompt = ChatPromptTemplate.from_messages(pairs)
     chain = prompt | model
     result = chain.invoke({"context": context, "question": question})
-    return str(result.content)
+    return str(result.content), _usage_of(result)
+
+
+def _usage_of(message: Any) -> dict[str, int] | None:
+    """从 AIMessage 提取 usage_metadata；不可用时返回 None。"""
+    meta = getattr(message, "usage_metadata", None)
+    if not isinstance(meta, dict):
+        return None
+    usage = {
+        "prompt_tokens": int(meta.get("input_tokens") or 0),
+        "completion_tokens": int(meta.get("output_tokens") or 0),
+        "total_tokens": int(meta.get("total_tokens") or 0),
+    }
+    if usage["total_tokens"] <= 0 and usage["prompt_tokens"] <= 0 and usage["completion_tokens"] <= 0:
+        return None
+    return usage

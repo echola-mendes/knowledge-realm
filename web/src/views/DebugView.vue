@@ -147,6 +147,7 @@ const traceKbId = ref("");
 const traceAllowWeb = ref(false);
 const traceRunning = ref(false);
 const traceSteps = ref<AgentTraceStep[]>([]);
+const traceTokens = ref<{ prompt_tokens: number; completion_tokens: number; total_tokens: number } | null>(null);
 const traceFinal = ref<{ answer: string; citations: { document_name: string; score: number }[]; loop_count: number } | null>(null);
 const traceError = ref("");
 const knowledgeBases = ref<KnowledgeBase[]>([]);
@@ -292,6 +293,7 @@ async function runTrace() {
   traceStatus.value = "running";
   traceError.value = "";
   traceSteps.value = [];
+  traceTokens.value = null;
   traceEvents.value = [];
   traceFinal.value = null;
   try {
@@ -304,9 +306,18 @@ async function runTrace() {
       },
       (event: AgentTraceEvent) => {
         traceEvents.value.push(event);
-        if (event.type === "step") traceSteps.value.push(event);
-        else {
+        if (event.type === "step") {
+          traceSteps.value.push(event);
+          if (event.tokens) {
+            traceTokens.value = {
+              prompt_tokens: (traceTokens.value?.prompt_tokens || 0) + event.tokens.prompt_tokens,
+              completion_tokens: (traceTokens.value?.completion_tokens || 0) + event.tokens.completion_tokens,
+              total_tokens: (traceTokens.value?.total_tokens || 0) + event.tokens.total_tokens,
+            };
+          }
+        } else {
           traceFinal.value = { answer: event.answer, citations: event.citations, loop_count: event.loop_count };
+          if (event.tokens) traceTokens.value = event.tokens;
           traceStatus.value = "done";
         }
       },
@@ -664,7 +675,7 @@ onMounted(() => {
         </div>
         <div class="stat-card">
           <p class="stat-label">总 Token</p>
-          <p class="stat-value">—</p>
+          <p class="stat-value">{{ traceTokens ? traceTokens.total_tokens : "—" }}</p>
         </div>
         <div class="stat-card">
           <p class="stat-label">总耗时</p>
@@ -781,7 +792,7 @@ onMounted(() => {
                 <div class="trace-body">
                   <p class="trace-title">
                     {{ traceStepTitle(step) }}
-                    <span class="trace-ms">{{ step.elapsed_ms }}ms</span>
+                    <span class="trace-ms">{{ step.elapsed_ms }}ms<template v-if="step.tokens"> · {{ step.tokens.total_tokens }} tokens</template></span>
                   </p>
                   <p v-if="step.query" class="trace-detail">query：{{ step.query }}</p>
                   <p v-if="step.subtasks?.length" class="trace-detail">子任务：{{ step.subtasks.join(" / ") }}</p>

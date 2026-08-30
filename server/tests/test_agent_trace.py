@@ -78,19 +78,24 @@ def test_agent_trace_emits_steps_and_final(monkeypatch):
 
 
 def test_agent_trace_does_not_persist_conversation(monkeypatch):
+    import sqlalchemy
+
     monkeypatch.setattr(graph_mod, "reason_decide", lambda state: {"next_action": "generate"})
     monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "直答")
 
     with _client() as client:
+        with session_scope() as session:
+            convos_before = len(list(session.scalars(sqlalchemy.select(Conversation))))
+            messages_before = len(list(session.scalars(sqlalchemy.select(Message))))
         res = client.post("/api/agent/trace", json={"query": "你好", "task": "agent"})
         assert res.status_code == 200
         events = _sse_events(res.text)
         with session_scope() as session:
-            conversations = list(session.scalars(__import__("sqlalchemy").select(Conversation)))
-            messages = list(session.scalars(__import__("sqlalchemy").select(Message)))
+            conversations = list(session.scalars(sqlalchemy.select(Conversation)))
+            messages = list(session.scalars(sqlalchemy.select(Message)))
     assert events[-1]["answer"] == "直答"
-    assert conversations == []
-    assert messages == []
+    assert len(conversations) == convos_before
+    assert len(messages) == messages_before
 
 
 def test_agent_trace_requires_llm_keys(monkeypatch):

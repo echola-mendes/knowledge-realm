@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from time import sleep
 
@@ -86,6 +87,14 @@ def _embed_all(texts: list[str]) -> list[list[float]]:
     for start in range(0, len(texts), EMBED_BATCH):
         batch = texts[start : start + EMBED_BATCH]
         vectors.extend(embed_texts(batch))
+    # 用量日志：Embedding 接口不透出精确 token，按「非 ASCII 字符 1 token、ASCII 每 4 字符 1 token」粗估
+    approx = 0
+    for t in texts:
+        non_ascii = sum(1 for ch in t if ord(ch) > 127)
+        approx += non_ascii + (len(t) - non_ascii + 3) // 4
+    logging.getLogger(__name__).info(
+        "embed usage: chunks=%d chars=%d approx_tokens=%d", len(texts), sum(len(t) for t in texts), approx
+    )
     return vectors
 
 
