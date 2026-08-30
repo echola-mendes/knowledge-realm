@@ -24,3 +24,5 @@ data/parsed/**
 test.md
 .cursor/
 server/_tmp_run_server.py
+.idea/
+.zcode/
