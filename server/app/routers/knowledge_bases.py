@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.db import session_scope
 from app.deps import current_user
 from app.es_bm25 import EsNotConfiguredError, delete_knowledge_base_chunks
-from app.models import Document, KnowledgeBase, User
+from app.models import Document, DocumentVersion, KnowledgeBase, User
 from app.schemas import KnowledgeBaseCreate, KnowledgeBaseOut, KnowledgeBaseUpdate
 from app.storage import remove_knowledge_base_files
 
@@ -129,3 +129,72 @@ def delete_kb(kb_id: uuid.UUID, session: Session = Depends(get_db), user: User =
         pass
     session.delete(kb)
     session.commit()
+
+
+@router.post("/{kb_id}/refresh-urls")
+def refresh_kb_urls(
+    kb_id: uuid.UUID,
+    background: BackgroundTasks,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """后台逐个刷新库内全部 url 文档（P3-AUTO-1）。立即返回待刷新数量。"""
+    _owned(session, kb_id, user.id)
+    url_doc_ids = [
+        row.id
+        for row in session.scalars(
+            select(Document).where(Document.knowledge_base_id == kb_id, Document.kind == "url")
+        ).all()
+    ]
+    for doc_id in url_doc_ids:
+        background.add_task(_refresh_url_task, doc_id)
+    return {"queued": len(url_doc_ids)}
+
+
+def _refresh_url_task(document_id: uuid.UUID) -> None:
+    """BackgroundTasks 里的单文档刷新：抓取→版本→增量索引。"""
+    import hashlib
+
+    from app import index as index_mod
+    from app.db import session_scope
+    from app.models import Document
+    from app.storage import parsed_dir
+    from app.url_import import fetch_url_document
+
+    result = fetch_url_document(document_id)
+    if result != "changed":
+        return
+    session = session_scope()
+    try:
+        doc = session.get(Document, document_id)
+        if doc is None:
+            return
+        md_path = parsed_dir(doc.id) / "document.md"
+        if not md_path.is_file():
+            return
+        md = md_path.read_text(encoding="utf-8")
+        new_checksum = hashlib.sha256(md.encode("utf-8")).hexdigest()
+        if new_checksum != (doc.checksum or ""):
+            doc.version += 1
+            doc.checksum = new_checksum
+            doc.byte_size = len(md.encode("utf-8"))
+            session.commit()
+            session.refresh(doc)
+            exists = session.scalar(
+                select(DocumentVersion).where(
+                    DocumentVersion.document_id == doc.id, DocumentVersion.version == doc.version
+                )
+            )
+            if exists is None:
+                session.add(
+                    DocumentVersion(
+                        document_id=doc.id,
+                        version=doc.version,
+                        checksum=doc.checksum,
+                        byte_size=doc.byte_size,
+                    )
+                )
+                session.commit()
+    finally:
+        session.close()
+    index_mod.index_document_incremental(document_id)

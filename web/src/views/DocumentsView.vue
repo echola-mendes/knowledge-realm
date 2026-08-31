@@ -15,6 +15,7 @@ import {
   listDocumentVersions,
   listTags,
   reindexDocument,
+  refreshUrlDocument,
   uploadFile,
   type DocumentItem,
   type DocumentVersionItem,
@@ -28,6 +29,7 @@ const route = useRoute();
 const docs = ref<DocumentItem[]>([]);
 const tags = ref<TagItem[]>([]);
 const error = ref("");
+const notice = ref("");
 const note = ref("");
 const url = ref("");
 const filterKb = ref("");
@@ -65,6 +67,7 @@ const pickMode = ref(false);
 const comparing = ref(false);
 const comparisonHtml = ref("");
 const reindexingIds = ref<Set<string>>(new Set());
+const refreshingIds = ref<Set<string>>(new Set());
 const filteredDocs = computed(() => {
   const name = appliedName.value.trim().toLowerCase();
   return docs.value.filter((doc) => {
@@ -125,6 +128,28 @@ function reindexLabel(doc: DocumentItem) {
   if (reindexingIds.value.has(doc.id)) return "处理中";
   if (doc.status === "indexing" || doc.status === "parsing") return "重试向量化";
   return "向量化";
+}
+
+async function onRefreshUrl(doc: DocumentItem) {
+  if (refreshingIds.value.has(doc.id)) return;
+  refreshingIds.value = new Set([...refreshingIds.value, doc.id]);
+  error.value = "";
+  notice.value = "";
+  try {
+    const updated = await refreshUrlDocument(doc.id);
+    versionMap.value.delete(updated.id);
+    await refresh();
+    notice.value =
+      updated.refresh_status === "unchanged" || (updated.version ?? 1) <= (doc.version ?? 1)
+        ? "已是最新"
+        : "已更新并重建索引";
+  } catch (e) {
+    error.value = formatApiError(e);
+  } finally {
+    const next = new Set(refreshingIds.value);
+    next.delete(doc.id);
+    refreshingIds.value = next;
+  }
 }
 
 async function onReindex(doc: DocumentItem) {
@@ -446,6 +471,7 @@ watch(pageCount, (n) => {
         <p class="sub">写入所选知识库。完成后返回文档列表。</p>
       </div>
     </div>
+    <p v-if="notice" class="hint">{{ notice }}</p>
     <p v-if="error" class="hint err">{{ error }}</p>
     <section class="card pad import-panel">
       <div class="form-row">
@@ -758,6 +784,15 @@ watch(pageCount, (n) => {
               <td>{{ formatTime(doc.created_at) }}</td>
               <td class="ops">
                 <RouterLink class="btn-link" :to="`/documents/${doc.id}/chunks`">切片</RouterLink>
+                <button
+                  v-if="doc.kind === 'url'"
+                  class="btn-link"
+                  type="button"
+                  :disabled="refreshingIds.has(doc.id)"
+                  @click="onRefreshUrl(doc)"
+                >
+                  {{ refreshingIds.has(doc.id) ? "更新中" : "更新" }}
+                </button>
                 <button
                   class="btn-link reindex-btn"
                   type="button"

@@ -4,7 +4,7 @@ import hashlib
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -645,5 +645,47 @@ def index_document_http(
     doc = _owned_doc(session, document_id, user.id)
     index_mod.index_document(document_id)
     session.refresh(doc)
+    return _document_out(doc, session, user.id)
+
+
+@router.post("/{document_id}/refresh", response_model=DocumentOut)
+def refresh_url_document_http(
+    document_id: uuid.UUID,
+    response: Response,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """重新抓取 url 文档：内容变更走增量索引 + 版本+1；未变更保持 ready。"""
+    import hashlib
+
+    from app.storage import parsed_dir
+    from app.url_import import fetch_url_document
+
+    doc = _owned_doc(session, document_id, user.id)
+    if doc.kind != "url":
+        raise HTTPException(status_code=400, detail="仅支持 URL 文档")
+    if not index_mod.embedding_keys_ready():
+        raise HTTPException(status_code=503, detail="未配置 Embedding API Key")
+    fetch_result = fetch_url_document(document_id)
+    session.expire_all()
+    doc = _owned_doc(session, document_id, user.id)
+    if fetch_result == "failed":
+        raise HTTPException(status_code=502, detail=f"抓取失败：{doc.error_message or 'unknown'}")
+    if fetch_result == "unchanged":
+        response.headers["X-Refresh-Status"] = "unchanged"
+        return _document_out(doc, session, user.id)
+    md = parsed_dir(doc.id).joinpath("document.md").read_text(encoding="utf-8")
+    new_checksum = hashlib.sha256(md.encode("utf-8")).hexdigest()
+    if new_checksum != (doc.checksum or ""):
+        doc.version += 1
+        doc.checksum = new_checksum
+        doc.byte_size = len(md.encode("utf-8"))
+        session.commit()
+        session.refresh(doc)
+        register_version(doc)
+    index_mod.index_document_incremental(document_id)
+    session.expire_all()
+    doc = _owned_doc(session, document_id, user.id)
+    response.headers["X-Refresh-Status"] = "changed"
     return _document_out(doc, session, user.id)
 

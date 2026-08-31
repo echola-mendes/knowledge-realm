@@ -40,6 +40,28 @@ export function listDocumentVersions(documentId: string) {
   return api<DocumentVersionItem[]>(`/api/documents/${documentId}/versions`);
 }
 
+export type RefreshUrlResult = DocumentItem & { refresh_status?: "changed" | "unchanged" };
+
+export async function refreshUrlDocument(documentId: string): Promise<RefreshUrlResult> {
+  const res = await fetch(`/api/documents/${documentId}/refresh`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(messageFromErrorBody(await res.text(), res.statusText));
+  }
+  const body = (await res.json()) as DocumentItem;
+  const status = res.headers.get("x-refresh-status");
+  return {
+    ...body,
+    refresh_status: status === "changed" || status === "unchanged" ? status : undefined,
+  };
+}
+
+export function refreshKbUrls(kbId: string) {
+  return api<{ queued: number }>(`/api/knowledge-bases/${kbId}/refresh-urls`, { method: "POST" });
+}
+
 export type TagItem = { id: string; name: string };
 
 export type SearchHit = {
@@ -605,3 +627,4 @@ export async function streamAgentTrace(
     }
   }
 }
+
