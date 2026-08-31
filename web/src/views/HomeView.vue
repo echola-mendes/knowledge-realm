@@ -4,8 +4,10 @@ import { RouterLink, useRouter } from "vue-router";
 import {
   listDocuments,
   listKnowledgeBases,
+  listRecommendations,
   listTags,
   type DocumentItem,
+  type RecommendationItem,
   type TagItem,
 } from "../api";
 
@@ -16,6 +18,7 @@ const docCount = ref(0);
 const tagCount = ref(0);
 const recentDocs = ref<DocumentItem[]>([]);
 const tags = ref<TagItem[]>([]);
+const recommendations = ref<RecommendationItem[]>([]);
 
 const newsItems = [
   "央行公开市场净投放超千亿，短端资金面边际转松",
@@ -55,10 +58,11 @@ function tagName(id: string) {
 }
 
 onMounted(async () => {
-  const [kbs, tagRows] = await Promise.all([listKnowledgeBases(), listTags()]);
+  const [kbs, tagRows, recos] = await Promise.all([listKnowledgeBases(), listTags(), listRecommendations()]);
   kbCount.value = kbs.filter((k) => k.is_enabled).length;
   tags.value = tagRows;
   tagCount.value = tagRows.length;
+  recommendations.value = recos;
   const docs = await listDocuments();
   docCount.value = docs.length;
   recentDocs.value = docs.slice(0, 4);
@@ -109,6 +113,23 @@ function goChat() {
       <div class="card stat">
         <strong>{{ tagCount }}</strong>
         <span>标签</span>
+      </div>
+    </section>
+
+    <section v-if="recommendations.length" class="lists">
+      <div class="card list-card">
+        <header>
+          <h2>推荐阅读</h2>
+        </header>
+        <RouterLink
+          v-for="r in recommendations"
+          :key="r.document_id"
+          class="row"
+          :to="`/documents/${r.document_id}`"
+        >
+          <span class="name">{{ r.document_name }}</span>
+          <span class="kind">{{ r.kind }}</span>
+        </RouterLink>
       </div>
     </section>
 

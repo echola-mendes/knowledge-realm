@@ -7,7 +7,7 @@ from typing import Any, Literal, TypedDict
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
-from app.p1.tools import search_knowledge, web_search
+from app.p1.tools import search_graph, search_knowledge, web_search
 from app.search import SearchHit
 
 MAX_LOOPS = 3
@@ -137,6 +137,11 @@ def reason_decide(state: AgentState) -> dict[str, Any]:
                 '不调用工具、直接生成：{{"action":"direct"}}。'
                 '检索知识库：{{"action":"rag","query":"检索词"}}。'
                 + (
+                    '按知识图谱检索：{{"action":"graph","query":"检索词"}}。'
+                    if state.get("knowledge_base_id")
+                    else ""
+                )
+                + (
                     '检索互联网：{{"action":"web","query":"检索词"}}。'
                     if state.get("allow_web")
                     else "禁止检索互联网，不得输出 action=web。"
@@ -177,6 +182,8 @@ def reason_decide(state: AgentState) -> dict[str, Any]:
     query = str(parsed.get("query") or "").strip() or _current_subtask(state, extra.get("subtasks"))
     if action in ("rag", "search") and query:
         return {"next_action": "search", "search_query": query, **extra, **_usage_extra(usage)}
+    if action == "graph" and query and state.get("knowledge_base_id"):
+        return {"next_action": "graph", "search_query": query, **extra, **_usage_extra(usage)}
     if action == "web" and query and state.get("allow_web"):
         return {"next_action": "web", "search_query": query, **extra, **_usage_extra(usage)}
     return {"next_action": "generate", **extra, **_usage_extra(usage)}
@@ -220,7 +227,10 @@ def node_run_tool(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
         if len(web_hits) > MAX_CITATIONS:
             web_hits = web_hits[-MAX_CITATIONS:]
         return {"web_hits": web_hits, "loop_count": loop_count, "subtask_index": idx}
-    hits = search_knowledge(session, query, user_id=user_id, knowledge_base_id=kb_id)
+    if state.get("next_action") == "graph" and kb_id:
+        hits = search_graph(session, query, user_id=user_id, knowledge_base_id=kb_id)
+    else:
+        hits = search_knowledge(session, query, user_id=user_id, knowledge_base_id=kb_id)
     cites = list(state.get("citations") or [])
     cites.extend(_hit_to_citation(hit) for hit in hits)
     if len(cites) > MAX_CITATIONS:
@@ -285,7 +295,7 @@ def route_after_reason(state: AgentState) -> Literal["run_tool", "generate"]:
     action = state.get("next_action")
     if action == "web" and not state.get("allow_web"):
         return "generate"
-    if action in ("search", "rag", "web") and int(state.get("loop_count") or 0) < int(
+    if action in ("search", "rag", "web", "graph") and int(state.get("loop_count") or 0) < int(
         state.get("max_loops") or MAX_LOOPS
     ):
         return "run_tool"

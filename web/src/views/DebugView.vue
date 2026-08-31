@@ -2,19 +2,22 @@
 import { computed, onMounted, ref, watch } from "vue";
 import ChunkMultiSelect from "../components/ChunkMultiSelect.vue";
 import {
+  computeRagMetrics,
   getMe,
-  judgeAnswerQuality,
+  getRagEvalCase,
   listDebugDatasetChunks,
   listKnowledgeBases,
   listRetrievalLabels,
+  putRagEvalCase,
   putRetrievalLabel,
   runRetrievalDebug,
   streamAgentTrace,
   type AgentTraceEvent,
   type AgentTraceStep,
-  type AnswerQuality,
   type DebugDatasetChunk,
   type KnowledgeBase,
+  type RagEvalCase,
+  type RagMetrics,
   type RetrievalDebugRow,
 } from "../api";
 
@@ -155,10 +158,13 @@ const traceFinal = ref<{
   citations: { document_name: string; score: number; content?: string }[];
   loop_count: number;
 } | null>(null);
-const answerQuality = ref<AnswerQuality | null>(null);
-const judging = ref(false);
-const judgeError = ref("");
 const traceError = ref("");
+const metricSet = ref<"retrieval" | "rag" | "full">("retrieval");
+const gtAnswer = ref("");
+const gtAnswerLoading = ref(false);
+const savingEvalCase = ref(false);
+const ragMetrics = ref<RagMetrics | null>(null);
+const ragMetricsLoading = ref(false);
 const knowledgeBases = ref<KnowledgeBase[]>([]);
 const traceStatus = ref<"idle" | "running" | "done" | "error">("idle");
 const traceTab = ref<"result" | "chain" | "tools" | "model" | "json">("result");
@@ -259,6 +265,21 @@ const traceTips = computed(() => {
 });
 const traceRawJson = computed(() => JSON.stringify(traceEvents.value, null, 2));
 
+const metricSetHint = computed(() => {
+  if (metricSet.value === "retrieval") return "只根据 Ground Truth（≥2 视为相关，切片级），不用检索分推断。";
+  if (metricSet.value === "rag") return "基于 Agent Trace 最终回复与引用上下文，评估生成侧质量。";
+  return "综合检索排序与生成质量；GT Answer 用于 Correctness 与 Semantic Similarity。";
+});
+
+const metricSetGtHint = computed(() => {
+  if (metricSet.value === "retrieval") return "需要切片级 Ground Truth（右侧选择 ≥2 相关切片）。";
+  if (metricSet.value === "rag") return "不需要 GT Answer；Trace 完成即可计算 Faithfulness 与 Answer Relevance。";
+  return "需要 GT Answer 以计算 Correctness / Similarity；可临时输入或保存为评测用例。";
+});
+
+const showRetrievalMetrics = computed(() => metricSet.value === "retrieval" || metricSet.value === "full");
+const showRagMetrics = computed(() => metricSet.value === "rag" || metricSet.value === "full");
+
 function applyScenario(question: string) {
   traceQuery.value = question;
 }
@@ -305,8 +326,7 @@ async function runTrace() {
   traceTokens.value = null;
   traceEvents.value = [];
   traceFinal.value = null;
-  answerQuality.value = null;
-  judgeError.value = "";
+  ragMetrics.value = null;
   try {
     await streamAgentTrace(
       {
@@ -329,9 +349,10 @@ async function runTrace() {
         } else {
           traceFinal.value = { answer: event.answer, citations: event.citations, loop_count: event.loop_count };
           if (event.tokens) traceTokens.value = event.tokens;
-          answerQuality.value = null;
-          judgeError.value = "";
           traceStatus.value = "done";
+          if (metricSet.value !== "retrieval") {
+            runRagMetrics();
+          }
         }
       },
     );
@@ -344,20 +365,55 @@ async function runTrace() {
   }
 }
 
-async function evaluateAnswer() {
-  if (!traceFinal.value || judging.value) return;
-  judging.value = true;
-  judgeError.value = "";
+async function loadGtAnswer() {
+  const q = query.value.trim() || traceQuery.value.trim();
+  if (!q || metricSet.value === "retrieval") return;
+  gtAnswerLoading.value = true;
   try {
-    answerQuality.value = await judgeAnswerQuality({
-      query: traceQuery.value.trim(),
+    const row = await getRagEvalCase(q);
+    gtAnswer.value = row.gt_answer;
+  } catch {
+    gtAnswer.value = "";
+  } finally {
+    gtAnswerLoading.value = false;
+  }
+}
+
+async function saveEvalCase() {
+  const q = query.value.trim() || traceQuery.value.trim();
+  if (!q) {
+    hint.value = "先填写测试查询。";
+    return;
+  }
+  if (!gtAnswer.value.trim()) {
+    hint.value = "GT Answer 为空，无法保存。";
+    return;
+  }
+  savingEvalCase.value = true;
+  try {
+    await putRagEvalCase({ query: q, gt_answer: gtAnswer.value.trim() });
+    hint.value = "已保存评测用例。";
+  } catch (e) {
+    hint.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    savingEvalCase.value = false;
+  }
+}
+
+async function runRagMetrics() {
+  if (!traceFinal.value) return;
+  ragMetricsLoading.value = true;
+  try {
+    ragMetrics.value = await computeRagMetrics({
+      query: query.value.trim() || traceQuery.value.trim(),
       answer: traceFinal.value.answer,
       contexts: traceFinal.value.citations.map((c) => c.content || "").filter(Boolean),
+      gt_answer: gtAnswer.value.trim() || null,
     });
   } catch (e) {
-    judgeError.value = e instanceof Error ? e.message : String(e);
+    hint.value = e instanceof Error ? e.message : String(e);
   } finally {
-    judging.value = false;
+    ragMetricsLoading.value = false;
   }
 }
 
@@ -659,6 +715,14 @@ watch(query, () => {
   loadGtSelection().catch((e) => {
     hint.value = String(e);
   });
+  loadGtAnswer();
+});
+
+watch(metricSet, () => {
+  loadGtAnswer();
+  if (metricSet.value !== "retrieval" && traceFinal.value) {
+    runRagMetrics();
+  }
 });
 
 onMounted(() => {
@@ -786,10 +850,6 @@ onMounted(() => {
                 <div class="trace-answer-head">
                   <h3>最终回复</h3>
                   <div class="trace-answer-actions">
-                    <button v-if="traceFinal && !judging" class="linkish" type="button" @click="evaluateAnswer">
-                      评估回答
-                    </button>
-                    <span v-if="judging" class="tiny">评估中…</span>
                     <button v-if="traceFinal" class="linkish" type="button" @click="copyAnswer">
                       复制回复
                     </button>
@@ -798,16 +858,6 @@ onMounted(() => {
                 <p v-if="traceFinal" class="trace-answer-text">{{ traceFinal.answer }}</p>
                 <p v-else-if="traceRunning" class="tiny">生成中…</p>
                 <p v-else class="tiny">运行后在这里显示最终回复。</p>
-                <div v-if="judgeError" class="tiny judge-err">{{ judgeError }}</div>
-                <div v-if="answerQuality" class="judge-result">
-                  <span class="judge-pill">忠实 {{ answerQuality.faithfulness }}/5</span>
-                  <span class="judge-pill">切题 {{ answerQuality.relevance }}/5</span>
-                  <span class="judge-pill">完整 {{ answerQuality.completeness }}/5</span>
-                  <ul v-if="answerQuality.issues.length" class="judge-issues">
-                    <li v-for="issue in answerQuality.issues" :key="issue">{{ issue }}</li>
-                  </ul>
-                  <p v-else class="tiny">无明显问题。</p>
-                </div>
               </div>
               <div class="trace-delay-card">
                 <div class="trace-delay-head">
@@ -1242,11 +1292,31 @@ onMounted(() => {
       </div>
       <div class="card pad">
         <h2>Evaluation Metrics</h2>
-        <p class="tiny">只根据 Ground Truth（≥2 视为相关，切片级），不用检索分推断。</p>
-        <select>
-          <option>Default Metric Set</option>
+        <p class="tiny">{{ metricSetHint }}</p>
+        <select v-model="metricSet">
+          <option value="retrieval">Retrieval Evaluation</option>
+          <option value="rag">RAG Evaluation</option>
+          <option value="full">Full RAG Evaluation</option>
         </select>
-        <div class="table-wrap">
+        <p class="tiny">{{ metricSetGtHint }}</p>
+        <div v-if="showRagMetrics" class="gt-answer-block">
+          <label>GT Answer（仅用于 Correctness / Similarity）</label>
+          <textarea
+            v-model="gtAnswer"
+            rows="3"
+            placeholder="输入标准答案；不保存则只参与本次评测"
+            :disabled="gtAnswerLoading"
+          />
+          <button
+            class="btn"
+            type="button"
+            :disabled="savingEvalCase || !gtAnswer.trim()"
+            @click="saveEvalCase"
+          >
+            {{ savingEvalCase ? "保存中…" : "保存为评测用例" }}
+          </button>
+        </div>
+        <div v-if="showRetrievalMetrics" class="table-wrap">
           <table>
             <thead>
               <tr>
@@ -1278,7 +1348,36 @@ onMounted(() => {
             </tbody>
           </table>
         </div>
-        <p class="tiny">Ground Truth 命中位置分布（本次查询）：{{ gtHits.length }}</p>
+        <div v-if="showRagMetrics" class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>指标</th>
+                <th>分值</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Faithfulness</td>
+                <td>{{ ragMetricsLoading ? "计算中…" : (ragMetrics?.faithfulness?.toFixed(2) ?? "—") }}</td>
+              </tr>
+              <tr>
+                <td>Answer Relevance</td>
+                <td>{{ ragMetricsLoading ? "计算中…" : (ragMetrics?.answer_relevance?.toFixed(2) ?? "—") }}</td>
+              </tr>
+              <tr>
+                <td>Answer Correctness</td>
+                <td>{{ ragMetricsLoading ? "计算中…" : (ragMetrics?.answer_correctness?.toFixed(2) ?? "—") }}</td>
+              </tr>
+              <tr>
+                <td>Semantic Similarity</td>
+                <td>{{ ragMetricsLoading ? "计算中…" : (ragMetrics?.semantic_similarity?.toFixed(2) ?? "—") }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-if="!traceFinal && metricSet === 'rag'" class="tiny">请先运行 Agent Trace 以计算 RAG 指标。</p>
+        </div>
+        <p v-if="showRetrievalMetrics" class="tiny">Ground Truth 命中位置分布（本次查询）：{{ gtHits.length }}</p>
       </div>
     </section>
     </div>

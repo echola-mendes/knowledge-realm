@@ -4,7 +4,7 @@ import json
 import time
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,15 +13,21 @@ from app.db import session_scope
 from app.deps import current_user
 from app.kb import KnowledgeBaseAccessError, owned_document, resolve_knowledge_base_id
 from app.llm import llm_keys_ready
-from app.models import Conversation, Document, Entity, EntityLink, Message, User
+from app.models import Conversation, Document, Entity, EntityLink, KnowledgeBase, Message, User
 from app.p1.chains import compare_documents, gather_document_text
 from app.p1.ltm import load_ltm_hits
 from app.p1.conversation_summary import refresh_conversation_summary
 from app.p1.graph import build_graph, initial_state
 from app.chat import _history
+from app.p1.tools import search_graph, search_graph_details, search_knowledge, web_search
 from app.schemas import (
     AgentOut,
     AgentRequest,
+    GraphSearchOut,
+    GraphSearchDetailOut,
+    GraphSearchDocumentOut,
+    GraphPathOut,
+    GraphDocumentOut,
     CitationOut,
     CompareOut,
     CompareRequest,
@@ -214,9 +220,13 @@ async def agent_trace(
                     if updates.get("subtasks"):
                         event["subtasks"] = list(updates["subtasks"])
                 elif node == "run_tool":
-                    if "web_hits" in updates:
+                    action = final.get("next_action")
+                    if action == "web" or "web_hits" in updates:
                         event["tool"] = "web_search"
-                        event["hits"] = len(updates["web_hits"])
+                        event["hits"] = len(updates.get("web_hits") or [])
+                    elif action == "graph":
+                        event["tool"] = "search_graph"
+                        event["hits"] = len(updates.get("citations") or [])
                     else:
                         event["tool"] = "search_knowledge"
                         event["hits"] = len(updates.get("citations") or [])
@@ -240,13 +250,108 @@ async def agent_trace(
 
 
 def _graph_out(entities: list[Entity], links: list[EntityLink]) -> KnowledgeGraphOut:
+    doc_counts: dict[uuid.UUID, set[uuid.UUID | None]] = {row.id: set() for row in entities}
+    for link in links:
+        doc_counts.get(link.from_id, set()).add(link.document_id)
+        doc_counts.get(link.to_id, set()).add(link.document_id)
     return KnowledgeGraphOut(
-        entities=[GraphEntityOut(id=row.id, name=row.name, type=row.type) for row in entities],
+        entities=[
+            GraphEntityOut(
+                id=row.id,
+                name=row.name,
+                type=row.type,
+                created_at=row.created_at,
+                source_doc_count=len(doc_counts.get(row.id, set())),
+            )
+            for row in entities
+        ],
         links=[
             GraphLinkOut(from_id=row.from_id, to_id=row.to_id, rel=row.rel, document_id=row.document_id)
             for row in links
         ],
     )
+
+
+
+
+@router.get("/graph/search", response_model=list[GraphSearchOut])
+def search_graph_endpoint(
+    query: str,
+    knowledge_base_id: uuid.UUID,
+    k: int = 5,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """基于知识图谱的检索：按 query 匹配实体并沿关系扩展，返回相关文档切片。"""
+    if k < 1 or k > 20:
+        raise HTTPException(status_code=400, detail="k 须在 1–20 之间")
+    kb = session.get(KnowledgeBase, knowledge_base_id)
+    if kb is None or kb.user_id != user.id:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    hits = search_graph(session, query, user.id, knowledge_base_id, k=k)
+    return [
+        GraphSearchOut(
+            document_id=hit.document_id,
+            document_name=hit.document_name,
+            chunk_id=hit.chunk_id,
+            content=hit.content,
+            score=hit.score,
+            page=hit.page,
+            heading=hit.heading,
+            kind=hit.kind,
+        )
+        for hit in hits
+    ]
+
+
+@router.get("/graph/search/details", response_model=GraphSearchDetailOut)
+def search_graph_details_endpoint(
+    query: str,
+    knowledge_base_id: uuid.UUID,
+    k: int = 5,
+    depth: int = 2,
+    rel: str | None = None,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """知识图谱检索详情页：返回命中实体、关系、路径与相关文档。"""
+    if k < 1 or k > 20:
+        raise HTTPException(status_code=400, detail="k 须在 1–20 之间")
+    if depth < 1 or depth > 3:
+        raise HTTPException(status_code=400, detail="depth 须在 1–3 之间")
+    kb = session.get(KnowledgeBase, knowledge_base_id)
+    if kb is None or kb.user_id != user.id:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    raw = search_graph_details(session, query, user.id, knowledge_base_id, k=k, max_hops=depth, rel=rel)
+    entity_map = {row.id: GraphEntityOut(
+        id=row.id, name=row.name, type=row.type, created_at=row.created_at,
+        source_doc_count=sum(1 for link in raw["links"] if link.from_id == row.id or link.to_id == row.id),
+    ) for row in raw["entities"]}
+    return GraphSearchDetailOut(
+        query=raw["query"],
+        entities=list(entity_map.values()),
+        links=[GraphLinkOut(from_id=link.from_id, to_id=link.to_id, rel=link.rel, document_id=link.document_id) for link in raw["links"]],
+        documents=[GraphSearchDocumentOut(**doc) for doc in raw["documents"]],
+        paths=[GraphPathOut(
+            entities=[entity_map[link.from_id] for link in path] + [entity_map[path[-1].to_id]],
+            rels=[link.rel for link in path],
+        ) for path in raw["paths"] if all(link.from_id in entity_map and link.to_id in entity_map for link in path)],
+    )
+
+
+@router.get("/graph/documents", response_model=list[GraphDocumentOut])
+def get_graph_documents(
+    ids: list[uuid.UUID] = Query(default_factory=list),
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    """批量查询图谱中实体/关系来源的文档元数据。"""
+    if not ids:
+        return []
+    rows = session.scalars(select(Document).where(Document.id.in_(ids), Document.status == "ready")).all()
+    # 权限校验：只返回用户自己的文档
+    allowed_ids = {row.id for row in rows if row.knowledge_base.user_id == user.id}
+    return [GraphDocumentOut(document_id=row.id, document_name=row.filename, version=row.version) for row in rows if row.id in allowed_ids]
 
 
 @router.get("/graph", response_model=KnowledgeGraphOut)

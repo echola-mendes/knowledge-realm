@@ -55,7 +55,21 @@ defineProps<{ name: string }>();
       <path d="M4.5 15.5v3a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3" />
     </template>
     <template v-else-if="name === 'plus'">
-      <path d="M12 5v14M5 12h14" />
+     <path d="M12 5v14M5 12h14" />
+   </template>
+    <template v-else-if="name === 'minus'">
+      <path d="M5 12h14" />
+    </template>
+    <template v-else-if="name === 'maximize'">
+      <path d="M4.5 4.5h15v15h-15z" />
+      <path d="M4.5 9.5h15M9.5 4.5v15" />
+    </template>
+    <template v-else-if="name === 'refresh'">
+      <path d="M20 11A8 8 0 1 1 6.3 7.3" />
+      <path d="M20 4v7h-7" />
+    </template>
+    <template v-else-if="name === 'fullscreen'">
+      <path d="M4.5 9.5V4.5h5M19.5 9.5V4.5h-5M4.5 14.5v5h5M19.5 14.5v5h-5" />
     </template>
     <template v-else-if="name === 'chevron-left'">
       <path d="m14 7-5 5 5 5" />

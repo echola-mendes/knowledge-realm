@@ -369,7 +369,7 @@ export function getParsedMarkdown(id: string) {
   return api<string>(`/api/documents/${id}/parsed.md`);
 }
 
-export type GraphEntity = { id: string; name: string; type: string };
+export type GraphEntity = { id: string; name: string; type: string; created_at?: string | null; source_doc_count?: number; description?: string | null; confidence?: number | null };
 export type GraphLink = { from_id: string; to_id: string; rel: string; document_id: string | null };
 export type KnowledgeGraph = { entities: GraphEntity[]; links: GraphLink[] };
 export type RelatedDocument = {
@@ -385,6 +385,46 @@ export function getKnowledgeGraph(opts: { knowledgeBaseId?: string; documentId?:
   if (opts.documentId) q.set("document_id", opts.documentId);
   return api<KnowledgeGraph>(`/api/graph?${q}`);
 }
+
+
+export function searchKnowledgeGraph(knowledgeBaseId: string, query: string, k = 20) {
+  const params = new URLSearchParams({ knowledge_base_id: knowledgeBaseId, query, k: String(k) });
+  return api<SearchHit[]>(`/api/graph/search?${params}`);
+}
+
+
+
+export type GraphDocumentOut = { document_id: string; document_name: string; version: number };
+
+export type GraphPathOut = { entities: GraphEntity[]; rels: string[] };
+
+export type GraphSearchDetailOut = {
+  query: string;
+  entities: GraphEntity[];
+  links: GraphLink[];
+  documents: SearchHit[];
+  paths: GraphPathOut[];
+};
+
+export function searchKnowledgeGraphDetails(
+  knowledgeBaseId: string,
+  query: string,
+  depth = 2,
+  rel?: string,
+  k = 5,
+) {
+  const params = new URLSearchParams({ knowledge_base_id: knowledgeBaseId, query, k: String(k), depth: String(depth) });
+  if (rel) params.set("rel", rel);
+  return api<GraphSearchDetailOut>(`/api/graph/search/details?${params}`);
+}
+
+export function getGraphDocuments(ids: string[]) {
+  if (!ids.length) return Promise.resolve([] as GraphDocumentOut[]);
+  const params = new URLSearchParams();
+  ids.forEach((id) => params.append("ids", id));
+  return api<GraphDocumentOut[]>(`/api/graph/documents?${params}`);
+}
+
 
 export function extractDocumentGraph(id: string) {
   return api<KnowledgeGraph>(`/api/documents/${id}/graph`, { method: "POST" });
@@ -551,6 +591,46 @@ export type TokenUsage = {
   total_tokens: number;
 };
 
+export type RagMetrics = {
+  faithfulness: number | null;
+  answer_relevance: number | null;
+  answer_correctness: number | null;
+  semantic_similarity: number | null;
+};
+
+export type RagEvalCase = {
+  query_norm: string;
+  knowledge_base_id: string | null;
+  gt_answer: string;
+};
+
+export function getRagEvalCase(query: string, knowledge_base_id?: string) {
+  const params = new URLSearchParams({ query });
+  if (knowledge_base_id) params.set("knowledge_base_id", knowledge_base_id);
+  return api<RagEvalCase>(`/api/retrieval-debug/eval-cases?${params}`);
+}
+
+export function putRagEvalCase(body: { query: string; knowledge_base_id?: string; gt_answer: string }) {
+  return api<RagEvalCase>("/api/retrieval-debug/eval-cases", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function computeRagMetrics(body: {
+  query: string;
+  answer: string;
+  contexts: string[];
+  gt_answer?: string | null;
+}) {
+  return api<RagMetrics>("/api/retrieval-debug/rag-metrics", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export type AnswerQuality = {
   faithfulness: number;
   relevance: number;
@@ -628,3 +708,14 @@ export async function streamAgentTrace(
   }
 }
 
+export type RecommendationItem = {
+  document_id: string;
+  document_name: string;
+  knowledge_base_id: string;
+  score: number;
+  kind: string;
+};
+
+export function listRecommendations() {
+  return api<RecommendationItem[]>("/api/recommendations");
+}

@@ -11,12 +11,16 @@ from app import index as index_mod
 from app import llm as llm_mod
 from app.deps import current_user, get_db
 from app.kb import KnowledgeBaseAccessError
-from app.models import Document, DocumentChunk, KnowledgeBase, RetrievalLabel, User
+from app.models import Document, DocumentChunk, KnowledgeBase, RagEvalCase, RetrievalLabel, User
 from app.p1.graph import plan_agent_search
 from app.schemas import (
     AnswerQualityOut,
     AnswerQualityRequest,
     DebugDatasetChunkOut,
+    RagEvalCaseOut,
+    RagEvalCasePut,
+    RagMetricsOut,
+    RagMetricsRequest,
     RetrievalDebugRequest,
     RetrievalDebugResponse,
     RetrievalLabelOut,
@@ -24,6 +28,7 @@ from app.schemas import (
     RetrievalTimingsOut,
 )
 from app.quality import judge_answer, judge_keys_ready
+from app.rag_eval import compute_rag_metrics, keys_ready as rag_eval_keys_ready
 from app.search import normalize_query, search_debug
 
 router = APIRouter(prefix="/api", tags=["retrieval-debug"])
@@ -177,6 +182,71 @@ def put_label(
     return RetrievalLabelOut(chunk_id=row.chunk_id, document_id=row.document_id, relevance=row.relevance)
 
 
+@router.get("/retrieval-debug/eval-cases", response_model=RagEvalCaseOut)
+def get_eval_case(
+    query: str = Query(min_length=1),
+    knowledge_base_id: uuid.UUID | None = None,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    qn = normalize_query(query)
+    stmt = select(RagEvalCase).where(
+        RagEvalCase.user_id == user.id,
+        RagEvalCase.query_norm == qn,
+    )
+    if knowledge_base_id is None:
+        stmt = stmt.where(RagEvalCase.knowledge_base_id.is_(None))
+    else:
+        stmt = stmt.where(RagEvalCase.knowledge_base_id == knowledge_base_id)
+    row = session.scalars(stmt).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="评测用例不存在")
+    return RagEvalCaseOut(
+        query_norm=row.query_norm,
+        knowledge_base_id=row.knowledge_base_id,
+        gt_answer=row.gt_answer,
+    )
+
+
+@router.put("/retrieval-debug/eval-cases", response_model=RagEvalCaseOut)
+def put_eval_case(
+    body: RagEvalCasePut,
+    session: Session = Depends(get_db),
+    user: User = Depends(current_user),
+):
+    if body.knowledge_base_id is not None:
+        kb = session.get(KnowledgeBase, body.knowledge_base_id)
+        if kb is None or kb.user_id != user.id:
+            raise HTTPException(status_code=404, detail="知识库不存在")
+    qn = normalize_query(body.query)
+    stmt = select(RagEvalCase).where(
+        RagEvalCase.user_id == user.id,
+        RagEvalCase.query_norm == qn,
+    )
+    if body.knowledge_base_id is None:
+        stmt = stmt.where(RagEvalCase.knowledge_base_id.is_(None))
+    else:
+        stmt = stmt.where(RagEvalCase.knowledge_base_id == body.knowledge_base_id)
+    row = session.scalars(stmt).first()
+    if row is None:
+        row = RagEvalCase(
+            user_id=user.id,
+            query_norm=qn,
+            knowledge_base_id=body.knowledge_base_id,
+            gt_answer=body.gt_answer,
+        )
+        session.add(row)
+    else:
+        row.gt_answer = body.gt_answer
+    session.commit()
+    session.refresh(row)
+    return RagEvalCaseOut(
+        query_norm=row.query_norm,
+        knowledge_base_id=row.knowledge_base_id,
+        gt_answer=row.gt_answer,
+    )
+
+
 @router.post("/retrieval-debug/answer-quality", response_model=AnswerQualityOut)
 def answer_quality_api(body: AnswerQualityRequest, user: User = Depends(current_user)):
     """调试用 LLM-as-judge：评估回答质量。不进生产问答链。"""
@@ -184,5 +254,23 @@ def answer_quality_api(body: AnswerQualityRequest, user: User = Depends(current_
         raise HTTPException(status_code=503, detail="未配置 LLM API Key")
     try:
         return AnswerQualityOut(**judge_answer(body.query, body.answer, body.contexts))
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/retrieval-debug/rag-metrics", response_model=RagMetricsOut)
+def rag_metrics_api(body: RagMetricsRequest, user: User = Depends(current_user)):
+    """RAG 生成侧指标（0–1）。不进生产问答链。"""
+    if not rag_eval_keys_ready():
+        raise HTTPException(status_code=503, detail="未配置 LLM 或 Embedding API Key")
+    try:
+        return RagMetricsOut(
+            **compute_rag_metrics(
+                body.query,
+                body.answer,
+                body.contexts,
+                body.gt_answer,
+            )
+        )
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

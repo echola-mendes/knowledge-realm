@@ -14,6 +14,8 @@ from app.routers.chunk_settings import router as chunk_settings_router
 from app.routers.documents import router as documents_router
 from app.routers.knowledge_bases import router as kb_router
 from app.routers.p1 import router as p1_router
+from app.routers.recommendations import router as recommendations_router
+from app.routers.insights import router as insights_router
 from app.routers.retrieval_debug import router as retrieval_debug_router
 from app.routers.search import router as search_router
 from app.routers.tags import router as tags_router
@@ -61,6 +63,8 @@ def create_app(*, load_file: bool = True, ensure_default: bool = True) -> FastAP
     app.include_router(chunk_settings_router)
     app.include_router(chat_router)
     app.include_router(p1_router)
+    app.include_router(insights_router)
+    app.include_router(recommendations_router)
 
     @app.exception_handler(EsNotConfiguredError)
     def _es_not_configured(_request, exc: EsNotConfiguredError):

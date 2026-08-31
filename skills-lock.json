@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "lean-coding-workflow": {
+      "source": "echola-mendes/lean-coding-workflow",
+      "sourceType": "github",
+      "skillPath": "skills/lean-coding-workflow/SKILL.md",
+      "computedHash": "192a49401f238f02800ab3881bc2b53e8d9b42a715e389d216f0ec1e842e6994"
+    }
+  }
+}

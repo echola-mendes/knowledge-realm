@@ -250,6 +250,7 @@ def index_document_incremental(document_id: uuid.UUID) -> str:
         if new_keys == old_keys:
             doc.status = STATUS_READY
             doc.error_message = None
+            session.commit()
             return "unchanged"
         doc.status = STATUS_INDEXING
         session.commit()

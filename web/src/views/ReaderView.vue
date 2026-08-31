@@ -305,6 +305,14 @@ async function runExtract() {
           <Icon name="nodes" />
           {{ busy === "graph" ? "抽取中…" : "抽取图谱" }}
         </button>
+        <RouterLink
+          v-if="graph.entities.length"
+          class="action-btn"
+          :to="`/knowledge-graph?knowledgeBaseId=${doc.knowledge_base_id}&documentId=${doc.id}`"
+        >
+          <Icon name="nodes" />
+          查看图谱
+        </RouterLink>
       </div>
       <p v-if="doc.summary" class="hero-note">
         <Icon name="info" />

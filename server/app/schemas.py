@@ -207,6 +207,10 @@ class GraphEntityOut(BaseModel):
     id: uuid.UUID
     name: str
     type: str
+    created_at: datetime | None = None
+    source_doc_count: int = 0
+    description: str | None = None
+    confidence: float | None = None
 
 
 class GraphLinkOut(BaseModel):
@@ -335,6 +339,32 @@ class RetrievalLabelOut(BaseModel):
     relevance: int
 
 
+class RagEvalCasePut(BaseModel):
+    query: str = Field(min_length=1)
+    knowledge_base_id: uuid.UUID | None = None
+    gt_answer: str = Field(min_length=1)
+
+
+class RagEvalCaseOut(BaseModel):
+    query_norm: str
+    knowledge_base_id: uuid.UUID | None = None
+    gt_answer: str
+
+
+class RagMetricsRequest(BaseModel):
+    query: str = Field(min_length=1)
+    answer: str = Field(min_length=1)
+    contexts: list[str] = []
+    gt_answer: str | None = None
+
+
+class RagMetricsOut(BaseModel):
+    faithfulness: float | None
+    answer_relevance: float | None
+    answer_correctness: float | None
+    semantic_similarity: float | None
+
+
 class DebugDatasetChunkOut(BaseModel):
     chunk_id: uuid.UUID
     chunk_label: str
@@ -361,3 +391,92 @@ class ChunkSettingsPut(BaseModel):
             raise ValueError("chunk_overlap must be < chunk_size")
         return self
 
+
+
+class ConflictItem(BaseModel):
+    documents: list[str] = Field(default_factory=list)
+    point: str
+    detail: str
+    suggestion: str
+
+
+class ConflictReport(BaseModel):
+    conflicts: list[ConflictItem] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class GapItem(BaseModel):
+    topic: str
+    evidence: str = ""
+    suggestion: str = ""
+
+
+class GapReport(BaseModel):
+    covered_topics: list[str] = Field(default_factory=list)
+    gaps: list[GapItem] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class OrganizeAppliedItem(BaseModel):
+    document: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class OrganizeBody(BaseModel):
+    apply_tags: bool = True
+
+
+class OrganizeReport(BaseModel):
+    applied: list[OrganizeAppliedItem] = Field(default_factory=list)
+    applied_tags: bool
+    duplicates: list[list[str]] = Field(default_factory=list)
+    empty_summary: list[str] = Field(default_factory=list)
+    bad_names: list[str] = Field(default_factory=list)
+    untagged_total: int = 0
+
+class RecommendationOut(BaseModel):
+    document_id: uuid.UUID
+    document_name: str
+    knowledge_base_id: uuid.UUID
+    score: float
+    kind: str
+
+class GraphSearchOut(BaseModel):
+    document_id: uuid.UUID
+    document_name: str
+    chunk_id: uuid.UUID
+    content: str
+    score: float
+    page: int | None = None
+    heading: str | None = None
+    kind: str
+
+
+class GraphSearchDocumentOut(BaseModel):
+    document_id: uuid.UUID
+    document_name: str
+    score: float
+    chunk_id: uuid.UUID
+    content: str
+    page: int | None = None
+    heading: str | None = None
+    kind: str
+
+
+class GraphPathOut(BaseModel):
+    entities: list[GraphEntityOut]
+    rels: list[str]
+
+
+class GraphDocumentOut(BaseModel):
+    document_id: uuid.UUID
+    document_name: str
+    version: int
+
+
+class GraphSearchDetailOut(BaseModel):
+    query: str
+    entities: list[GraphEntityOut]
+    links: list[GraphLinkOut]
+    documents: list[GraphSearchDocumentOut]
+    paths: list[GraphPathOut]

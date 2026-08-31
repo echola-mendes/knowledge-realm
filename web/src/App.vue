@@ -18,6 +18,8 @@ const allLinks = [
   { to: "/documents", label: "文档", icon: "doc", match: "docs" },
   { to: "/search", label: "搜索", icon: "search", match: "search" },
   { to: "/debug", label: "调试", icon: "bug", match: "debug" },
+  { to: "/knowledge-graph", label: "知识图谱", icon: "nodes", match: "knowledge-graph" },
+  { to: "/insights", label: "知识洞察", icon: "spark", match: "insights" },
   { to: "/settings", label: "设置", icon: "gear", match: "settings" },
 ] as const;
 
@@ -33,6 +35,8 @@ function navOn(match: string) {
   if (match === "search") return p === "/search";
   if (match === "debug") return p === "/debug";
   if (match === "settings") return p === "/settings";
+  if (match === "knowledge-graph") return p === "/knowledge-graph";
+  if (match === "insights") return p === "/insights";
   return false;
 }
 

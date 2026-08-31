@@ -10,8 +10,10 @@ import ReaderView from "./views/ReaderView.vue";
 import SettingsView from "./views/SettingsView.vue";
 import ChallengeView from "./views/ChallengeView.vue";
 import DebugView from "./views/DebugView.vue";
+import InsightsView from "./views/InsightsView.vue";
 import LoginView from "./views/LoginView.vue";
 import KnowledgeBasesView from "./views/KnowledgeBasesView.vue";
+import KnowledgeGraphView from "./views/KnowledgeGraphView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -24,9 +26,11 @@ export const router = createRouter({
     { path: "/search", name: "search", component: SearchView },
     { path: "/chat", name: "chat", component: ChatView },
     { path: "/debug", name: "debug", component: DebugView },
+    { path: "/insights", name: "insights", component: InsightsView },
     { path: "/documents/:id", name: "reader", component: ReaderView },
     { path: "/settings", name: "settings", component: SettingsView },
     { path: "/challenge", name: "challenge", component: ChallengeView },
+    { path: "/knowledge-graph", name: "knowledge-graph", component: KnowledgeGraphView },
   ],
 });
 
