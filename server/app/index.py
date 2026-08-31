@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from time import sleep
+from typing import Any
 
 from sqlalchemy import delete, select
 
@@ -197,6 +198,130 @@ def _enrich_after_index(document_id: uuid.UUID) -> None:
     from app.p1.chains import enrich_document_after_ready
 
     enrich_document_after_ready(document_id)
+
+
+def index_document_incremental(document_id: uuid.UUID) -> str:
+    """差量重索引：新旧切片按 (heading, content) 对齐，未变更切片复用现有 embedding。
+
+    返回 "ready"（有差量并完成）/"unchanged"（切片完全一致）/"failed"。
+    全新文档（无现有切片）行为等同 index_document。
+    """
+    session = session_scope()
+    try:
+        doc = session.get(Document, document_id)
+        if doc is None:
+            return "failed"
+        md_path = parsed_dir(doc.id) / "document.md"
+        if not md_path.is_file():
+            doc.status = STATUS_INDEX_FAILED
+            doc.error_message = "no_parsed_markdown"
+            session.commit()
+            return "failed"
+        if not embedding_keys_ready():
+            doc.status = STATUS_INDEX_FAILED
+            doc.error_message = "未配置 Embedding API Key"
+            session.commit()
+            return "failed"
+        text = md_path.read_text(encoding="utf-8")
+        kb = session.get(KnowledgeBase, doc.knowledge_base_id)
+        if kb is None:
+            doc.status = STATUS_INDEX_FAILED
+            doc.error_message = "knowledge_base_missing"
+            session.commit()
+            return "failed"
+        chunk_cfg = get_user_chunk_settings(session, kb.user_id)
+        pieces = split_markdown(
+            text,
+            chunk_size=chunk_cfg.chunk_size,
+            chunk_overlap=chunk_cfg.chunk_overlap,
+        )
+        if not pieces:
+            doc.status = STATUS_INDEX_FAILED
+            doc.error_message = "no_chunks"
+            session.commit()
+            return "failed"
+        existing = list(
+            session.scalars(
+                select(DocumentChunk).where(DocumentChunk.document_id == doc.id).order_by(DocumentChunk.chunk_index)
+            ).all()
+        )
+        new_keys = [(p.heading, p.content) for p in pieces]
+        old_keys = [(c.heading, c.content) for c in existing]
+        if new_keys == old_keys:
+            doc.status = STATUS_READY
+            doc.error_message = None
+            return "unchanged"
+        doc.status = STATUS_INDEXING
+        session.commit()
+        # 未变更切片复用旧向量；变更/新增按 (heading, content) 最近一次出现对齐
+        reusable: dict[tuple[str | None, str], Any] = {}
+        for chunk in existing:
+            reusable[(chunk.heading, chunk.content)] = chunk.embedding
+        vectors: list[list[float]] = []
+        missing: list[int] = []
+        for i, piece in enumerate(pieces):
+            vec = reusable.get((piece.heading, piece.content))
+            if vec is not None:
+                vectors.append(vec)
+            else:
+                vectors.append([])
+                missing.append(i)
+        if missing:
+            try:
+                fresh = _embed_all([pieces[i].content for i in missing])
+            except Exception as exc:  # noqa: BLE001
+                doc.status = STATUS_INDEX_FAILED
+                doc.error_message = format_embed_error(exc)
+                session.commit()
+                return "failed"
+            for pos, vec in zip(missing, fresh, strict=True):
+                vectors[pos] = vec
+        try:
+            delete_document_chunks(doc.id)
+        except EsNotConfiguredError as exc:
+            doc.status = STATUS_INDEX_FAILED
+            doc.error_message = str(exc)
+            session.commit()
+            return "failed"
+        session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc.id))
+        labels = allocate_chunk_labels(session, len(pieces))
+        for i, (piece, vec, label) in enumerate(zip(pieces, vectors, labels, strict=True)):
+            session.add(
+                DocumentChunk(
+                    document_id=doc.id,
+                    chunk_index=i,
+                    chunk_label=label,
+                    content=piece.content,
+                    page=piece.page,
+                    heading=piece.heading,
+                    metadata_={},
+                    embedding=vec,
+                )
+            )
+        doc.status = STATUS_READY
+        doc.error_message = None
+        doc.chunk_size = chunk_cfg.chunk_size
+        doc.chunk_overlap = chunk_cfg.chunk_overlap
+        session.commit()
+        rows = session.scalars(select(DocumentChunk).where(DocumentChunk.document_id == doc.id)).all()
+        try:
+            upsert_chunks([(c.id, c.content, doc.knowledge_base_id, doc.id, doc.kind) for c in rows])
+        except EsNotConfiguredError as exc:
+            doc.status = STATUS_INDEX_FAILED
+            doc.error_message = str(exc)
+            session.commit()
+            return "failed"
+        return "ready"
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        doc = session.get(Document, document_id)
+        if doc is not None and doc.status == STATUS_INDEXING:
+            doc.status = STATUS_INDEX_FAILED
+            doc.error_message = f"index_error:{exc}"
+            session.commit()
+        return "failed"
+    finally:
+        session.close()
 
 
 def reindex_document(document_id: uuid.UUID) -> None:
