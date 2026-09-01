@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from app.chunk import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
 from pydantic import BaseModel, Field, model_validator
@@ -172,6 +172,7 @@ class AgentRequest(BaseModel):
     knowledge_base_id: uuid.UUID | None = None
     conversation_id: uuid.UUID | None = None
     allow_web: bool = False
+    hitl_confirm: bool | None = None
 
 
 class AgentOut(BaseModel):
@@ -181,6 +182,10 @@ class AgentOut(BaseModel):
     answer: str
     citations: list[CitationOut]
     loop_count: int
+    intent: str | None = None
+    report_url: str | None = None
+    pending_action: dict[str, Any] | None = None
+    bookings: list[dict[str, Any]] | None = None
 
 
 class UserOut(BaseModel):

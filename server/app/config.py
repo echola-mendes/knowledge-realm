@@ -39,6 +39,15 @@ class Settings:
     web_search_url: str
     web_search_api_key: str
     web_search_timeout: int
+    flyai_cli: str
+    flyai_api_key: str
+    flyai_timeout: int
+    hotel_source: str
+    minio_endpoint: str
+    minio_access_key: str
+    minio_secret_key: str
+    minio_bucket: str
+    minio_secure: bool
     host: str = HOST
     port: int = PORT
 
@@ -107,6 +116,15 @@ def load_settings(environ: dict[str, str] | None = None, *, load_file: bool = Fa
         web_search_url=(env.get("WEB_SEARCH_URL") or "").strip(),
         web_search_api_key=(env.get("WEB_SEARCH_API_KEY") or "").strip(),
         web_search_timeout=_positive_int("WEB_SEARCH_TIMEOUT", env.get("WEB_SEARCH_TIMEOUT"), 10),
+        flyai_cli=(env.get("FLYAI_CLI") or "flyai").strip(),
+        flyai_api_key=(env.get("FLYAI_API_KEY") or "").strip(),
+        flyai_timeout=_positive_int("FLYAI_TIMEOUT", env.get("FLYAI_TIMEOUT"), 20),
+        hotel_source=(env.get("HOTEL_SOURCE") or "").strip(),
+        minio_endpoint=(env.get("MINIO_ENDPOINT") or "").strip(),
+        minio_access_key=(env.get("MINIO_ACCESS_KEY") or "").strip(),
+        minio_secret_key=(env.get("MINIO_SECRET_KEY") or "").strip(),
+        minio_bucket=(env.get("MINIO_BUCKET") or "zhiyu").strip(),
+        minio_secure=(env.get("MINIO_SECURE") or "").strip().lower() in ("1", "true", "yes"),
         host=HOST,
         port=PORT,
     )

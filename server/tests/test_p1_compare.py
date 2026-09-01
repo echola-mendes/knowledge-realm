@@ -35,8 +35,8 @@ def test_compare_two_ready_docs_and_reject_bad_pairs(monkeypatch):
         "app.index.embed_texts",
         lambda texts: [[0.01] * get_settings().embedding_dim for _ in texts],
     )
-    monkeypatch.setattr("app.routers.p1.llm_keys_ready", lambda: True)
-    monkeypatch.setattr("app.routers.p1.compare_documents", lambda *args, **kwargs: "假对比")
+    monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
+    monkeypatch.setattr("app.routers.master.compare_documents", lambda *args, **kwargs: "假对比")
     with _client() as client:
         a = _ready_note(client, "资料甲讲苹果", "a.md")
         b = _ready_note(client, "资料乙讲橙子", "b.md")
@@ -73,7 +73,7 @@ def test_compare_two_ready_docs_and_reject_bad_pairs(monkeypatch):
         other = _ready_note(client, "另一库文档", "c.md", knowledge_base_id=other_kb["id"])
         cross = client.post("/api/compare", json={"document_id_a": a, "document_id_b": other})
         assert cross.status_code == 400
-        monkeypatch.setattr("app.routers.p1.llm_keys_ready", lambda: False)
+        monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: False)
         denied = client.post("/api/compare", json={"document_id_a": a, "document_id_b": b})
         assert denied.status_code == 503
     reset_app_state()

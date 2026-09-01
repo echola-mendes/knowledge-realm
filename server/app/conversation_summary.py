@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.chat import HISTORY_LIMIT
 from app.models import Conversation, Message
-from app.p1.chains import summarize_conversation_turns
+from app.chains import summarize_conversation_turns
 
 
 def refresh_conversation_summary(session: Session, conversation_id: uuid.UUID) -> None:

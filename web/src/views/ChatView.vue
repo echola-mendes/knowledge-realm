@@ -12,19 +12,32 @@ import {
   type Conversation,
 } from "../api";
 import Icon from "../components/Icon.vue";
+import TravelResultCard from "../components/TravelResultCard.vue";
+import PlanItineraryPanel from "../components/PlanItineraryPanel.vue";
+import HotelPlaceholderCard from "../components/HotelPlaceholderCard.vue";
+import BookingListCard from "../components/BookingListCard.vue";
+import type { BookingItem, PendingAction, PlanHtmlEvent, TravelData, TravelError } from "../types/travel";
 import MarkdownIt from "markdown-it";
 
 const md = new MarkdownIt({ breaks: true });
+
+type AgentMessage = ChatMessage & {
+  travel?: TravelData;
+  planHtml?: PlanHtmlEvent | null;
+  pendingAction?: PendingAction | null;
+  bookings?: BookingItem[];
+};
 
 const vFocus = { mounted: (el: HTMLInputElement) => el.focus() };
 
 const route = useRoute();
 const router = useRouter();
 const draft = ref(typeof route.query.q === "string" ? route.query.q : "");
-const messages = ref<ChatMessage[]>([]);
+const messages = ref<AgentMessage[]>([]);
 const conversationId = ref<string>(typeof route.query.c === "string" ? route.query.c : "");
 const conversations = ref<Conversation[]>([]);
 const error = ref("");
+const pendingAction = ref<PendingAction | null>(null);
 const streaming = ref(false);
 const mode = ref<"chat" | "agent" | "report">(
   route.query.mode === "report" ? "report" : route.query.mode === "agent" ? "agent" : "chat",
@@ -53,12 +66,14 @@ const greeting = computed(
   () =>
     `您好${username.value ? `，${username.value}` : ""}。我是知域助手，可以帮您查已开启知识库里的资料，也可以直接问答。请问需要什么帮助？`,
 );
-const greetingMsg = computed<ChatMessage>(() => ({
+const greetingMsg = computed<AgentMessage>(() => ({
   id: "greet",
   role: "assistant",
   content: greeting.value,
 }));
-const threadMessages = computed(() => (messages.value.length ? messages.value : [greetingMsg.value]));
+const threadMessages = computed<AgentMessage[]>(() =>
+  messages.value.length ? messages.value : [greetingMsg.value],
+);
 const sidebarOpen = ref(true);
 const listSearch = ref("");
 const listAction = ref<"new" | "search">("new");
@@ -256,12 +271,37 @@ async function loadHistory() {
   scrollBottom();
 }
 
+function travelProgress(m: AgentMessage): string[] {
+  const t = m.travel as (TravelData & { progress?: string[] }) | undefined;
+  return t?.progress || [];
+}
+
+function travelFlightItems(m: AgentMessage) {
+  const f = m.travel?.flights;
+  return Array.isArray(f) ? f : [];
+}
+
+function travelFlightError(m: AgentMessage): TravelError | null {
+  const f = m.travel?.flights as TravelError | undefined;
+  return f && !Array.isArray(f) && f.kind === "error" ? f : null;
+}
+
+function travelHotelPlaceholder(m: AgentMessage): { message: string } | null {
+  const h = m.travel?.hotels as { kind?: string; message?: string } | undefined;
+  if (h && h.kind === "placeholder" && typeof h.message === "string" && h.message) {
+    return { message: h.message };
+  }
+  return null;
+}
+
+const hitlConfirmForRequest = ref<boolean | null>(null);
+
 async function ask() {
   const q = draft.value.trim();
   if (!q || streaming.value) return;
   error.value = "";
   messages.value.push({ id: "u-" + Date.now(), role: "user", content: q });
-  const assistant: ChatMessage = { id: "a-" + Date.now(), role: "assistant", content: "" };
+  const assistant: AgentMessage = { id: "a-" + Date.now(), role: "assistant", content: "" };
   messages.value.push(assistant);
   draft.value = "";
   streaming.value = true;
@@ -279,6 +319,7 @@ async function ask() {
               query: q,
               conversation_id: conversationId.value || undefined,
               allow_web: smartSearch.value,
+              hitl_confirm: hitlConfirmForRequest.value,
             }
           : {
               query: q,
@@ -305,12 +346,77 @@ async function ask() {
           answer?: string;
           conversation_id?: string;
           citations?: Citation[];
+          intent?: string;
+          progress?: string;
+          flights?: TravelData["flights"];
+          hotels?: TravelData["hotels"];
+          plan?: TravelData["plan"];
+          html?: string;
+          url?: string | null;
+          key?: string | null;
+          note?: string;
+          tool?: string;
+          args?: Record<string, unknown>;
+          summary?: string;
+          pending_action?: PendingAction | null;
+          bookings?: BookingItem[];
+          items?: BookingItem[];
         };
         if (payload.type === "token" && payload.text) assistant.content += payload.text;
+        if (payload.type === "progress" && payload.text) {
+          assistant.travel = assistant.travel || {};
+          const t = assistant.travel as TravelData & { progress?: string[] };
+          t.progress = [...(t.progress || []), payload.text];
+        }
+        if (payload.type === "travel_data") {
+          assistant.travel = {
+            ...(assistant.travel || {}),
+            ...(payload.flights ? { flights: payload.flights } : {}),
+            ...(payload.hotels ? { hotels: payload.hotels } : {}),
+            ...(payload.plan ? { plan: payload.plan } : {}),
+          };
+        }
+        if (payload.type === "plan_html") {
+          assistant.planHtml = {
+            html: payload.html,
+            url: payload.url ?? null,
+            key: payload.key ?? null,
+            note: payload.note,
+          };
+        }
+        if (payload.type === "booking_data" && Array.isArray(payload.items)) {
+          assistant.bookings = payload.items as BookingItem[];
+        }
+        if (payload.type === "hitl" && payload.tool && payload.summary) {
+          assistant.pendingAction = {
+            tool: payload.tool as PendingAction["tool"],
+            args: payload.args || {},
+            summary: payload.summary,
+            confirmed: null,
+          };
+          pendingAction.value = assistant.pendingAction;
+        }
         if (payload.type === "citations") {
           const cid = payload.conversation_id || conversationId.value;
           if (cid) rememberConversation(cid);
           assistant.citations = payload.citations || [];
+          if (Array.isArray(payload.bookings) && payload.bookings.length) {
+            assistant.bookings = payload.bookings as BookingItem[];
+          }
+          if (payload.pending_action) {
+            assistant.pendingAction = payload.pending_action;
+            pendingAction.value = payload.pending_action;
+          } else {
+            pendingAction.value = null;
+          }
+          if (payload.flights || payload.hotels || payload.plan) {
+            assistant.travel = {
+              ...(assistant.travel || {}),
+              ...(payload.flights ? { flights: payload.flights } : {}),
+              ...(payload.hotels ? { hotels: payload.hotels } : {}),
+              ...(payload.plan ? { plan: payload.plan } : {}),
+            };
+          }
           if (payload.answer) assistant.content = payload.answer;
         }
         scrollBottom();
@@ -322,6 +428,13 @@ async function ask() {
   } finally {
     streaming.value = false;
   }
+}
+
+function confirmHitl(confirm: boolean) {
+  hitlConfirmForRequest.value = confirm;
+  draft.value = confirm ? "确认" : "取消";
+  ask();
+  hitlConfirmForRequest.value = null;
 }
 
 function onKey(e: KeyboardEvent) {
@@ -525,6 +638,57 @@ function pickDoc(id: string) {
                 </div>
                 <div v-else-if="m.role === 'assistant'" class="md-body" v-html="mdContent(m.content)"></div>
                 <pre v-else>{{ m.content.replace(/^\s+/, "") }}</pre>
+                <template v-if="m.role === 'assistant' && m.travel">
+                  <div v-if="travelProgress(m).length" class="travel-progress">
+                    <p v-for="(p, i) in travelProgress(m)" :key="i" class="travel-step">{{ p }}</p>
+                  </div>
+                  <TravelResultCard
+                    v-if="travelFlightItems(m).length || travelFlightError(m)"
+                    :flights="travelFlightItems(m)"
+                    :error="travelFlightError(m)"
+                  />
+                  <HotelPlaceholderCard
+                    v-if="travelHotelPlaceholder(m)"
+                    :message="travelHotelPlaceholder(m)!.message"
+                  />
+                  <PlanItineraryPanel v-if="m.travel.plan" :plan="m.travel.plan" />
+                  <div v-if="m.planHtml" class="card plan-page-card">
+                    <div class="plan-page-head">
+                      <h2>方案页</h2>
+                      <a v-if="m.planHtml.url" class="plan-page-link" :href="m.planHtml.url" target="_blank" rel="noopener">新窗口打开</a>
+                    </div>
+                    <p v-if="m.planHtml.note" class="plan-page-note">{{ m.planHtml.note }}</p>
+                    <iframe
+                      v-if="m.planHtml.html"
+                      class="plan-frame"
+                      sandbox=""
+                      :srcdoc="m.planHtml.html"
+                      title="行程方案页"
+                    ></iframe>
+                  </div>
+                </template>
+                <BookingListCard v-if="m.role === 'assistant' && m.bookings?.length" :items="m.bookings" />
+                <div v-if="m.role === 'assistant' && m.pendingAction" class="hitl-card card">
+                  <p class="hitl-summary">{{ m.pendingAction.summary }}</p>
+                  <div class="hitl-actions">
+                    <button
+                      class="btn btn-primary"
+                      type="button"
+                      :disabled="streaming"
+                      @click="confirmHitl(true)"
+                    >
+                      确认
+                    </button>
+                    <button
+                      class="btn"
+                      type="button"
+                      :disabled="streaming"
+                      @click="confirmHitl(false)"
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
                 <div v-if="m.role === 'assistant' && m.citations?.length" class="cites">
                   <p class="cites-label">引用来源 ({{ docCites(m).length }})</p>
                   <button
@@ -657,6 +821,61 @@ function pickDoc(id: string) {
   </main>
 </template>
 
+<style scoped>
+.travel-progress {
+  margin: 0.3rem 0;
+}
+.travel-step {
+  font-size: 0.68rem;
+  color: var(--muted);
+  margin: 0.1rem 0;
+}
+.plan-page-card {
+  margin: 0.4rem 0;
+  padding: 0.7rem 0.85rem;
+}
+.plan-page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.plan-page-head h2 {
+  font-size: 0.78rem;
+  margin: 0 0 0.3rem;
+}
+.plan-page-link {
+  font-size: 0.68rem;
+  color: var(--teal);
+}
+.plan-page-note {
+  font-size: 0.68rem;
+  color: var(--muted);
+  margin: 0 0 0.4rem;
+}
+.plan-frame {
+  width: 100%;
+  height: 420px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.hitl-card {
+  margin: 0.5rem 0 0;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+}
+.hitl-summary {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text);
+}
+.hitl-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+</style>
 <style scoped>
 .chat-page {
   display: flex;

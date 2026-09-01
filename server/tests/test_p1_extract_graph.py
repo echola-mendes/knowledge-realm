@@ -9,7 +9,7 @@ from app.index import index_document
 from app.main import create_app, reset_app_state
 from app.models import Document, EntityLink
 from app.parse import parse_text_document
-from app.p1 import chains as chains_mod
+from app import chains as chains_mod
 from app.db import session_scope
 
 

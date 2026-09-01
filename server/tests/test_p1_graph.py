@@ -1,11 +1,11 @@
 import inspect
 import uuid
 
-from app.p1 import graph as graph_mod
-from app.p1.graph import build_graph, initial_state
+from app import graph as graph_mod
+from app.graph import build_graph, initial_state
 from app.search import SearchHit
 import app.chat as chat_mod
-import app.p1.chains as chains_mod
+import app.chains as chains_mod
 
 
 def test_graph_searches_then_generates_and_caps_loops(monkeypatch):

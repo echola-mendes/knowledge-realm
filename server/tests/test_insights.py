@@ -260,7 +260,7 @@ def test_gaps_cross_user_404(monkeypatch):
 def test_organize_apply_tags_writes_and_is_idempotent(monkeypatch):
     monkeypatch.setattr("app.routers.insights.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.insights.llm_keys_ready", lambda: True)
-    monkeypatch.setattr("app.p1.chains.suggest_tag_names", lambda text: ["标签甲", "标签乙"])
+    monkeypatch.setattr("app.chains.suggest_tag_names", lambda text: ["标签甲", "标签乙"])
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"整理-{uuid.uuid4().hex[:8]}"})
         assert kb.status_code == 201
@@ -298,7 +298,7 @@ def test_organize_apply_tags_writes_and_is_idempotent(monkeypatch):
 def test_organize_dry_run_does_not_write_tags(monkeypatch):
     monkeypatch.setattr("app.routers.insights.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.insights.llm_keys_ready", lambda: True)
-    monkeypatch.setattr("app.p1.chains.suggest_tag_names", lambda text: ["标签甲"])
+    monkeypatch.setattr("app.chains.suggest_tag_names", lambda text: ["标签甲"])
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"整理预览-{uuid.uuid4().hex[:8]}"})
         assert kb.status_code == 201
@@ -334,7 +334,7 @@ def test_organize_dry_run_does_not_write_tags(monkeypatch):
 def test_organize_reports_duplicates_and_empty_summary(monkeypatch):
     monkeypatch.setattr("app.routers.insights.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.insights.llm_keys_ready", lambda: True)
-    monkeypatch.setattr("app.p1.chains.suggest_tag_names", lambda text: [])
+    monkeypatch.setattr("app.chains.suggest_tag_names", lambda text: [])
     with _client() as client:
         kb1 = client.post("/api/knowledge-bases", json={"name": f"整理报告1-{uuid.uuid4().hex[:8]}"})
         assert kb1.status_code == 201

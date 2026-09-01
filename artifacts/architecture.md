@@ -16,7 +16,7 @@
 /api/agent(/stream)
   → thin_intent（一次结构化：knowledge | plan | booking | chat）
   → MasterAgent（按 intent 调度 + 整合回复）
-       ├── knowledge   ← 现有 p1/graph.py（reason→run_tool→generate）
+       ├── knowledge   ← 现有 app/graph.py（reason→run_tool→generate）
        ├── plan        ← itinerary_plan_agent（ReAct + travel tools）
        └── booking     ← booking_agent（ReAct + HITL 写工具）
 ```
@@ -28,7 +28,7 @@
 
 ## 3. 代码布局（禁止新建 p4/）
 
-全部位于 `server/app/p1/`：
+全部位于 `server/app/`：
 
 | 文件 | 职责 |
 |---|---|
@@ -41,7 +41,7 @@
 | `travel/minio_store.py` | plans / reports 上传与回看 URL |
 | `tools.py` | 现有 RAG/graph/web tools；travel tools 可 re-export |
 
-路由层仍在 `server/app/routers/p1.py`，调用 `master.build_master_graph()`。
+路由层仍在 `server/app/routers/master.py`，调用 `master.build_master_graph()`。
 
 ## 4. SSE 事件（Agent stream）
 

@@ -25,7 +25,7 @@ from app.models import (
     Tag,
     User,
 )
-from app.p1.chains import extract_graph, gather_document_text, suggest_tag_names, summarize_document
+from app.chains import extract_graph, gather_document_text, suggest_tag_names, summarize_document
 from app.schemas import (
     DocumentChunkOut,
     DocumentGraphOut,

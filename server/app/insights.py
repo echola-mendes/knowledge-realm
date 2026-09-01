@@ -137,7 +137,7 @@ def weak_queries(session: Session, user_id: uuid.UUID, limit: int = 10) -> list[
 
 def _ensure_tags(session: Session, user_id: uuid.UUID, doc: Document, names: list[str]) -> list[str]:
     """落 tag + document_tag（幂等），返回实际新打的标签名。"""
-    from app.p1.chains import suggest_tag_names  # noqa: F401  语义参考
+    from app.chains import suggest_tag_names  # noqa: F401  语义参考
 
     applied: list[str] = []
     for name in names[:3]:
@@ -175,7 +175,7 @@ def organize_kb(session: Session, kb: KnowledgeBase, *, apply_tags: bool = True)
 
     applied: list[dict[str, Any]] = []
     if llm_keys_ready():
-        from app.p1.chains import suggest_tag_names
+        from app.chains import suggest_tag_names
 
         for doc in untagged:
             text = (doc.summary or "").strip() or doc.filename

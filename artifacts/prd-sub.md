@@ -6,8 +6,8 @@
 
 ## 2. 背景
 
-- **现有**：`/api/agent` / `/api/agent/stream` 已存在，但直接调用 `p1/graph.py` 单图（知识检索 + report），无薄意图、无 Master、无差旅子 Agent。
-- **现有**：`p1/graph.py` 含 `reason → run_tool → generate` 循环；`user_memory` LTM 可注入；`ChatView.vue` 支持 chat/agent/report 三模式。
+- **现有**：`/api/agent` / `/api/agent/stream` 已存在，但直接调用 `app/graph.py` 单图（知识检索 + report），无薄意图、无 Master、无差旅子 Agent。
+- **现有**：`app/graph.py` 含 `reason → run_tool → generate` 循环；`user_memory` LTM 可注入；`ChatView.vue` 支持 chat/agent/report 三模式。
 - **缺失**：Supervisor 骨架、意图分类、机酒搜索 Tool、方案页 SSE/MinIO、`booking_record`、HITL `pending_action`、供应商集成（flyai 等）。
 - **蓝本**：`docs/multi-agent/PRD-GO.md` 仅作对照；知域按 P4 重建，不是集成 gogo Java 服务。
 
@@ -17,7 +17,7 @@
 
 1. `/api/agent`（及 stream）改为：**薄意图节点 → MasterAgent → 子能力**；与 `task=agent|report` **同一入口**，禁止并行第二条 travel API。
 2. 薄意图：一次结构化分类 → `knowledge | plan | booking | chat`；与 Master 职责分离。
-3. Master：Supervisor + Agents-as-Tools；将现有 `p1/graph.py` 挂为 **`knowledge` 子能力**（非第二入口）。
+3. Master：Supervisor + Agents-as-Tools；将现有 `app/graph.py` 挂为 **`knowledge` 子能力**（非第二入口）。
 4. `chat` 寒暄由 Master 直接回复；`task=report` 仍走 knowledge，报告完成后写 MinIO（`reports/{conversation_id}/...`）。
 
 ### 3.2 行程规划 TRAVEL-PLAN-1（P4 Step 2）
@@ -44,7 +44,7 @@
 - 独立 `info_agent` / `itinerary_manage_agent`
 - 三层意图 L1/L2/L3、百炼记忆、Celery、火车票
 - 改 `/api/chat` 为 LangGraph；并行第二条 travel REST API
-- 新建 `server/app/p4/` 目录（**已否决**；全部扩展现有 `p1/`）
+- 新建 `server/app/p4/` 目录（**已否决**；p1 包已于 2026-08-31 上移，代码平铺 `server/app/`）
 - 熔断/Token 压缩等 Hook（P5）
 
 ## 5. 业务规则
@@ -53,7 +53,7 @@
 |---|---|
 | 身份 | 只来自 Session；禁止请求参数 `user_id` |
 | 入口 | Agent 模式只走 `/api/agent`；差旅与 `task=agent` 同一入口 |
-| 代码组织 | 扩展现有 `server/app/p1/`（intent / master / plan / booking / travel） |
+| 代码组织 | 扩展现有 `server/app/`（intent / master / plan / booking / travel） |
 | 意图 ≠ Master | 意图只出标签；Master 只调度 + 整合 |
 | 写操作 | 搜索/出方案只读；下单/取消须本人 HITL |
 | Key | 供应商 Key 仅 `.env` |
@@ -73,11 +73,11 @@
 
 | 层级 | 模块 |
 |---|---|
-| 入口 | `server/app/routers/p1.py` — 仍挂 `/api/agent`、`/api/agent/stream` |
-| 编排 | `server/app/p1/intent.py`、`master.py`、`plan_agent.py`、`booking_agent.py` |
-| 知识 | `server/app/p1/graph.py` — 包装为 knowledge 子图 |
-| 供应商 | `server/app/p1/travel/flyai.py`；酒店占位 |
-| 对象存储 | `server/app/p1/travel/minio_store.py` + `config.py` MinIO env |
+| 入口 | `server/app/routers/master.py` — 仍挂 `/api/agent`、`/api/agent/stream` |
+| 编排 | `server/app/intent.py`、`master.py`、`plan_agent.py`、`booking_agent.py` |
+| 知识 | `server/app/graph.py` — 包装为 knowledge 子图 |
+| 供应商 | `server/app/travel/flyai.py`；酒店占位 |
+| 对象存储 | `server/app/travel/minio_store.py` + `config.py` MinIO env |
 | 数据 | `models.py`：`booking_record`（Step 3）；Alembic |
 | 前端 | `ChatView.vue`、`TravelResultCard.vue`（新建）、plan 方案页渲染、HITL 卡片 |
 | 文档 | `docs/TECH.md` — Agent 架构变更同步 |
@@ -85,7 +85,7 @@
 ## 8. 验收标准
 
 ### Step 1 入口骨架
-- [ ] 知识问答复用 `/api/agent` → `knowledge` → p1 图
+- [ ] 知识问答复用 `/api/agent` → `knowledge` → app/graph.py 图
 - [ ] 「你好」→ `chat` → Master 直接回复
 - [ ] `/api/chat` 未改 LangGraph；无第二条 travel API
 
@@ -106,4 +106,4 @@
 3. ✅ 本机已有 MinIO（配置 env，失败降级提示）
 4. ✅ 机票卡片 = flyai `search-flight.itemList`；方案页 = `plan_itinerary` 推荐/对比/总价；酒店卡片另定
 5. ✅ 写限流 30/min 放在 Step 3
-6. ✅ **否** 新建 `p4/`；差旅与 `task=agent` 同一 `/api/agent` 入口，代码扩 `p1/`
+6. ✅ **否** 新建 `p4/`；差旅与 `task=agent` 同一 `/api/agent` 入口，代码平铺 `server/app/`（原 p1 包已上移）

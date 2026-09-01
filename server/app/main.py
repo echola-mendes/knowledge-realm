@@ -13,7 +13,7 @@ from app.routers.chat import router as chat_router
 from app.routers.chunk_settings import router as chunk_settings_router
 from app.routers.documents import router as documents_router
 from app.routers.knowledge_bases import router as kb_router
-from app.routers.p1 import router as p1_router
+from app.routers.master import router as master_router
 from app.routers.recommendations import router as recommendations_router
 from app.routers.insights import router as insights_router
 from app.routers.retrieval_debug import router as retrieval_debug_router
@@ -62,7 +62,7 @@ def create_app(*, load_file: bool = True, ensure_default: bool = True) -> FastAP
     app.include_router(retrieval_debug_router)
     app.include_router(chunk_settings_router)
     app.include_router(chat_router)
-    app.include_router(p1_router)
+    app.include_router(master_router)
     app.include_router(insights_router)
     app.include_router(recommendations_router)
 
@@ -93,8 +93,10 @@ app = create_app()
 
 
 def reset_app_state() -> None:
-    from app.p1.graph import reset_graph
+    from app.graph import reset_graph
+    from app.master import reset_master_graph
 
     reset_settings()
     reset_engine()
     reset_graph()
+    reset_master_graph()

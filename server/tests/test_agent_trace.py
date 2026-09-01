@@ -5,8 +5,8 @@ import uuid
 
 from app.db import session_scope
 from app.models import Conversation, Message
-from app.p1 import graph as graph_mod
-from app.p1.graph import build_graph
+from app import graph as graph_mod
+from app.graph import build_graph
 from app.search import SearchHit
 from tests.http_client import api_client
 
@@ -99,7 +99,7 @@ def test_agent_trace_does_not_persist_conversation(monkeypatch):
 
 
 def test_agent_trace_requires_llm_keys(monkeypatch):
-    import app.routers.p1 as p1_mod
+    import app.routers.master as p1_mod
 
     monkeypatch.setattr(p1_mod, "llm_keys_ready", lambda: False)
     with _client() as client:

@@ -6,11 +6,12 @@ from fastapi.testclient import TestClient
 
 from app.config import get_settings
 from app.main import create_app, reset_app_state
-from app.p1 import graph as graph_mod
+from app import graph as graph_mod
+from app import master as master_mod
 from app.search import SearchHit
 import app.chat as chat_mod
-import app.p1.chains as chains_mod
-import app.routers.p1 as p1_router
+import app.chains as chains_mod
+import app.routers.master as master_router
 
 
 def _client() -> TestClient:
@@ -18,6 +19,14 @@ def _client() -> TestClient:
     get_settings(load_file=True)
     from http_client import api_client
     return api_client()
+
+
+def _intent_knowledge(monkeypatch):
+    monkeypatch.setattr(
+        master_mod,
+        "classify_intent",
+        lambda query, *, task="agent", history_tail=None: "knowledge",
+    )
 
 
 def _sse_events(text: str) -> list[dict]:
@@ -29,14 +38,15 @@ def _sse_events(text: str) -> list[dict]:
 
 
 def test_agent_post_uses_graph_not_chat(monkeypatch):
-    src = inspect.getsource(p1_router._agent_out) + inspect.getsource(p1_router.agent_stream)
-    assert "build_graph" in inspect.getsource(p1_router._agent_out)
+    src = inspect.getsource(master_router._agent_out) + inspect.getsource(master_router.agent_stream)
+    assert "build_master_graph" in inspect.getsource(master_router._agent_out)
     assert "run_chat" not in src
     assert "/api/chat" not in src
     assert "langgraph" not in inspect.getsource(chat_mod)
     assert "langgraph" not in inspect.getsource(chains_mod)
 
-    monkeypatch.setattr("app.routers.p1.llm_keys_ready", lambda: True)
+    monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
+    _intent_knowledge(monkeypatch)
     decisions = iter(
         [
             {"next_action": "search", "search_query": "苹果"},
@@ -89,7 +99,7 @@ def test_agent_post_uses_graph_not_chat(monkeypatch):
         assert body["citations"][0]["document_name"] == "apple.md"
         assert searches == ["苹果"]
         assert body["conversation_id"]
-        monkeypatch.setattr("app.routers.p1.llm_keys_ready", lambda: False)
+        monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: False)
         denied_key = client.post(
             "/api/agent",
             json={"task": "agent", "query": "苹果", "knowledge_base_id": kb["id"]},
@@ -116,7 +126,8 @@ def test_chat_contract_unchanged(monkeypatch):
 
 
 def test_agent_stream_matches_nonstream_fields(monkeypatch):
-    monkeypatch.setattr("app.routers.p1.llm_keys_ready", lambda: True)
+    monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
+    _intent_knowledge(monkeypatch)
 
     def fake_reason(state):
         if int(state.get("loop_count") or 0) == 0:
@@ -172,14 +183,14 @@ def test_agent_stream_matches_nonstream_fields(monkeypatch):
         }
         assert "document_id" in final["citations"][0]
         assert "chunk_id" in final["citations"][0]
-        monkeypatch.setattr("app.routers.p1.llm_keys_ready", lambda: False)
+        monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: False)
         no_key = client.post("/api/agent/stream", json=payload)
         assert no_key.status_code == 503
     reset_app_state()
 
 
 def test_report_post_same_graph_as_agent(monkeypatch):
-    monkeypatch.setattr("app.routers.p1.llm_keys_ready", lambda: True)
+    monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
     monkeypatch.setattr(graph_mod, "reason_decide", lambda state: {"next_action": "generate"})
     questions: list[str] = []
 
@@ -211,7 +222,8 @@ def test_report_post_same_graph_as_agent(monkeypatch):
 
 
 def test_agent_stm_second_turn_passes_history(monkeypatch):
-    monkeypatch.setattr("app.routers.p1.llm_keys_ready", lambda: True)
+    monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
+    _intent_knowledge(monkeypatch)
     monkeypatch.setattr(graph_mod, "reason_decide", lambda state: {"next_action": "generate"})
     seen: list[list[tuple[str, str]] | None] = []
 
@@ -251,7 +263,8 @@ def test_agent_stm_second_turn_passes_history(monkeypatch):
 
 
 def test_agent_checkpoint_second_invoke_uses_db_stm_not_stacked(monkeypatch):
-    monkeypatch.setattr("app.routers.p1.llm_keys_ready", lambda: True)
+    monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
+    _intent_knowledge(monkeypatch)
     monkeypatch.setattr(graph_mod, "reason_decide", lambda state: {"next_action": "generate"})
     seen: list[list[tuple[str, str]]] = []
 
@@ -292,7 +305,8 @@ def test_agent_checkpoint_second_invoke_uses_db_stm_not_stacked(monkeypatch):
 
 
 def test_agent_summary_when_over_six_messages(monkeypatch):
-    monkeypatch.setattr("app.routers.p1.llm_keys_ready", lambda: True)
+    monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
+    _intent_knowledge(monkeypatch)
     monkeypatch.setattr(graph_mod, "reason_decide", lambda state: {"next_action": "generate"})
     old_secret = "远古秘密不应出现在prompt里" * 12
     summary_text = "压缩摘要：用户曾提到远古话题"
@@ -301,7 +315,7 @@ def test_agent_summary_when_over_six_messages(monkeypatch):
         assert old_secret in dialogue
         return summary_text
 
-    monkeypatch.setattr("app.p1.conversation_summary.summarize_conversation_turns", fake_summarize)
+    monkeypatch.setattr("app.conversation_summary.summarize_conversation_turns", fake_summarize)
     chat_calls: list[dict] = []
 
     def fake_chat(question, context, history=None, *, summary=None, ltm=None):

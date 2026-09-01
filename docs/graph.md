@@ -1,3 +1,22 @@
+flyai Skill 参考（src/main/resources/skills/flyai/）
+是什么：FlyAI——通过 flyai-cli（npm 包）调用飞猪（Fliggy）MCP 的机票/火车/景点搜索工具。README 里定位为机票搜索的备用数据源（tuniu → flight-manager → flyai 兜底链最后一环），最关键特性：免 API Key 即可试用（trial 模式），这就是阶段 2 行程规划能零 Key 走通的原因。
+
+目录结构：
+
+
+text
+skills/flyai/
+├── SKILL.md                        主说明（129 行）
+└── references/                     每个子命令一份参数文档
+    ├── keyword-search.md           一句话搜酒店/机票/门票/演出/赛事
+    ├── ai-search.md                语义搜索（理解复杂意图）
+    ├── search-flight.md            结构化机票搜索（深度比价用）
+    ├── search-train.md             结构化火车票搜索
+    └── search-poi.md               结构化景点搜索
+运行要求：npm i -g @fly-ai/flyai-cli（依赖 node），命令输出单行 JSON 到 stdout、错误走 stderr。SKILL.md 明确要求调用前先读对应 reference 文档，不要凭其他命令的参数格式猜
+
+
+
 ##  Agent / RAG 调用关系
 
 ```text

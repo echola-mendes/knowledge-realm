@@ -1,8 +1,8 @@
 import inspect
 import uuid
 
-from app.p1 import tools
-from app.p1.tools import search_knowledge, web_search
+from app import tools
+from app.tools import search_knowledge, web_search
 
 
 def test_search_knowledge_wraps_search_chunks_not_http(monkeypatch):
@@ -22,7 +22,7 @@ def test_search_knowledge_wraps_search_chunks_not_http(monkeypatch):
         called["kwargs"] = kwargs
         return []
 
-    monkeypatch.setattr("app.p1.tools.search_chunks", fake_search)
+    monkeypatch.setattr("app.tools.search_chunks", fake_search)
     marker = object()
     uid = uuid.UUID("00000000-0000-0000-0000-000000000001")
     hits = search_knowledge(marker, "苹果", user_id=uid, knowledge_base_id=None, k=5)
@@ -54,8 +54,8 @@ def test_web_search_posts_httpx(monkeypatch):
         posted["timeout"] = timeout
         return FakeResp()
 
-    monkeypatch.setattr("app.p1.tools.get_settings", lambda: FakeSettings())
-    monkeypatch.setattr("app.p1.tools.httpx.post", fake_post)
+    monkeypatch.setattr("app.tools.get_settings", lambda: FakeSettings())
+    monkeypatch.setattr("app.tools.httpx.post", fake_post)
     hits = web_search("苹果")
     assert hits == [{"title": "T", "url": "https://e", "snippet": "S"}]
     assert posted["url"] == "https://search.example/q"
@@ -73,6 +73,6 @@ def test_web_search_skips_http_when_unconfigured(monkeypatch):
     def boom(*args, **kwargs):
         raise AssertionError("unconfigured web_search must not call httpx")
 
-    monkeypatch.setattr("app.p1.tools.get_settings", lambda: FakeSettings())
-    monkeypatch.setattr("app.p1.tools.httpx.post", boom)
+    monkeypatch.setattr("app.tools.get_settings", lambda: FakeSettings())
+    monkeypatch.setattr("app.tools.httpx.post", boom)
     assert web_search("苹果") == []

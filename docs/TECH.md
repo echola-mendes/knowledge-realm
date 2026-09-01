@@ -100,6 +100,9 @@
 | `SESSION_SECRET` | Session 签名，至少 32 字符 |
 | `INITIAL_USERNAME` | 空库引导用户名，默认 `echola` |
 | `INITIAL_PASSWORD` | 空库引导密码，只放本机 `.env`，哈希入库 |
+| `FLYAI_CLI` / `FLYAI_API_KEY` / `FLYAI_TIMEOUT` | 飞猪 flyai skill CLI（免 Key trial 可用）；CLI 子命令 `search-flight`/`search-hotel`，stdout 单行 JSON |
+| `HOTEL_SOURCE` | 酒店源：留空=占位提示（不伪造房型）；`flyai`=启用 flyai search-hotel |
+| `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` / `MINIO_BUCKET` / `MINIO_SECURE` | MinIO 软依赖：方案页 `plans/{conversation_id}/` 与知识报告 `reports/{conversation_id}/` 回看；未配置仅实时展示 |
 
 `.env` gitignore；提供无密钥的 `.env.example`。
 
@@ -122,6 +125,17 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、Meilisearc
 7. P2 检索增强必须改现有 `search.py` 的 `search_chunks`，供 Chat、搜索 HTTP、Agent Tool 共用。  
 8. P2 不得把 `/api/chat` 迁到 LangGraph；不得无命中强制 Web Search；不得用 `document_chunk` 冒充 LTM。  
 9. P2 不得把 Checkpoint 当成 STM/Summary；`reason` 统一路由，禁止各 Tool 自行决定是否调用。
+
+### P4 Master 入口（2026-08-31 起）
+
+- Agent 模式（含差旅与 `task=agent|report`）统一走 `/api/agent(/stream)`：**薄意图 → Master → 子能力**；`/api/chat` 不改，禁止并行第二条 travel API。
+- **意图 ≠ Master**：`intent.py` 只输出标签（一次结构化 LLM 分类，失败回退启发式）；`master.py` 只按标签调度并整合，不做第二套意图识别。
+- Master 图：`intent → (knowledge | chat | plan | booking) → finalize`。knowledge = 现有 `graph.py` 作为子图挂载（内部 checkpoint `thread_id=conversation_id` 不变）；plan = `plan_agent.py` ReAct 子图；booking = `booking_agent.py` HITL 子图。Master 自身 checkpoint 用 `master-{conversation_id}` 前缀，二者互不覆盖。
+- `AgentOut` / stream 终态新增 `intent` 字段；stream 首个 SSE 事件为 `{type:'intent', intent}`。
+- plan / booking 意图分别在 P4 Step 2 / 3 落地为真实子 Agent；Step 1 的 stub 已替换。
+- 代码组织：原 `server/app/p1/` 已上移平铺到 `server/app/`（`intent.py` / `master.py` / `graph.py` / `tools.py` / `chains.py` / `ltm.py` / `checkpoint.py` / `conversation_summary.py`）；路由层仍在 `routers/master.py`。
+- **TRAVEL-PLAN-1（Step 2，2026-09-01）**：`plan` 意图 → `plan_agent.py` ReAct 子图（reason→run_tool 循环，无 checkpointer）。工具：`travel/tools.py` 的 `search_flights`（flyai 响应原样透传，前端卡片绑 `itemList`）/`search_hotels`（无源时 `{kind:"placeholder"}`，不伪造房型）/`plan_itinerary`（LLM 结构化 `{options,comparison,recommendation,total_price_summary}`，失败用搜索结果兜底）/`save_plan_html`（渲染 HTML→MinIO `plans/`，软依赖）。缺失要素（出发地/目的地/出发日期）对话补问；口头偏好只改提及字段，params merge 不丢日期/城市。SSE 事件：`progress`/`travel_data`（平铺 flights/hotels/plan）/`plan_html`；`task=report` 报告 HTML 上传 MinIO `reports/`，`AgentOut.report_url` 回传。
+- **TRAVEL-BOOK-1（Step 3，2026-09-01）**：`booking` 意图 → `booking_agent.py` HITL 子图。写操作（book/cancel）先返回 `pending_action`，经 SSE `{type:'hitl', ...}` 推送前端；`list` / 确认落库后 SSE `{type:'booking_data', items}`。用户同会话确认（`AgentRequest.hitl_confirm`）后再落库。数据表 `booking_record`；`list_bookings` 仅查当前用户；`cancel_booking` 校验用户归属并更新 `status='cancelled'`。写限流 30 次/分钟 → HTTP 429。`AgentOut` 含 `pending_action`、`bookings`；前端 `BookingListCard.vue` 展示列表/支付链接。
 
 
 ### 文件说明
@@ -149,8 +163,8 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、Meilisearc
 | `web/src/views/SettingsView.vue` | 设置；调试 panel 内可开调试模式，开启后同 panel 配置用户级 Chunk Size/Overlap |
 | `web/src/components/RetrievalDebugPanel.vue` | 对话页 Retrieval Debug 抽屉 |
 | `server/app/routers/retrieval_debug.py` | `POST /api/retrieval-debug`、labels、`POST /api/retrieval-debug/answer-quality` |
-| `server/app/routers/p1.py` | `/api/agent`、`/api/agent/stream`（伪流式）与旁路 `POST /api/agent/trace`（`stream_mode="updates"` 逐节点 SSE，不落库） |
-| `server/alembic/` | 迁移；当前 `20260828_0014`（`document.chunk_size` / `chunk_overlap`） |
+| `server/app/routers/master.py` | `/api/agent`、`/api/agent/stream`（伪流式）与旁路 `POST /api/agent/trace`（`stream_mode="updates"` 逐节点 SSE，不落库） |
+| `server/alembic/` | 迁移；当前 `20260901_0018`（新增 `booking_record`） |
 | `web/src/styles.css` | 全局设计 token 与顶栏/页面自适应容器（不锁 1440×900） |
 | `server/app/routers/tags.py` | 标签创建/列表/删除 |
 | `server/app/search.py` | Hybrid + RRF + Rerank；经 `search_kb_ids` 定库；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤；可选 `created_after`/`created_before`（文档 `created_at`） |
@@ -175,22 +189,30 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、Meilisearc
 | `server/app/routers/chunk_settings.py` | `GET/PUT /api/chunk-settings`（Session 用户） |
 | `server/app/index.py` | 切块 Embedding 写入 `document_chunk`；切块用文档所属用户配置并写入 `document.chunk_size`/`chunk_overlap`；状态 `ready`；额度不足提示改 v4；P3 `index_document_incremental` 差量更新 |
 | `server/app/storage.py` | 本地文件路径与清理 |
-| `server/app/schemas.py` | Pydantic 模型 |
-| `server/app/models.py` | SQLAlchemy 表 |
+| `server/app/schemas.py` | Pydantic 模型；`AgentRequest` 新增 `hitl_confirm`，`AgentOut` 新增 `pending_action` |
+| `server/app/models.py` | SQLAlchemy 表；新增 `booking_record` 存储旅行预订 |
 | `web/src/views/LoginView.vue` | 独立登录页 |
-| `server/app/p1/chains.py` | P1.1/P1.2/P1.4 摘要、自动标签、文档对比、图谱抽取 Chain；禁止 import LangGraph |
-| `server/app/p1/conversation_summary.py` | 消息 >6 时压缩更早轮次写入 `conversation.summary` |
-| `server/app/p1/ltm.py` | `user_memory` 读写；Agent 灌入 `ltm_hits`（非向量检索） |
-| `server/app/p1/checkpoint.py` | LangGraph `PostgresSaver`（同库连接池）；`setup` 建 checkpoint 表 |
-| `server/app/p1/tools.py` | `search_knowledge`（内部 `search_chunks`，禁止 HTTP `/api/search`）；P2-Agent-5 `web_search`（httpx POST 配置端点，禁止 Playwright） |
-| `server/app/p1/graph.py` | 一张 StateGraph：reason → DIRECT \| RAG \| WEB \| GRAPH；首圈可写入 ≤3 有序子任务，之后每圈仍只选四者之一；`run_tool` 只执行 reason 指定的 Tool；`generate` 可带 STM / Summary / LTM / web_hits，有子任务时汇总；compile 带 checkpointer；`task=agent|report` 同图；max_loops=3 |
-| `server/app/routers/p1.py` | P1.2 `POST /api/compare`；P1.3 `POST /api/agent` 与 `/api/agent/stream`（`thread_id=conversation_id`，每轮重灌 STM）；P1.4/P3-EXT `GET /api/graph`、`GET /api/graph/search`、`GET /api/graph/search/details`、`GET /api/graph/documents`；`POST /api/agent/trace` 旁路 SSE 带 token |
-| `web/src/views/ChatView.vue` | 默认 `/api/chat/stream`；「Agent / 报告」走 `/api/agent/stream`（共享 `conversation_id`） |
+| `server/app/chains.py` | P1.1/P1.2/P1.4 摘要、自动标签、文档对比、图谱抽取 Chain；禁止 import LangGraph |
+| `server/app/conversation_summary.py` | 消息 >6 时压缩更早轮次写入 `conversation.summary` |
+| `server/app/ltm.py` | `user_memory` 读写；Agent 灌入 `ltm_hits`（非向量检索） |
+| `server/app/checkpoint.py` | LangGraph `PostgresSaver`（同库连接池）；`setup` 建 checkpoint 表 |
+| `server/app/tools.py` | `search_knowledge`（内部 `search_chunks`，禁止 HTTP `/api/search`）；P2-Agent-5 `web_search`（httpx POST 配置端点，禁止 Playwright） |
+| `server/app/graph.py` | 一张 StateGraph：reason → DIRECT \| RAG \| WEB \| GRAPH；首圈可写入 ≤3 有序子任务，之后每圈仍只选四者之一；`run_tool` 只执行 reason 指定的 Tool；`generate` 可带 STM / Summary / LTM / web_hits，有子任务时汇总；compile 带 checkpointer；`task=agent|report` 同图；max_loops=3 |
+| `server/app/intent.py` | P4 薄意图：一次 LLM 结构化分类 → `knowledge \| plan \| booking \| chat`；`task=report` 强制 `knowledge`；LLM 失败/解析失败回退关键词启发式；只出标签，不做检索与整合 |
+| `server/app/master.py` | P4 Master 图（Supervisor 骨架）：`intent → knowledge/chat/plan/booking → finalize`；knowledge 节点调用 `graph.build_graph()`（子图 checkpoint `thread_id=conversation_id` 不变）；chat 节点经 `llm.chat` 直接寒暄；plan 节点调用 `plan_agent.py`；booking 节点调用 `booking_agent.py`；Master 自身 checkpoint `thread_id=master-{conversation_id}` |
+| `server/app/plan_agent.py` | P4 plan 子 Agent（TRAVEL-PLAN-1）：ReAct reason→run_tool；缺要素 `ask` 补问；params merge 保留未提及字段；无 checkpointer |
+| `server/app/booking_agent.py` | P4 booking 子 Agent（TRAVEL-BOOK-1）：ReAct reason→run_tool；book/cancel 写操作 HITL；未确认生成 `pending_action`，确认后落库 `booking_record`；无 Master 自身 checkpoint 外的持久 |
+| `server/app/travel/rate_limit.py` | 预订写限流：进程内 sliding window，用户维度 30 次/60s，超限抛 `RateLimitedError` |
+| `server/app/travel/flyai.py` | flyai skill CLI 封装：`search-flight`/`search-hotel`；stdout 单行 JSON 原样返回（含 `itemList`）；失败抛 `FlyaiError` |
+| `server/app/travel/tools.py` | 差旅工具：机票透传/酒店占位（无源不伪造）/`plan_itinerary`（LLM 结构化+兜底）/`save_plan_html`（HTML→MinIO） |
+| `server/app/travel/minio_store.py` | MinIO 软依赖：`plans/{conversation_id}/{ts}.html` 与 `reports/{conversation_id}/{ts}.html` 前缀分离；未配置/失败返回 None 降级 |
+| `server/app/routers/master.py` | P1.2 `POST /api/compare`；P1.3/P4 `POST /api/agent` 与 `/api/agent/stream` 改调 `build_master_graph()`（薄意图 → Master → 子能力；每轮重灌 STM；stream 首事件 `{type:'intent'}`，booking 路径转发 `{type:'hitl'}`；HITL 确认复用同 `conversation_id` 并读取 checkpoint 中的 `pending_action`）；P1.4/P3-EXT `GET /api/graph`、`GET /api/graph/search`、`GET /api/graph/search/details`、`GET /api/graph/documents`；`POST /api/agent/trace` 旁路 SSE 带 token（暂仍走旧 p1 图，后续对齐 Master） |
+| `web/src/views/ChatView.vue` | 默认 `/api/chat/stream`；「Agent / 报告」走 `/api/agent/stream`（共享 `conversation_id`）；Agent 消息渲染 HITL 确认卡片，用户确认/取消后重发并带 `hitl_confirm` |
 | `web/src/views/ReaderView.vue` | 阅读页：摘要/自动标签；P1.4「抽取图谱」+ 实体/关系列表 + 相近文档；P3-EXT 抽取后「查看图谱」入口 |
 
-| `server/app/p1/tools.py` | 新增 `search_graph()` 与 `search_graph_details()`：实体名子串匹配 → 沿 `entity_link` 扩展 1–2 跳 → 返回关联文档切片；`search_graph_details` 额外返回命中实体、关系、路径、相关文档；两者不建第二套向量集合 |
-| `server/app/routers/p1.py` | 新增 `GET /api/graph/search`、`GET /api/graph/search/details`、`GET /api/graph/documents`；`/api/agent/stream` 流式事件识别 `search_graph` Tool |
-| `server/app/p1/graph.py` | Agent StateGraph 新增 `GRAPH` action：`reason` 输出 `action=graph`，`run_tool` 调用 `search_graph` |
+| `server/app/tools.py` | 新增 `search_graph()` 与 `search_graph_details()`：实体名子串匹配 → 沿 `entity_link` 扩展 1–2 跳 → 返回关联文档切片；`search_graph_details` 额外返回命中实体、关系、路径、相关文档；两者不建第二套向量集合 |
+| `server/app/routers/master.py` | 新增 `GET /api/graph/search`、`GET /api/graph/search/details`、`GET /api/graph/documents`；`/api/agent/stream` 流式事件识别 `search_graph` Tool |
+| `server/app/graph.py` | Agent StateGraph 新增 `GRAPH` action：`reason` 输出 `action=graph`，`run_tool` 调用 `search_graph` |
 | `web/src/views/KnowledgeGraphView.vue` | `/knowledge-graph` 力导向 SVG 可视化页：知识库/实体/关系筛选与重置、力导向布局、搜索高亮、4 Tab 面板（节点详情、路径探索、邻居节点、检索辅助）、画布控制、统计 |
 | `web/src/components/Icon.vue` | 补齐 `minus / maximize / refresh / fullscreen` 等图谱控制图标 |
 | `web/src/router.ts` | 新增 `/knowledge-graph` 路由 |

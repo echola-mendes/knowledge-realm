@@ -195,7 +195,7 @@ def index_document(document_id: uuid.UUID) -> None:
 
 
 def _enrich_after_index(document_id: uuid.UUID) -> None:
-    from app.p1.chains import enrich_document_after_ready
+    from app.chains import enrich_document_after_ready
 
     enrich_document_after_ready(document_id)
 

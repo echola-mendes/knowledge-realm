@@ -6,8 +6,8 @@ from sqlalchemy import select
 from app.db import session_scope
 from app.main import reset_app_state
 from app.models import User
-from app.p1 import graph as graph_mod
-from app.p1.ltm import write_user_memory
+from app import graph as graph_mod
+from app.ltm import write_user_memory
 import app.search as search_mod
 
 
@@ -21,7 +21,7 @@ def _client():
 
 
 def test_ltm_survives_new_conversation(monkeypatch):
-    monkeypatch.setattr("app.routers.p1.llm_keys_ready", lambda: True)
+    monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
     monkeypatch.setattr(graph_mod, "reason_decide", lambda state: {"next_action": "generate"})
     chat_calls: list[dict] = []
 

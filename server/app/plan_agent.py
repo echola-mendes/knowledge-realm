@@ -1,0 +1,378 @@
+"""itinerary_plan_agent：行程规划子 Agent（TRAVEL-PLAN-1）。
+
+循环：reason（抽取参数并决策）→ run_tool（flights/hotels/plan/save）→ reason …
+- 缺少必要要素（出发地/目的地/出发日期）时 reason 输出 ask + need_fields，由本 Agent 对话补问；
+- 口头偏好改方案：每轮从对话历史重抽参数，未提及的日期/城市沿用上一轮（params merge），不丢要素；
+- 无 checkpointer：多轮补问靠 DB 消息历史（STM）与本图每轮重入。
+"""
+from __future__ import annotations
+
+import json
+from typing import Any, Literal, TypedDict
+
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph import END, START, StateGraph
+
+from app.travel import tools as travel_tools
+
+MAX_LOOPS = 6
+REQUIRED_FIELDS = ("origin", "destination", "depart_date")
+
+FIELD_LABELS = {
+    "origin": "出发地",
+    "destination": "目的地",
+    "depart_date": "出发日期",
+    "return_date": "返程日期",
+    "cabin": "舱位偏好",
+    "budget": "预算",
+    "check_in_date": "入住日期",
+    "check_out_date": "离店日期",
+}
+
+_compiled = None
+
+
+class PlanState(TypedDict, total=False):
+    query: str
+    messages: list[dict[str, str]]
+    summary: str
+    ltm_hits: list[dict[str, Any]]
+    conversation_id: str | None
+    params: dict[str, Any]
+    need_fields: list[str]
+    next_action: Literal["flights", "hotels", "plan", "save", "ask", "direct"]
+    flights_raw: dict[str, Any] | None
+    hotels_raw: dict[str, Any] | None
+    plan: dict[str, Any]
+    plan_html: dict[str, Any]
+    travel_data: dict[str, Any]
+    progress: list[str]
+    answer: str
+    loop_count: int
+    max_loops: int
+
+
+def plan_initial_state(
+    query: str,
+    *,
+    history: list[dict[str, str]] | None = None,
+    summary: str | None = None,
+    ltm_hits: list[dict[str, Any]] | None = None,
+    conversation_id: str | None = None,
+) -> PlanState:
+    return {
+        "query": query,
+        "messages": list(history or []) + [{"role": "user", "content": query}],
+        "summary": (summary or "").strip(),
+        "ltm_hits": list(ltm_hits or []),
+        "conversation_id": conversation_id,
+        "params": {},
+        "need_fields": [],
+        "next_action": "direct",
+        "flights_raw": None,
+        "hotels_raw": None,
+        "travel_data": {},
+        "progress": [],
+        "answer": "",
+        "loop_count": 0,
+        "max_loops": MAX_LOOPS,
+    }
+
+
+def _emit(config: RunnableConfig, event: dict[str, Any]) -> None:
+    emit = (config.get("configurable") or {}).get("emit")
+    if callable(emit):
+        try:
+            emit(event)
+        except Exception:
+            pass
+
+
+def _emit_progress(config: RunnableConfig, text: str, progress: list[str]) -> None:
+    _emit(config, {"type": "progress", "text": text})
+    return None
+
+
+def _user_question(state: PlanState) -> str:
+    for item in reversed(state.get("messages") or []):
+        if item.get("role") == "user":
+            return item.get("content") or ""
+    return ""
+
+
+def _reason_llm(state: PlanState) -> dict[str, Any] | None:
+    """LLM 决策：抽取/更新参数并给出动作。可被测试替换；失败返回 None。"""
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_openai import ChatOpenAI
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    history_text = "\n".join(
+        f"{item.get('role')}: {str(item.get('content') or '')[:160]}"
+        for item in (state.get("messages") or [])[-8:]
+    )
+    try:
+        model = ChatOpenAI(
+            model=settings.llm_model,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            temperature=0,
+        )
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "你是出行规划调度器。只输出 JSON。"
+                    '从对话抽取出行参数：{"params":{"origin","destination","depart_date","return_date",'
+                    '"cabin","adults","budget","poi_name","hotel_stars","max_price"},'
+                    '"action":"flights|hotels|plan|save|ask|direct"}。'
+                    "日期格式 YYYY-MM-DD。只写本轮新提及或更正的字段，未提及的字段不要输出（保留旧值由系统合并）。"
+                    "动作规则：要素齐全先查机票（flights）；需要酒店且已启用再 hotels；"
+                    "已有搜索结果则 plan 生成方案；方案生成后 save 保存方案页；"
+                    "要素缺失（出发地/目的地/出发日期）选 ask；与出行无关选 direct。",
+                ),
+                (
+                    "human",
+                    "历史对话：\n{history}\n\n当前用户消息：{question}\n\n已抽参数：{params}\n"
+                    "已有结果：flights={has_flights} hotels={has_hotels} plan={has_plan} saved={saved}",
+                ),
+            ]
+        )
+        has_flights = bool((state.get("flights_raw") or {}).get("itemList"))
+        resp = (
+            prompt
+            | model
+        ).invoke(
+            {
+                "history": history_text or "（无）",
+                "question": _user_question(state),
+                "params": json.dumps(state.get("params") or {}, ensure_ascii=False),
+                "has_flights": has_flights,
+                "has_hotels": bool(state.get("hotels_raw")),
+                "has_plan": bool(state.get("plan")),
+                "saved": bool(state.get("plan_html")),
+            }
+        )
+        raw = str(resp.content)
+        start = raw.find("{")
+        end = raw.rfind("}")
+        parsed = json.loads(raw[start : end + 1] if 0 <= start <= end else raw)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _heuristic_params(state: PlanState) -> dict[str, Any]:
+    """LLM 不可用时从当前消息直接解析；解析不出就触发 ask。"""
+    import re
+
+    text = _user_question(state)
+    params: dict[str, Any] = {}
+    date = re.search(r"(\d{4}-\d{2}-\d{2})", text)
+    if date:
+        params["depart_date"] = date.group(1)
+    cabin = re.search(r"(经济舱|公务舱|头等舱|商务舱)", text)
+    if cabin:
+        params["cabin"] = cabin.group(1)
+    return params
+
+
+def reason_decide(state: PlanState) -> dict[str, Any]:
+    """纯决策函数（无副作用），返回 state 更新。"""
+    parsed = _reason_llm(state)
+    params_update: dict[str, Any] = {}
+    action = ""
+    if parsed:
+        action = str(parsed.get("action") or "")
+        raw_params = parsed.get("params")
+        if isinstance(raw_params, dict):
+            params_update = {k: v for k, v in raw_params.items() if v not in (None, "")}
+    else:
+        params_update = _heuristic_params(state)
+    merged = dict(state.get("params") or {})
+    merged.update(params_update)
+    missing = [f for f in REQUIRED_FIELDS if not merged.get(f)]
+    # 硬规则：要素缺失必补问，优先于 LLM 动作
+    if missing and not (state.get("flights_raw") or {}).get("itemList"):
+        return {"params": merged, "need_fields": missing, "next_action": "ask"}
+    if not parsed:
+        # 无 LLM：要素齐则按既定顺序走，避免空转
+        if not (state.get("flights_raw") or {}).get("itemList"):
+            action = "flights"
+        elif not state.get("plan"):
+            action = "plan"
+        elif not state.get("plan_html"):
+            action = "save"
+        else:
+            action = "direct"
+    has_flights = bool((state.get("flights_raw") or {}).get("itemList"))
+    if action == "flights" and has_flights:
+        action = "plan"
+    if action == "plan" and not has_flights:
+        action = "flights"
+    if action == "save" and not state.get("plan"):
+        action = "plan"
+    if action not in ("flights", "hotels", "plan", "save", "ask", "direct"):
+        action = "plan" if has_flights else "flights"
+    return {"params": merged, "need_fields": [], "next_action": action}
+
+
+def node_reason(state: PlanState) -> dict[str, Any]:
+    if int(state.get("loop_count") or 0) >= int(state.get("max_loops") or MAX_LOOPS):
+        return {"next_action": "direct"}
+    updates = reason_decide(state)
+    if updates.get("next_action") in ("flights", "hotels", "plan", "save") and int(
+        state.get("loop_count") or 0
+    ) + 1 > int(state.get("max_loops") or MAX_LOOPS):
+        return {"next_action": "direct"}
+    return updates
+
+
+def route_after_reason(state: PlanState) -> Literal["run_tool", "ask", "finalize"]:
+    action = state.get("next_action")
+    if action == "ask":
+        return "ask"
+    if action in ("flights", "hotels", "plan", "save"):
+        return "run_tool"
+    return "finalize"
+
+
+def node_run_tool(state: PlanState, config: RunnableConfig) -> dict[str, Any]:
+    loop_count = int(state.get("loop_count") or 0) + 1
+    action = state.get("next_action")
+    progress = list(state.get("progress") or [])
+    params = dict(state.get("params") or {})
+    updates: dict[str, Any] = {"loop_count": loop_count}
+
+    if action == "flights":
+        progress.append("正在搜索机票…")
+        _emit_progress(config, progress[-1], progress)
+        raw = travel_tools.search_flights_tool(params)
+        count = len(raw.get("itemList") or []) if isinstance(raw.get("itemList"), list) else 0
+        if raw.get("kind") == "error":
+            progress.append(f"机票搜索失败：{raw.get('message')}")
+            _emit_progress(config, progress[-1], progress)
+        else:
+            progress.append(f"机票搜索完成（{count} 条）")
+            _emit_progress(config, progress[-1], progress)
+        travel_data = dict(state.get("travel_data") or {})
+        travel_data["flights"] = raw.get("itemList") if raw.get("kind") != "error" else raw
+        _emit(config, {"type": "travel_data", **travel_data})
+        updates.update({"flights_raw": raw, "travel_data": travel_data, "progress": progress})
+        return updates
+
+    if action == "hotels":
+        progress.append("正在搜索酒店…")
+        _emit_progress(config, progress[-1], progress)
+        raw = travel_tools.search_hotels_tool(params)
+        if raw.get("kind") == "placeholder":
+            progress.append("酒店源未配置，跳过酒店（不伪造房型）")
+        elif raw.get("kind") == "error":
+            progress.append(f"酒店搜索失败：{raw.get('message')}")
+        else:
+            progress.append("酒店搜索完成")
+        _emit_progress(config, progress[-1], progress)
+        travel_data = dict(state.get("travel_data") or {})
+        travel_data["hotels"] = raw
+        _emit(config, {"type": "travel_data", **travel_data})
+        updates.update({"hotels_raw": raw, "travel_data": travel_data, "progress": progress})
+        return updates
+
+    if action == "plan":
+        progress.append("正在生成可对比方案…")
+        _emit_progress(config, progress[-1], progress)
+        plan = travel_tools.plan_itinerary(
+            state.get("flights_raw"), state.get("hotels_raw"), params
+        )
+        progress.append("方案生成完成")
+        _emit_progress(config, progress[-1], progress)
+        travel_data = dict(state.get("travel_data") or {})
+        travel_data["plan"] = plan
+        _emit(config, {"type": "travel_data", **travel_data})
+        updates.update({"plan": plan, "travel_data": travel_data, "progress": progress})
+        return updates
+
+    if action == "save":
+        progress.append("正在生成方案页…")
+        _emit_progress(config, progress[-1], progress)
+        plan_html = travel_tools.save_plan_html(
+            state.get("plan") or {},
+            state.get("flights_raw"),
+            state.get("hotels_raw"),
+            params,
+            state.get("conversation_id"),
+        )
+        progress.append(plan_html.get("note") or "方案页已生成")
+        _emit_progress(config, progress[-1], progress)
+        _emit(config, {"type": "plan_html", **plan_html})
+        updates.update({"plan_html": plan_html, "progress": progress})
+        return updates
+
+    return updates
+
+
+def node_ask(state: PlanState) -> dict[str, Any]:
+    labels = [FIELD_LABELS.get(f, f) for f in (state.get("need_fields") or list(REQUIRED_FIELDS))]
+    answer = "为给出可比方案，请补充以下信息：" + "、".join(labels) + "。"
+    return {"answer": answer}
+
+
+def node_finalize(state: PlanState) -> dict[str, Any]:
+    from app import llm as llm_mod
+
+    params = dict(state.get("params") or {})
+    plan = state.get("plan") or {}
+    flights = state.get("flights_raw") or {}
+    count = len(flights.get("itemList") or []) if isinstance(flights.get("itemList"), list) else 0
+    if not plan and not count:
+        return {"answer": "暂未能生成行程方案：请补充出行要素（出发地、目的地、出发日期）后重试。"}
+    context = json.dumps(
+        {
+            "params": params,
+            "plan": plan,
+            "flights_count": count,
+            "plan_page": (state.get("plan_html") or {}).get("note"),
+        },
+        ensure_ascii=False,
+    )
+    history = [
+        (str(m.get("role") or ""), str(m.get("content") or ""))
+        for m in (state.get("messages") or [])[:-1]
+        if m.get("role") in ("user", "assistant") and m.get("content")
+    ]
+    answer = llm_mod.chat(
+        "请向用户总结行程方案：突出推荐方案与理由、对比要点、总价；末尾附方案页说明。简洁中文。",
+        context,
+        history,
+        summary=(state.get("summary") or "").strip() or None,
+        ltm=state.get("ltm_hits") or None,
+    )
+    return {"answer": answer}
+
+
+def build_plan_graph():
+    global _compiled
+    if _compiled is not None:
+        return _compiled
+    graph = StateGraph(PlanState)
+    graph.add_node("reason", node_reason)
+    graph.add_node("run_tool", node_run_tool)
+    graph.add_node("ask", node_ask)
+    graph.add_node("finalize", node_finalize)
+    graph.add_edge(START, "reason")
+    graph.add_conditional_edges(
+        "reason",
+        route_after_reason,
+        {"run_tool": "run_tool", "ask": "ask", "finalize": "finalize"},
+    )
+    graph.add_edge("run_tool", "reason")
+    graph.add_edge("ask", END)
+    graph.add_edge("finalize", END)
+    _compiled = graph.compile()
+    return _compiled
+
+
+def reset_plan_graph() -> None:
+    global _compiled
+    _compiled = None

@@ -83,9 +83,9 @@ def test_summarize_and_auto_tags_keep_existing(monkeypatch):
 def test_index_writes_overview_and_tags(monkeypatch):
     monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
-    monkeypatch.setattr("app.p1.chains.summarize_document", lambda text: "上传概述")
-    monkeypatch.setattr("app.p1.chains.suggest_tag_names", lambda text: ["自动标"])
-    from app.p1.chains import enrich_document_after_ready
+    monkeypatch.setattr("app.chains.summarize_document", lambda text: "上传概述")
+    monkeypatch.setattr("app.chains.suggest_tag_names", lambda text: ["自动标"])
+    from app.chains import enrich_document_after_ready
 
     monkeypatch.setattr("app.index._enrich_after_index", enrich_document_after_ready)
     with _client() as client:

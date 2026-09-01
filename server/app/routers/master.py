@@ -14,12 +14,14 @@ from app.deps import current_user
 from app.kb import KnowledgeBaseAccessError, owned_document, resolve_knowledge_base_id
 from app.llm import llm_keys_ready
 from app.models import Conversation, Document, Entity, EntityLink, KnowledgeBase, Message, User
-from app.p1.chains import compare_documents, gather_document_text
-from app.p1.ltm import load_ltm_hits
-from app.p1.conversation_summary import refresh_conversation_summary
-from app.p1.graph import build_graph, initial_state
+from app.chains import compare_documents, gather_document_text
+from app.ltm import load_ltm_hits
+from app.conversation_summary import refresh_conversation_summary
+from app.graph import build_graph, initial_state
+from app.master import build_master_graph, master_initial_state
 from app.chat import _history
-from app.p1.tools import search_graph, search_graph_details, search_knowledge, web_search
+from app.tools import search_graph, search_graph_details, search_knowledge, web_search
+from app.travel.rate_limit import RateLimitedError
 from app.schemas import (
     AgentOut,
     AgentRequest,
@@ -36,7 +38,7 @@ from app.schemas import (
     KnowledgeGraphOut,
 )
 
-router = APIRouter(prefix="/api", tags=["p1"])
+router = APIRouter(prefix="/api", tags=["master"])
 
 
 def get_db():
@@ -78,7 +80,10 @@ def compare(body: CompareRequest, session: Session = Depends(get_db), user: User
     )
 
 
-def _agent_out(body: AgentRequest, session: Session, user_id: uuid.UUID) -> AgentOut:
+def _agent_prepare(
+    body: AgentRequest, session: Session, user_id: uuid.UUID
+) -> tuple[str, uuid.UUID, Conversation, list[dict[str, str]], str, list]:
+    """解析/创建会话与上下文；stream 与非 stream 共用。"""
     if body.task not in ("agent", "report"):
         raise HTTPException(status_code=400, detail="task 须为 agent 或 report")
     if not llm_keys_ready():
@@ -101,24 +106,18 @@ def _agent_out(body: AgentRequest, session: Session, user_id: uuid.UUID) -> Agen
         summary_text = (convo.summary or "").strip()
     ltm_hits = load_ltm_hits(session, user_id)
     task = "report" if body.task == "report" else "agent"
-    out = build_graph().invoke(
-        initial_state(
-            body.query,
-            knowledge_base_id=body.knowledge_base_id,
-            task=task,
-            history=history_msgs,
-            summary=summary_text,
-            ltm_hits=ltm_hits,
-            allow_web=bool(body.allow_web),
-        ),
-        config={
-            "configurable": {
-                "thread_id": str(convo.id),
-                "session": session,
-                "user_id": user_id,
-            }
-        },
-    )
+    return task, kb_id, convo, history_msgs, summary_text, ltm_hits
+
+
+def _agent_persist(
+    session: Session,
+    task: str,
+    kb_id: uuid.UUID,
+    convo: Conversation,
+    body: AgentRequest,
+    out: dict,
+) -> AgentOut:
+    """把 Master 输出落消息/摘要并组装 AgentOut。"""
     answer = out.get("answer") or ""
     cites = [CitationOut.model_validate(item) for item in (out.get("citations") or [])]
     session.add(Message(conversation_id=convo.id, role="user", content=body.query, citations=None))
@@ -140,7 +139,60 @@ def _agent_out(body: AgentRequest, session: Session, user_id: uuid.UUID) -> Agen
         answer=answer,
         citations=cites,
         loop_count=int(out.get("loop_count") or 0),
+        intent=str(out.get("intent") or "") or None,
+        report_url=out.get("report_url"),
+        pending_action=out.get("pending_action"),
+        bookings=list(out.get("bookings") or []) or None,
     )
+
+
+
+
+def _load_last_pending_action(conversation_id: uuid.UUID) -> dict[str, Any] | None:
+    """从 Master 同 thread checkpoint 读取上一次的 pending_action（供 HITL 确认）。"""
+    try:
+        graph = build_master_graph()
+        snapshot = graph.get_state({"configurable": {"thread_id": f"master-{conversation_id}"}})
+        if snapshot and snapshot.values:
+            return snapshot.values.get("pending_action")
+    except Exception:
+        pass
+    return None
+
+def _master_state_config(body, task, convo, history_msgs, summary_text, ltm_hits):
+    pending_action = None
+    if body.hitl_confirm is not None and body.conversation_id:
+        pending_action = _load_last_pending_action(body.conversation_id)
+    state = master_initial_state(
+        body.query,
+        task=task,
+        knowledge_base_id=body.knowledge_base_id,
+        conversation_id=convo.id,
+        history=history_msgs,
+        summary=summary_text,
+        ltm_hits=ltm_hits,
+        allow_web=bool(body.allow_web),
+        pending_action=pending_action,
+        hitl_confirm=body.hitl_confirm,
+    )
+    configurable = {
+        "thread_id": f"master-{convo.id}",
+        "session": None,
+        "user_id": None,
+    }
+    return state, configurable
+
+
+def _agent_out(body: AgentRequest, session: Session, user_id: uuid.UUID) -> AgentOut:
+    task, kb_id, convo, history_msgs, summary_text, ltm_hits = _agent_prepare(body, session, user_id)
+    state, configurable = _master_state_config(body, task, convo, history_msgs, summary_text, ltm_hits)
+    configurable["session"] = session
+    configurable["user_id"] = user_id
+    try:
+        out = build_master_graph().invoke(state, config={"configurable": configurable})
+    except RateLimitedError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    return _agent_persist(session, task, kb_id, convo, body, out)
 
 
 @router.post("/agent", response_model=AgentOut)
@@ -152,9 +204,42 @@ def agent_run(body: AgentRequest, session: Session = Depends(get_db), user: User
 async def agent_stream(
     body: AgentRequest, request: Request, session: Session = Depends(get_db), user: User = Depends(current_user)
 ):
-    result = _agent_out(body, session, user.id)
+    """事件序列：intent →（progress / travel_data / plan_html，plan 路径）→ token 逐字 → citations 终态。
+
+    伪流式：图在响应前同步跑完（沿用既有设计），但事件顺序与真实 Hook 一致；
+    plan 子 Agent 执行中的 progress/travel_data/plan_html 经 emit 回调按发生顺序收集。
+    """
+    task, kb_id, convo, history_msgs, summary_text, ltm_hits = _agent_prepare(body, session, user.id)
+    state, configurable = _master_state_config(body, task, convo, history_msgs, summary_text, ltm_hits)
+    configurable["session"] = session
+    configurable["user_id"] = user.id
+    hook_events: list[dict] = []
+
+    def emit(event: dict) -> None:
+        hook_events.append(event)
+
+    configurable["emit"] = emit
+    final: dict = dict(state)
+    try:
+        stream_iter = build_master_graph().stream(
+            state, config={"configurable": configurable}, stream_mode="updates"
+        )
+    except RateLimitedError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    for chunk in stream_iter:
+        for node, updates in chunk.items():
+            if not isinstance(updates, dict):
+                continue
+            final.update(updates)
+            if node == "intent" and updates.get("intent"):
+                emit({"type": "intent", "intent": updates["intent"]})
+    result = _agent_persist(session, task, kb_id, convo, body, final)
 
     async def events():
+        for event in hook_events:
+            if await request.is_disconnected():
+                return
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         for char in result.answer:
             if await request.is_disconnected():
                 return
