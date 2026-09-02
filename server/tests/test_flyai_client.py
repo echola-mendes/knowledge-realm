@@ -41,16 +41,11 @@ def test_search_flights_passthrough_item_list(monkeypatch):
     assert "--origin 上海" in joined
     assert "--destination 北京" in joined
     assert "--dep-date 2026-09-10" in joined
-    assert "--journey-type 1" in joined
+    assert "--journey-type" not in joined
+    assert "--adult-count" not in joined
 
 
-def test_search_flights_round_trip_journey_type(monkeypatch):
-    monkeypatch.setattr(flyai.subprocess, "run", lambda args, **kw: _ok_proc(SAMPLE))
-    flyai.search_flights(
-        origin="上海", destination="北京", dep_date="2026-09-10", back_date="2026-09-12", seat_class="经济舱"
-    )
-    out = flyai.search_flights  # noqa: F841 仅为可读
-    # journey-type=2 已在上面调用内拼装；这里补断言通过捕获
+def test_search_flights_round_trip_args(monkeypatch):
     captured = {}
 
     def spy(args, **kw):
@@ -62,9 +57,25 @@ def test_search_flights_round_trip_journey_type(monkeypatch):
         origin="上海", destination="北京", dep_date="2026-09-10", back_date="2026-09-12", seat_class="经济舱"
     )
     joined = " ".join(captured["argv"])
-    assert "--journey-type 2" in joined
     assert "--back-date 2026-09-12" in joined
     assert "--seat-class-name 经济舱" in joined
+    assert "--journey-type" not in joined
+    assert "--adult-count" not in joined
+
+
+def test_search_flights_nested_data_item_list(monkeypatch):
+    wrapped = {
+        "data": {"itemList": SAMPLE["itemList"]},
+        "message": "success",
+        "status": 0,
+        "systemMessage": "trial",
+    }
+
+    monkeypatch.setattr(flyai.subprocess, "run", lambda args, **kw: _ok_proc(wrapped))
+    out = flyai.search_flights(origin="上海", destination="北京", dep_date="2026-09-10")
+    assert out["itemList"] == SAMPLE["itemList"]
+    assert out["message"] == "success"
+    assert out["systemMessage"] == "trial"
 
 
 def test_search_flights_missing_params_raises(monkeypatch):

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>上海 → 杭州 差旅行程方案</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+    padding: 20px;
+    color: #1a2d3a;
+    line-height: 1.6;
+  }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 28px 32px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  .header { margin-bottom: 24px; }
+  .title-group h1 { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+  .meta { font-size: 14px; color: #64748b; display: flex; gap: 16px; flex-wrap: wrap; }
+  .meta span { display: inline-flex; align-items: center; gap: 4px; }
+  .alert { padding: 10px 14px; border-radius: 8px; margin-top: 12px; font-size: 14px; }
+  .alert-warning { background: #fffbeb; color: #a16207; border-left: 4px solid #f59e0b; }
+  .section-title { font-size: 18px; font-weight: 700; margin: 28px 0 16px; }
+  .recommend-reason {
+    background: #f8fafc; border-left: 4px solid #3b82f6;
+    padding: 12px 16px; border-radius: 0 8px 8px 0; margin-bottom: 16px; font-size: 14px;
+  }
+  .weather-box { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .weather-item {
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+    padding: 12px 16px; font-size: 14px;
+  }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 14px; }
+  th { background: #f1f5f9; padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #e2e8f0; }
+  td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
+  tr:last-child td { font-weight: 700; background: #f8fafc; }
+  .price { color: #dc2626; font-weight: 700; }
+  .audit-conclusion {
+    background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0;
+    border-radius: 8px; padding: 12px 16px; font-size: 14px; margin-bottom: 16px;
+  }
+  .comparison-table { font-size: 13px; display: block; overflow-x: auto; white-space: nowrap; }
+  .comparison-table th, .comparison-table td { padding: 8px 10px; }
+  .plan-item {
+    border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;
+    margin-bottom: 12px; font-size: 14px;
+  }
+  .plan-item.recommended { background: #f0fdf4; border-color: #bbf7d0; }
+  .plan-item.warning { background: #fffbeb; border-color: #fde68a; }
+  .plan-item.failed { background: #fef2f2; border-color: #fecaca; }
+  .plan-item h4 { font-size: 15px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+  .badge-success { background: #bbf7d0; color: #15803d; }
+  .badge-warning { background: #fde68a; color: #a16207; }
+  .badge-danger { background: #fecaca; color: #b91c1c; }
+  .plan-note { margin-top: 8px; padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+  .plan-note.success { background: #f0fdf4; color: #15803d; }
+  .plan-note.warn { background: #fffbeb; color: #a16207; }
+  .plan-note.fail { background: #fef2f2; color: #b91c1c; }
+  .plan-item ul { padding-left: 20px; margin-top: 8px; }
+  .plan-item li { margin-bottom: 4px; }
+  .agent-actions {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px; margin-bottom: 16px;
+  }
+  .action-item {
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+    padding: 12px 16px; font-size: 13px;
+  }
+  .action-item strong { display: block; margin-bottom: 4px; font-size: 14px; }
+  .next-steps {
+    background: #eff6ff; border-radius: 8px; padding: 16px 20px; font-size: 14px;
+  }
+  .next-steps ul { padding-left: 20px; }
+  .next-steps li { margin-bottom: 6px; }
+  .next-steps li::marker { content: "→ "; }
+  @media (max-width: 768px) {
+    body { padding: 12px; }
+    .card { padding: 20px 18px; }
+    .header { flex-direction: column; }
+    .weather-box { grid-template-columns: 1fr; }
+    .agent-actions { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="card">
+
+  <!-- 1. 标题头 -->
+  <div class="header">
+    <div class="title-group">
+      <h1>🗂️ 上海 → 杭州 差旅行程方案</h1>
+    </div>
+    <div class="meta">
+      <span>📅 去程 2026-07-16</span>
+      <span>📅 返程 2026-07-18</span>
+      <span>📋 商务出差</span>
+    </div>
+    <div class="alert alert-warning">⏰ 距离出发还有 14 天，建议尽快确认方案</div>
+  </div>
+
+  <!-- 2. 推荐方案 -->
+  <div class="section-title">🏆 推荐方案 · 价格最低 / 时间最短</div>
+  <div class="recommend-reason">
+    <strong>为什么是它：</strong>在全部方案里综合分最高（85），总价最低、总耗时最短，去程为早班直飞。
+  </div>
+  <div class="weather-box">
+    <div class="weather-item">🌤️ <strong>上海</strong> 多云，28-35°C，适合飞行</div>
+    <div class="weather-item">🌤️ <strong>杭州</strong> 多云转小雨，26-33°C，建议携带雨具</div>
+  </div>
+  <table>
+    <thead><tr><th>环节</th><th>详情</th><th>费用</th></tr></thead>
+    <tbody>
+      <tr><td>🛫 去程</td><td>东航 MU5678，上海虹桥 07:30 → 杭州萧山 09:45，经济舱</td><td class="price">¥620</td></tr>
+      <tr><td>🛬 返程</td><td>东航 MU5679，杭州萧山 20:10 → 上海虹桥 22:20，经济舱</td><td class="price">¥620</td></tr>
+      <tr><td>🏨 酒店</td><td>全季酒店（西湖店），大床房，2 晚，¥413/晚</td><td class="price">¥826</td></tr>
+      <tr><td><strong>合计</strong></td><td><strong>行程耗时 4h05m ｜ 评分 时间80/价格90/偏好70/体验85/综合85</strong></td><td class="price">¥1313</td></tr>
+    </tbody>
+  </table>
+
+  <!-- 3. 审核结论 -->
+  <div class="audit-conclusion">
+    ✅ 推荐方案审核通过。共 2 套方案，1 套通过、1 套未通过后已修复，当前全部可用。
+  </div>
+
+  <!-- 4. 方案对比表 -->
+  <div class="section-title">📋 方案对比</div>
+  <table class="comparison-table">
+    <thead>
+      <tr>
+        <th>方案</th><th>标签</th><th>去程</th><th>返程</th>
+        <th>酒店</th><th>总耗时</th><th>总价</th><th>评分</th><th>审核</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>方案1 ✅推荐</td>
+        <td>价格最低/时间最短</td>
+        <td>东航MU5678 07:30→09:45</td>
+        <td>东航MU5679 20:10→22:20</td>
+        <td>全季西湖店/大床房 ¥413晚</td>
+        <td>4h05m</td>
+        <td class="price">¥1313</td>
+        <td>80/90/70/85/85</td>
+        <td>✅ 通过</td>
+      </tr>
+      <tr>
+        <td>方案2</td>
+        <td>综合最优</td>
+        <td>国航CA1234 08:00→11:00</td>
+        <td>高铁G7501 19:00→22:05</td>
+        <td>亚朵西溪店/高级房 ¥560晚</td>
+        <td>6h05m</td>
+        <td class="price">¥1730</td>
+        <td>90/70/95/40/60</td>
+        <td>❌ 未通过</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- 5. 方案明细 -->
+  <div class="section-title">🔍 方案明细</div>
+  <div class="plan-item recommended">
+    <h4>方案1 · 价格最低/时间最短 <span class="badge badge-success">✅ 通过</span></h4>
+    <ul>
+      <li>去程：东航 MU5678，上海虹桥 07:30 → 杭州萧山 09:45，经济舱 <span class="price">¥620</span></li>
+      <li>返程：东航 MU5679，杭州萧山 20:10 → 上海虹桥 22:20，经济舱 <span class="price">¥620</span></li>
+      <li>酒店：全季酒店（西湖店），大床房，2 晚，¥413/晚，合计 <span class="price">¥826</span></li>
+      <li>总耗时：4h05m ｜ 总价：<span class="price">¥1313</span> ｜ 评分：时80/价90/偏70/体85/综85</li>
+    </ul>
+  </div>
+  <div class="plan-item failed">
+    <h4>方案2 · 综合最优 <span class="badge badge-danger">❌ 未通过</span></h4>
+    <ul>
+      <li>去程：国航 CA1234，上海虹桥 08:00 → 杭州萧山 11:00，公务舱 <span class="price">¥1200</span></li>
+      <li>返程：高铁 G7501，杭州东 19:00 → 上海虹桥 22:05，一等座 <span class="price">¥210</span></li>
+      <li>酒店：亚朵酒店（西溪店），高级房，2 晚，¥560/晚，合计 <span class="price">¥1120</span></li>
+      <li>总耗时：6h05m ｜ 总价：<span class="price">¥1730</span> ｜ 评分：时90/价70/偏95/体40/综60</li>
+    </ul>
+    <div class="plan-note fail">❌ 未通过原因：总价超预算 ／ 去程公务舱超出舱位标准</div>
+    <div class="plan-note warn">🔧 修复：换更经济酒店 + 去程降经济舱 → 修复版已通过（总价 ¥1450 / 综合 91）</div>
+  </div>
+
+  <!-- 6. Agent 行为 -->
+  <div class="section-title">🧭 为你做了什么</div>
+  <div class="agent-actions">
+    <div class="action-item"><strong>环境感知</strong>查询了上海和杭州天气及交通资讯，目的地有小雨</div>
+    <div class="action-item"><strong>候选检索</strong>检索到交通 5 条（去程 3 / 返程 2）、酒店 3 条</div>
+    <div class="action-item"><strong>方案组合</strong>生成并对比了 6 套可行的机酒组合方案</div>
+    <div class="action-item"><strong>目标筛选</strong>🥇综合最优=方案2 ｜ 💰价格最低=方案1 ｜ ⏱️时间最短=方案1</div>
+    <div class="action-item"><strong>审核把关</strong>1 套未通过，经 1 轮修复后全部可用</div>
+  </div>
+
+  <!-- 7. 下一步 -->
+  <div class="section-title">👉 下一步</div>
+  <div class="next-steps">
+    <ul>
+      <li><strong>确认方案</strong>：告诉我你选哪套（如"确认方案1"），我进入预订流程</li>
+      <li><strong>想调整</strong>：换酒店 / 指定航司 / 调整预算等，我按新条件重新规划</li>
+    </ul>
+  </div>
+
+</div>
+</body>
+</html>

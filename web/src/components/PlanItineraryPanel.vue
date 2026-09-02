@@ -1,47 +1,65 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { formatPlanPrice, segmentSummary } from "../utils/flightDisplay";
 import type { PlanComparison, TravelPlan } from "../types/travel";
 
 const props = defineProps<{ plan: TravelPlan }>();
 
 const rec = computed(() => props.plan.recommendation);
-const recLabel = computed(
-  () => props.plan.options.find((o) => o.id === rec.value?.option_id)?.label || rec.value?.option_id || "—",
-);
+const recOption = computed(() => {
+  const id = rec.value?.option_id;
+  return props.plan.options.find((o) => o.id === id) || props.plan.options[0];
+});
+const recLabel = computed(() => recOption.value?.label || rec.value?.option_id || "—");
 
 function dims(): PlanComparison[] {
   return props.plan.comparison || [];
 }
 
-function optionIds(dim: PlanComparison): string[] {
-  return (dim.rows || []).map((r) => r.option_id);
+const compareOptionIds = computed(() => {
+  const first = props.plan.comparison?.[0];
+  if (first?.rows?.length) return first.rows.map((r) => r.option_id);
+  return (props.plan.options || []).map((o) => o.id);
+});
+
+function optionLabel(id: string): string {
+  return props.plan.options.find((o) => o.id === id)?.label || id;
+}
+
+function dimValue(dim: PlanComparison, id: string): string {
+  const row = (dim.rows || []).find((r) => r.option_id === id);
+  const value = row?.value;
+  return value == null || value === "" ? "—" : String(value);
 }
 </script>
 
 <template>
   <div class="card plan-card">
     <h2>行程方案</h2>
-    <div v-if="rec" class="plan-rec">
+    <div v-if="rec || recOption" class="plan-rec">
       <span class="rec-label">推荐：{{ recLabel }}</span>
-      <span class="rec-reason">{{ rec.reason }}</span>
+      <span v-if="rec?.reason" class="rec-reason">{{ rec.reason }}</span>
     </div>
-    <p v-if="plan.total_price_summary" class="plan-total">{{ plan.total_price_summary }}</p>
+    <ul v-if="recOption?.segments?.length" class="plan-segs">
+      <li v-for="(seg, i) in recOption.segments" :key="i">{{ segmentSummary(seg) }}</li>
+    </ul>
+    <p v-if="recOption?.total_price != null && recOption.total_price !== ''" class="plan-total">
+      {{ formatPlanPrice(recOption.total_price) }}
+      <span v-if="plan.total_price_summary" class="plan-total-note">{{ plan.total_price_summary }}</span>
+    </p>
+    <p v-else-if="plan.total_price_summary" class="plan-total">{{ plan.total_price_summary }}</p>
 
     <table v-if="plan.comparison?.length" class="plan-table">
       <thead>
         <tr>
           <th>维度</th>
-          <th v-for="dim in dims()" :key="dim.dimension">
-            <template v-for="(id, i) in optionIds(dim)" :key="id">
-              {{ plan.options.find((o) => o.id === id)?.label || id }}<template v-if="i < optionIds(dim).length - 1"> / </template>
-            </template>
-          </th>
+          <th v-for="id in compareOptionIds" :key="id">{{ optionLabel(id) }}</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="dim in dims()" :key="dim.dimension">
           <td class="dim">{{ dim.dimension }}</td>
-          <td v-for="(r, i) in dim.rows" :key="r.option_id + i">{{ r.value ?? "—" }}</td>
+          <td v-for="id in compareOptionIds" :key="dim.dimension + id">{{ dimValue(dim, id) }}</td>
         </tr>
       </tbody>
     </table>
@@ -50,8 +68,9 @@ function optionIds(dim: PlanComparison): string[] {
       <div v-for="opt in plan.options" :key="opt.id" class="plan-option" :class="{ recommended: opt.id === rec?.option_id }">
         <div class="opt-head">
           <strong>{{ opt.label }}</strong>
-          <span class="opt-price">{{ opt.total_price != null ? `¥${opt.total_price}` : "—" }}</span>
+          <span class="opt-price">{{ formatPlanPrice(opt.total_price) }}</span>
         </div>
+        <p v-for="(seg, i) in opt.segments || []" :key="i" class="opt-seg">{{ segmentSummary(seg) }}</p>
         <p v-if="opt.notes" class="opt-notes">{{ opt.notes }}</p>
       </div>
     </div>
@@ -83,10 +102,21 @@ function optionIds(dim: PlanComparison): string[] {
 .rec-reason {
   color: var(--text);
 }
+.plan-segs {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.72rem;
+  color: var(--text);
+}
 .plan-total {
   font-size: 0.75rem;
   font-weight: 650;
   margin: 0.4rem 0 0.2rem;
+}
+.plan-total-note {
+  font-weight: 500;
+  color: var(--muted);
+  margin-left: 0.4rem;
 }
 .plan-table {
   width: 100%;
@@ -129,6 +159,10 @@ function optionIds(dim: PlanComparison): string[] {
 .opt-price {
   font-weight: 650;
   color: var(--teal);
+}
+.opt-seg {
+  color: var(--text);
+  margin: 0.15rem 0 0;
 }
 .opt-notes {
   color: var(--muted);

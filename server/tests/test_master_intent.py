@@ -66,8 +66,28 @@ def test_classify_heuristic_fallback(monkeypatch):
     _no_label(monkeypatch)
     assert classify_intent("帮我订机票", task="agent") == "booking"
     assert classify_intent("下周二去上海，帮我规划行程", task="agent") == "plan"
+    assert classify_intent("下周二上海出发去北京，周四返回，经济舱", task="agent") == "plan"
     assert classify_intent("你好", task="agent") == "chat"
     assert classify_intent("什么是RAG", task="agent") == "knowledge"
+
+
+
+
+def test_classify_oral_signal_overrides_knowledge_without_cabin(monkeypatch):
+    """正向：城市+日期+返回，无舱位；LLM=knowledge → plan（PRD §4.3）。"""
+    monkeypatch.setattr(intent_mod, "_llm_label", lambda query, history_tail=None: "knowledge")
+    assert classify_intent("下周二去上海，周四返回", task="agent") == "plan"
+
+
+def test_classify_cabin_route_corrects_knowledge(monkeypatch):
+    """纠偏：舱位+路线；LLM=knowledge → plan。"""
+    monkeypatch.setattr(intent_mod, "_llm_label", lambda query, history_tail=None: "knowledge")
+    assert classify_intent("下周二上海出发去北京，周四返回，经济舱", task="agent") == "plan"
+
+
+def test_classify_llm_booking_not_overridden_by_oral_rules(monkeypatch):
+    monkeypatch.setattr(intent_mod, "_llm_label", lambda query, history_tail=None: "booking")
+    assert classify_intent("下周二上海出发去北京，周四返回，经济舱", task="agent") == "booking"
 
 
 # ---------- Master 图路由 ----------

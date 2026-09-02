@@ -1,22 +1,11 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { flightLabel, flightPrice, type FlyaiFlightItem, type TravelError } from "../types/travel";
+import { toFlightTicket } from "../utils/flightDisplay";
+import type { FlyaiFlightItem, TravelError } from "../types/travel";
 
 const props = defineProps<{ flights: FlyaiFlightItem[]; error?: TravelError | null }>();
 
-const rows = computed(() =>
-  props.flights.slice(0, 6).map((item) => {
-    const rec = item as Record<string, unknown>;
-    return {
-      no: flightLabel(item),
-      airline: String(item.airlineName ?? rec.airline ?? rec.depPlanAirlineName ?? "—"),
-      dep: String(item.depAirport ?? rec.depAirportName ?? rec.depCity ?? "—"),
-      arr: String(item.arrAirport ?? rec.arrAirportName ?? rec.arrCity ?? "—"),
-      time: [item.depTime, item.arrTime].filter(Boolean).join(" – ") || "—",
-      price: flightPrice(item),
-    };
-  }),
-);
+const rows = computed(() => props.flights.slice(0, 6).map(toFlightTicket));
 </script>
 
 <template>
@@ -36,12 +25,12 @@ const rows = computed(() =>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="r in rows" :key="r.no + r.dep + r.time">
-          <td>{{ r.no }}</td>
+        <tr v-for="r in rows" :key="r.key">
+          <td>{{ r.flightNo }}</td>
           <td>{{ r.airline }}</td>
-          <td>{{ r.dep }}</td>
-          <td>{{ r.arr }}</td>
-          <td>{{ r.time }}</td>
+          <td>{{ r.depPlace }}</td>
+          <td>{{ r.arrPlace }}</td>
+          <td>{{ r.depTime }} – {{ r.arrTime }}</td>
           <td class="price">{{ r.price }}</td>
         </tr>
       </tbody>

@@ -155,6 +155,9 @@ def _reason_llm(state: PlanState) -> dict[str, Any] | None:
             }
         )
         raw = str(resp.content)
+        think_end = raw.rfind("</think>")
+        if think_end != -1:
+            raw = raw[think_end + len("</think>") :]
         start = raw.find("{")
         end = raw.rfind("}")
         parsed = json.loads(raw[start : end + 1] if 0 <= start <= end else raw)
@@ -164,18 +167,10 @@ def _reason_llm(state: PlanState) -> dict[str, Any] | None:
 
 
 def _heuristic_params(state: PlanState) -> dict[str, Any]:
-    """LLM 不可用时从当前消息直接解析；解析不出就触发 ask。"""
-    import re
+    """从当前用户消息做规则抽取，补 LLM 漏掉的口语字段（城市/相对日期/舱位）。"""
+    from app.travel.params_parse import parse_travel_params
 
-    text = _user_question(state)
-    params: dict[str, Any] = {}
-    date = re.search(r"(\d{4}-\d{2}-\d{2})", text)
-    if date:
-        params["depart_date"] = date.group(1)
-    cabin = re.search(r"(经济舱|公务舱|头等舱|商务舱)", text)
-    if cabin:
-        params["cabin"] = cabin.group(1)
-    return params
+    return parse_travel_params(_user_question(state))
 
 
 def reason_decide(state: PlanState) -> dict[str, Any]:
@@ -188,33 +183,42 @@ def reason_decide(state: PlanState) -> dict[str, Any]:
         raw_params = parsed.get("params")
         if isinstance(raw_params, dict):
             params_update = {k: v for k, v in raw_params.items() if v not in (None, "")}
-    else:
-        params_update = _heuristic_params(state)
     merged = dict(state.get("params") or {})
+    merged.update(_heuristic_params(state))
     merged.update(params_update)
     missing = [f for f in REQUIRED_FIELDS if not merged.get(f)]
-    # 硬规则：要素缺失必补问，优先于 LLM 动作
-    if missing and not (state.get("flights_raw") or {}).get("itemList"):
+    flights_raw = state.get("flights_raw")
+    flights_searched = flights_raw is not None
+    has_flight_results = bool((flights_raw or {}).get("itemList"))
+    # 硬规则：要素缺失必补问，优先于 LLM 动作（已搜过票则不再 ask）
+    if missing and not flights_searched:
         return {"params": merged, "need_fields": missing, "next_action": "ask"}
-    if not parsed:
-        # 无 LLM：要素齐则按既定顺序走，避免空转
-        if not (state.get("flights_raw") or {}).get("itemList"):
+    # 启发式已补齐要素时，忽略 LLM 误判的 ask
+    if not missing and action == "ask":
+        action = ""
+    if not parsed or not action:
+        # 无 LLM 或无效动作：要素齐则按既定顺序走，避免空转
+        if not flights_searched:
             action = "flights"
+        elif not has_flight_results:
+            action = "direct"
         elif not state.get("plan"):
             action = "plan"
         elif not state.get("plan_html"):
             action = "save"
         else:
             action = "direct"
-    has_flights = bool((state.get("flights_raw") or {}).get("itemList"))
-    if action == "flights" and has_flights:
-        action = "plan"
-    if action == "plan" and not has_flights:
+    if action == "flights" and flights_searched:
+        action = "plan" if has_flight_results else "direct"
+    # 已搜过且无票：禁止继续 plan/save/hotels（否则空方案页）
+    if flights_searched and not has_flight_results and action in ("plan", "save", "hotels"):
+        action = "direct"
+    if action == "plan" and not flights_searched:
         action = "flights"
     if action == "save" and not state.get("plan"):
         action = "plan"
     if action not in ("flights", "hotels", "plan", "save", "ask", "direct"):
-        action = "plan" if has_flights else "flights"
+        action = "plan" if has_flight_results else ("flights" if not flights_searched else "direct")
     return {"params": merged, "need_fields": [], "next_action": action}
 
 
@@ -256,6 +260,9 @@ def node_run_tool(state: PlanState, config: RunnableConfig) -> dict[str, Any]:
         else:
             progress.append(f"机票搜索完成（{count} 条）")
             _emit_progress(config, progress[-1], progress)
+            if raw.get("roundtripFallback") == "one_way":
+                progress.append(str(raw.get("systemMessage") or "往返无结果，已改为单程去程。"))
+                _emit_progress(config, progress[-1], progress)
         travel_data = dict(state.get("travel_data") or {})
         travel_data["flights"] = raw.get("itemList") if raw.get("kind") != "error" else raw
         _emit(config, {"type": "travel_data", **travel_data})
@@ -318,6 +325,36 @@ def node_ask(state: PlanState) -> dict[str, Any]:
     return {"answer": answer}
 
 
+def _fallback_plan_answer(state: PlanState, *, flights_count: int) -> str:
+    """LLM 不可用时用已生成方案拼一段可读总结，避免整次请求 500。"""
+    params = dict(state.get("params") or {})
+    plan = state.get("plan") or {}
+    route = "→".join(p for p in (params.get("origin"), params.get("destination")) if p)
+    date_bits = [params.get("depart_date"), params.get("return_date"), params.get("cabin")]
+    head = "已根据你的出行条件生成方案"
+    extras = "，".join(x for x in (route, *[str(b) for b in date_bits if b]) if x)
+    if extras:
+        head += f"（{extras}）"
+    lines = [head + "。"]
+    if flights_count:
+        lines.append(f"共搜到 {flights_count} 条航班。")
+    rec = plan.get("recommendation") if isinstance(plan.get("recommendation"), dict) else {}
+    if rec:
+        rec_id = rec.get("option_id") or ""
+        reason = rec.get("reason") or ""
+        rec_line = "推荐" + (f" {rec_id}" if rec_id else "")
+        if reason:
+            rec_line += f"：{reason}"
+        lines.append(rec_line + "。")
+    price = plan.get("total_price_summary")
+    if price:
+        lines.append(f"总价：{price}。")
+    note = (state.get("plan_html") or {}).get("note")
+    if note:
+        lines.append(str(note))
+    return "\n".join(lines)
+
+
 def node_finalize(state: PlanState) -> dict[str, Any]:
     from app import llm as llm_mod
 
@@ -326,6 +363,14 @@ def node_finalize(state: PlanState) -> dict[str, Any]:
     flights = state.get("flights_raw") or {}
     count = len(flights.get("itemList") or []) if isinstance(flights.get("itemList"), list) else 0
     if not plan and not count:
+        if flights.get("kind") == "error":
+            return {"answer": f"暂未能生成行程方案：{flights.get('message')}"}
+        if state.get("flights_raw") is not None:
+            hint = str(flights.get("systemMessage") or "").strip()
+            msg = "暂未能生成行程方案：未搜到符合条件的航班，请调整日期或舱位后重试。"
+            if hint:
+                msg += f" {hint}"
+            return {"answer": msg}
         return {"answer": "暂未能生成行程方案：请补充出行要素（出发地、目的地、出发日期）后重试。"}
     context = json.dumps(
         {
@@ -341,13 +386,16 @@ def node_finalize(state: PlanState) -> dict[str, Any]:
         for m in (state.get("messages") or [])[:-1]
         if m.get("role") in ("user", "assistant") and m.get("content")
     ]
-    answer = llm_mod.chat(
-        "请向用户总结行程方案：突出推荐方案与理由、对比要点、总价；末尾附方案页说明。简洁中文。",
-        context,
-        history,
-        summary=(state.get("summary") or "").strip() or None,
-        ltm=state.get("ltm_hits") or None,
-    )
+    try:
+        answer = llm_mod.chat(
+            "请向用户总结行程方案：突出推荐方案与理由、对比要点、总价；末尾附方案页说明。简洁中文。",
+            context,
+            history,
+            summary=(state.get("summary") or "").strip() or None,
+            ltm=state.get("ltm_hits") or None,
+        )
+    except Exception:
+        answer = _fallback_plan_answer(state, flights_count=count)
     return {"answer": answer}
 
 

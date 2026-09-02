@@ -3,7 +3,8 @@
 契约（对齐 alibaba-flyai/flyai-skill README）：
 - `flyai search-flight --origin <city> --destination <city> --dep-date YYYY-MM-DD
    [--back-date YYYY-MM-DD] [--journey-type 1|2] [--seat-class-name 经济舱|公务舱|头等舱]
-   [--adult-count N] [--max-price N] [--sort-type 3]`
+   [--max-price N] [--sort-type 3]`
+- `--journey-type`：1=直飞、2=中转；往返靠 `--back-date`，勿与往返混淆
 - `flyai search-hotel --dest-name <city> --check-in-date ... --check-out-date ... [--poi-name ...]
    [--hotel-stars N] [--max-price N] [--sort N]`
 - stdout 单行 JSON（机票含 itemList），stderr 为错误；trial 免 Key，配额受限可设 FLYAI_API_KEY。
@@ -19,6 +20,18 @@ from app.config import get_settings
 
 class FlyaiError(Exception):
     """flyai CLI 调用失败（未安装 / 超时 / 非零退出 / 输出不可解析）。"""
+
+
+def _normalize_cli_payload(parsed: dict[str, Any]) -> dict[str, Any]:
+    """flyai CLI 常返回 {data:{itemList:...}, message, status}，提升到顶层供下游绑定。"""
+    data = parsed.get("data")
+    if isinstance(data, dict):
+        out = dict(data)
+        for key in ("message", "status", "systemMessage", "success"):
+            if key in parsed and key not in out:
+                out[key] = parsed[key]
+        return out
+    return parsed
 
 
 def _run_cli(args: list[str]) -> dict[str, Any]:
@@ -55,7 +68,7 @@ def _run_cli(args: list[str]) -> dict[str, Any]:
             except json.JSONDecodeError:
                 continue
             if isinstance(parsed, dict):
-                return parsed
+                return _normalize_cli_payload(parsed)
     raise FlyaiError("flyai CLI 输出不可解析为 JSON")
 
 
@@ -77,14 +90,13 @@ def search_flights(
         "--origin", origin,
         "--destination", destination,
         "--dep-date", dep_date,
-        "--journey-type", "2" if back_date else "1",
     ]
     if back_date:
         args += ["--back-date", back_date]
     if seat_class:
         args += ["--seat-class-name", seat_class]
-    if adult_count and adult_count > 0:
-        args += ["--adult-count", str(adult_count)]
+    # adult_count 仅保留函数签名供上层透传；flyai CLI 无对应参数
+    _ = adult_count
     if max_price:
         args += ["--max-price", str(max_price)]
     args += ["--sort-type", "3"]

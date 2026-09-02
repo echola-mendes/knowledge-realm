@@ -125,6 +125,42 @@ def test_plan_agent_asks_when_required_fields_missing(monkeypatch):
     assert "出发地" in out["answer"] and "出发日期" in out["answer"]
 
 
+
+
+
+def test_has_plan_oral_signal_prd_acceptance():
+    from app.travel.params_parse import has_plan_oral_signal
+    import datetime as dt
+
+    ref = dt.date(2026, 9, 1)
+    assert has_plan_oral_signal("下周二去上海，周四返回", ref=ref)
+    assert has_plan_oral_signal("下周二上海出发去北京，周四返回", ref=ref)
+    assert not has_plan_oral_signal("什么是RAG", ref=ref)
+    assert not has_plan_oral_signal("上海到杭州坐高铁", ref=ref)
+
+
+def test_parse_travel_params_natural_sentence():
+    from app.travel.params_parse import parse_travel_params
+
+    ref = __import__("datetime").date(2026, 9, 1)  # 周二
+    params = parse_travel_params("下周二上海出发去北京，周四返回，经济舱", ref=ref)
+    assert params["origin"] == "上海"
+    assert params["destination"] == "北京"
+    assert params["depart_date"] == "2026-09-08"
+    assert params["return_date"] == "2026-09-10"
+    assert params["cabin"] == "经济舱"
+
+
+def test_reason_decide_heuristic_when_llm_returns_empty(monkeypatch):
+    monkeypatch.setattr(plan_mod, "_reason_llm", lambda state: {"params": {}, "action": "ask"})
+    state = plan_mod.plan_initial_state("下周二上海出发去北京，周四返回，经济舱")
+    updates = plan_mod.reason_decide(state)
+    assert updates["next_action"] == "flights"
+    assert updates["params"]["origin"] == "上海"
+    assert updates["params"]["destination"] == "北京"
+    assert updates["params"]["depart_date"] == "2026-09-08"
+
+
 def test_plan_agent_full_flow_search_plan_save(monkeypatch):
     decisions = iter(
         [
@@ -169,6 +205,45 @@ def test_plan_agent_full_flow_search_plan_save(monkeypatch):
     assert "travel_data" in types and "plan_html" in types
     assert types.index("travel_data") < types.index("plan_html")
     assert any("3 条" in e.get("text", "") for e in events if e["type"] == "progress")
+
+
+def test_plan_agent_finalize_survives_llm_connection_error(monkeypatch):
+    """搜票/方案已成功时，finalize 的 LLM 断连不得把整次 Agent 打成 500。"""
+    monkeypatch.setattr(plan_mod, "_reason_llm", lambda state: None)
+    monkeypatch.setattr(plan_mod.travel_tools, "search_flights_tool", lambda params: FLIGHTS)
+    monkeypatch.setattr(
+        plan_mod.travel_tools,
+        "plan_itinerary",
+        lambda f, h, p: {
+            "options": [{"id": "opt-1", "label": "方案 1", "segments": [], "total_price": 400, "notes": ""}],
+            "comparison": [],
+            "recommendation": {"option_id": "opt-1", "reason": "低价"},
+            "total_price_summary": "最低 400",
+        },
+    )
+    monkeypatch.setattr(
+        plan_mod.travel_tools,
+        "save_plan_html",
+        lambda plan, f, h, p, convo: {
+            "html": "<html></html>",
+            "url": None,
+            "key": None,
+            "note": "MinIO 未配置：方案页仅本次会话实时展示。",
+        },
+    )
+
+    def boom(*_a, **_k):
+        raise ConnectionError("Connection refused")
+
+    monkeypatch.setattr("app.llm.chat", boom)
+    plan_mod.reset_plan_graph()
+    out = plan_mod.build_plan_graph().invoke(
+        plan_mod.plan_initial_state("下周二上海出发去北京，周四返回，经济舱"),
+        config=_config(lambda e: None),
+    )
+    assert out["answer"]
+    assert "推荐" in out["answer"] or "方案" in out["answer"]
+    assert "最低 400" in out["answer"]
 
 
 def test_plan_agent_keeps_params_across_preference_change(monkeypatch):
