@@ -25,8 +25,13 @@ const sub = computed(() => String(route.meta.sub ?? "功能即将推出。"));
 <style scoped>
 .placeholder-page {
   width: 100%;
-  padding: 1rem 1.25rem 2rem; /* style.md §3.1/§4：上 1rem · 左 1.25rem gutter */
+  padding: 0;
   box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .page-head {
   display: flex;
@@ -34,6 +39,7 @@ const sub = computed(() => String(route.meta.sub ?? "功能即将推出。"));
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: 1rem;
+  flex-shrink: 0;
 }
 .page-head h1 {
   margin: 0 0 0.25rem;
@@ -58,6 +64,8 @@ const sub = computed(() => String(route.meta.sub ?? "功能即将推出。"));
 }
 .empty-card {
   text-align: left;
+  flex: 1;
+  min-height: 0;
 }
 .empty-title {
   margin: 0;

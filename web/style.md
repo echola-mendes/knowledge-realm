@@ -590,66 +590,185 @@ Pipeline：横向 `flex` + 节点 `flex: 1`，`min-width: 7.2rem`，箭头 `→`
 
 ## 13. 工具页二级菜单（`.tools-page`）
 
-**参考实现：** `ToolsLayout.vue` → `aside.tools-nav` + `.nav-card`。侧栏折叠图标栏点「工具」后，主栏左侧再出一组可折叠分组菜单；右侧 `RouterView` 为对应工具页。
+**参考实现：** `ToolsLayout.vue`（工具）、`BasicsLayout.vue`（基础，同一套壳类名）。侧栏折叠图标栏点「工具 / 基础」后，主栏左侧再出二级菜单；右侧 `RouterView` 为对应子页。
+
+高度约定：二级菜单**铺满主栏剩余高度**，不要随内容收缩成矮卡片。`.tools-page` 本身不滚动；`.nav-card` 与 `.tools-main` 各自内部滚动。
 
 ### 13.1 页面壳
 
-| 类 | 规则 |
-|---|---|
-| `.tools-page` | 全宽；`padding: 1rem 1.25rem 2rem`；`font-size: 12.5px`；`display: flex; gap: 1rem`；透出 `--bg` |
-| `.tools-nav` | 宽 **`13.75rem`（220px）**，`flex-shrink: 0`，`align-self: flex-start` |
-| `.tools-main` | `flex: 1; min-width: 0`；内嵌占位页去掉自身 padding，避免与壳 gutter 叠加 |
-
 页头（「工具」+ 副文案）在卡片**外面**，不要放进 `.nav-card`。
+
+```css
+.tools-page {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 1rem 1.25rem 0.75rem;
+  font-size: 12.5px;
+  background: transparent;
+  display: flex;
+  gap: 1rem;
+  align-items: stretch;
+  box-sizing: border-box;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.tools-nav {
+  width: 13.75rem; /* 220px */
+  flex-shrink: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.nav-head {
+  margin: 0 0.15rem 0.85rem;
+  flex-shrink: 0;
+}
+.nav-title {
+  margin: 0 0 0.25rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.nav-sub {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.tools-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.tools-main :deep(.placeholder-page) {
+  padding: 0;
+}
+```
 
 | 元素 | 规则 |
 |---|---|
-| `.nav-head` | `margin: 0 0.15rem 0.85rem`，无背景 |
-| `.nav-title` | 同 §4 `h1`：`1.05rem` / `700` / `--text` |
-| `.nav-sub` | `0.75rem` / `--muted`；文案「发现更多 AI 工具，提升效率」 |
+| `.nav-title` | 同 §4 `h1` |
+| `.nav-sub` | 工具页文案「发现更多 AI 工具，提升效率」；基础页「系统基础配置与个性化设置。」 |
+| 基础页 `.tools-nav` 宽 | `min(12.5rem, 28vw)`，其余壳样式与工具页相同 |
 
-### 13.2 菜单卡片与分组
+### 13.2 菜单卡片（铺满侧栏剩余高度）
 
-白卡片一层，里面不要再套卡片。
+白卡片一层，里面不要再套卡片。卡片 `flex: 1` 吃掉 `.nav-head` 以下全部高度；项多时只在卡片内纵滑。
 
 ```css
 .nav-card {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius); /* 12px */
   box-shadow: var(--shadow);
   padding: 0.45rem 0.4rem;
 }
+.nav-group + .nav-group {
+  margin-top: 0.2rem;
+}
 ```
+
+基础页 `.nav-card` padding 用 `0.75rem 0.55rem`（项更少，略松）。
 
 分组顺序（图标见 `Icon.vue`）：
 
 | 分组 | 图标 `name` | 子项 | 路由 |
 |---|---|---|---|
 | 旅程 | `plane` | 我的行程单、创建新行程 | `/tools/trips`、`/tools/trips/new` |
-| AI咨询 | `headset` | 咨询台、历史记录 | `/tools/consult`、`/tools/consult/history` |
+| AI资讯 | `headset` | 资讯中心、历史记录 | `/tools/consult`、`/tools/consult/history` |
 | AI生图 | `image` | 生图台、我的作品 | `/tools/image`、`/tools/image/works` |
 | 更多工具 | `apps` | 工具市场 | `/tools/market` |
 
-父级行（`.nav-parent`）：
+### 13.3 父级行（`.nav-parent`）
+
+```css
+.nav-parent {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1.05rem 1fr 0.75rem;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.5rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.nav-parent:hover {
+  background: #f8fafc;
+}
+.nav-parent.on {
+  background: #eff6ff; /* 与侧栏激活底相同，比 --teal-soft 更浅 */
+  color: var(--teal);
+}
+.nav-parent :deep(.ico) {
+  width: 1rem;
+  height: 1rem;
+}
+.nav-parent .chev {
+  opacity: 0.55;
+  color: #94a3b8;
+  justify-self: end;
+}
+.nav-parent .chev :deep(svg) {
+  transform: rotate(-90deg);
+}
+.nav-parent[aria-expanded="true"] .chev :deep(svg) {
+  transform: rotate(0deg);
+}
+```
 
 | 状态 | 底 | 字/图标 |
 |---|---|---|
-| 默认 | 透明 | `--text` `#1e293b`，字 `0.82rem` / `600` |
+| 默认 | 透明 | `--text` `#1e293b`，`0.82rem` / `600` |
 | hover | `#f8fafc` | 不变 |
-| 组内有选中 `.on` | `#eff6ff`（与侧栏激活底相同，比 `--teal-soft` 更浅） | `var(--teal)` |
+| 组内有选中 `.on` | `#eff6ff` | `var(--teal)` |
 
-布局：`grid-template-columns: 1.05rem 1fr 0.75rem`，`padding: 0.5rem 0.5rem`，`border-radius: 8px`。右侧 chevron 色 `#94a3b8`；收起旋转 `-90deg`，展开 `0deg`（朝下）。
+chevron 收起 `-90deg`，展开 `0deg`（朝下）。基础页无折叠子项时用 `grid-template-columns: 1rem 1fr`，字 `0.78rem`，默认色 `#4b5563`，选中底 `var(--teal-soft)`。
 
-### 13.3 子项
+### 13.4 子项（`.nav-child`）
 
-子项相对父级标题文字对齐（给图标留位）：`padding-left: 1.5rem`。
+子项相对父级标题文字对齐（给图标留位）：容器 `padding-left: 1.5rem`。
 
-| 类 | 规则 |
-|---|---|
-| `.nav-child` | `padding: 0.42rem 0.5rem`；圆角 **8px**；字 `0.78rem` / `400`；色 `#4b5563`；无下划线 |
-| hover | 底 `#f8fafc` |
-| `.on` 当前页 | 底 `var(--teal-soft)` `#dbeafe`；字 `var(--teal)`；`font-weight: 600` |
+```css
+.nav-children {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.12rem 0 0.28rem 1.5rem;
+}
+.nav-child {
+  display: block;
+  padding: 0.42rem 0.5rem;
+  border-radius: 8px;
+  color: #4b5563;
+  text-decoration: none;
+  font-size: 0.78rem;
+  font-weight: 400;
+}
+.nav-child:hover {
+  background: #f8fafc;
+  text-decoration: none;
+}
+.nav-child.on {
+  background: var(--teal-soft);
+  color: var(--teal);
+  font-weight: 600;
+}
+```
 
 约定：
 
@@ -657,6 +776,9 @@ Pipeline：横向 `flex` + 节点 `flex: 1`，`min-width: 7.2rem`，箭头 `→`
 - 父级 `.on` 表示该组下任一子路由命中
 - 进入某组路由时自动展开该组；不要默认全部收起
 - 描边 SVG 图标，`stroke-width` 跟 `Icon.vue`；不要用 emoji
+- **不要**给 `.tools-nav` 设 `align-self: flex-start`，否则卡片不会拉高
+
+样式当前在 `ToolsLayout.vue` / `BasicsLayout.vue` 的 `<style scoped>`。
 
 ---
 

@@ -30,7 +30,7 @@
 
 - Vue 3 `<script setup>` + TypeScript + Vite  
 - Vue Router：首页、文档、搜索、对话、阅读、设置（可合并）  
-- 侧边栏菜单配置：`web/src/navConfig.ts` 定义带稳定 key 的菜单元数据（默认顺序：首页/对话/搜索/知识库/文档/图谱/检测/工具/监控/基础/设置，调试随开关追加在设置前），顺序与自定义名称持久化在 localStorage（key `zhiyu-nav-config`）；`web/src/views/MenuManageView.vue`（基础页"菜单管理"）支持改名与原生 HTML5 拖拽排序（附上移/下移按钮兜底），`/basics` 使用 `BasicsLayout.vue` 二级菜单布局，`/tools` 使用 `ToolsLayout.vue` 二级菜单（旅程 / AI咨询 / AI生图 / 更多工具，样式见 `web/style.md` §13），`MyTripsView` 用行程类型、无状态（`web/style.md` §14；`plan_record.trip_type` / `nights`），`/monitoring` 复用 `ToolPlaceholderView.vue` 占位  
+- 侧边栏菜单配置：`web/src/navConfig.ts` 定义带稳定 key 的菜单元数据（默认顺序：首页/对话/搜索/知识库/文档/图谱/检测/工具/监控/基础/设置，调试随开关追加在设置前），顺序与自定义名称持久化在 localStorage（key `zhiyu-nav-config`）；`web/src/views/MenuManageView.vue`（基础页"菜单管理"）支持改名与原生 HTML5 拖拽排序（附上移/下移按钮兜底），`/basics` 使用 `BasicsLayout.vue` 二级菜单布局，`/tools` 使用 `ToolsLayout.vue` 二级菜单（旅程 / AI资讯 / AI生图 / 更多工具，样式见 `web/style.md` §13），`MyTripsView` 用行程类型、无状态（`web/style.md` §14；`plan_record.trip_type` / `nights`），`/monitoring` 复用 `ToolPlaceholderView.vue` 占位  
 - Markdown 展示：`markdown-it`  
 - HTTP：`fetch`；SSE 用 `fetch` 读 stream  
 - 开发：Vite 代理 `/api` → FastAPI  
@@ -221,7 +221,7 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、Meilisearc
 | `web/src/components/Icon.vue` | 补齐 `minus / maximize / refresh / fullscreen` 等图谱控制图标 |
 | `web/src/router.ts` | `/knowledge-graph`；`/tools` 布局（默认 `trips`；另有 `consult` / `image` 占位） |
 | `web/src/App.vue` | 侧栏「知识图谱」；「工具」（`tools` 图标）→ `/tools` |
-| `web/src/views/ToolsLayout.vue` | 工具页内二级菜单：旅程 / AI咨询 / AI生图 |
+| `web/src/views/ToolsLayout.vue` | 工具页内二级菜单：旅程 / AI资讯 / AI生图 |
 | `web/src/views/MyTripsView.vue` | 工具 → 我的行程单：接 `GET /api/plans` 列表；空态引导 Multi Agent |
 | `server/app/message_ui.py` | 助手消息 UI 载荷：`plan_html`/`travel_data` 随 `message.citations` envelope 落库；`GET .../messages` 解包回放，旧消息可从 `plan_record` 补 url |
 | `web/src/views/ToolPlaceholderView.vue` | 工具占位页：读 `route.meta.title/sub`，展示「即将推出」 |

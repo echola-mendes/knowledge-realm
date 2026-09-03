@@ -84,6 +84,10 @@ textarea {
   overflow: auto;
 }
 
+.app-main:has(.tools-page) > :first-child {
+  overflow: hidden;
+}
+
 .sidenav {
   --rail: 4.5rem;
   position: relative;

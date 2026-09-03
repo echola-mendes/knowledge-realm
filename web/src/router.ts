@@ -48,13 +48,13 @@ export const router = createRouter({
           path: "consult",
           name: "tools-consult",
           component: ToolPlaceholderView,
-          meta: { title: "咨询台", sub: "智能咨询入口占位，能力后续接入。" },
+          meta: { title: "资讯中心", sub: "智能资讯入口占位，能力后续接入。" },
         },
         {
           path: "consult/history",
           name: "tools-consult-history",
           component: ToolPlaceholderView,
-          meta: { title: "历史记录", sub: "咨询会话历史占位，能力后续接入。" },
+          meta: { title: "历史记录", sub: "资讯会话历史占位，能力后续接入。" },
         },
         {
           path: "image",

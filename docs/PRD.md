@@ -271,8 +271,13 @@
 - **预订**：`book_flight` / `book_hotel` / `cancel` 等写操作采用 HITL（Human-in-the-Loop），先返回待确认动作，用户在前端确认后才写入 `booking_record`；展示供应商返回的支付链接（如有）。
 - **本人数据隔离**：`list_bookings` 仅返回当前 Session 用户的预订；`cancel_booking` 校验用户归属。
 - **限流**：预订写操作限流 30 次/分钟，超限提示用户稍后再试。
-- **工具入口（已实现）**：侧栏「工具」→ 页内二级菜单分组（旅程 / AI咨询 / AI生图 / 更多工具）。旅程：「我的行程单」（`GET /api/plans`，含行程类型、无行程状态）、「创建新行程」（占位）；规划仍在 Multi Agent 对话完成。AI咨询：「咨询台」「历史记录」占位；AI生图：「生图台」「我的作品」占位；更多工具：「工具市场」占位。样式见 `web/style.md` §13–§14。
+- **工具入口（已实现）**：侧栏「工具」→ 页内二级菜单分组（旅程 / AI资讯 / AI生图 / 更多工具）。旅程：「我的行程单」（`GET /api/plans`，含行程类型、无行程状态）、「创建新行程」（占位）；规划仍在 Multi Agent 对话完成。AI资讯：「资讯中心」「历史记录」占位；AI生图：「生图台」「我的作品」占位；更多工具：「工具市场」占位。样式见 `web/style.md` §13–§14。
 - **对话回放方案页（已实现）**：`plan_html` 随助手消息落库；刷新/重进会话时 `GET /api/conversations/{id}/messages` 带回方案页；旧会话若仅有 `plan_record` 则用其 url 兜底展示。
+
+### 4.2.1 通用定时任务（待开发）
+
+- 需求见 [`PRD-Job.md`](PRD-Job.md)：基础 → 定时任务；APScheduler → Redis → arq Worker。
+- 第一种任务类型 `NEWS_REFRESH`（AI资讯更新）；资讯展示与采集见 [`PRF-NEWS.md`](PRF-NEWS.md)。
 
 ### 4.3 高级知识智能化
 

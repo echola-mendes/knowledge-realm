@@ -36,23 +36,29 @@ const onMenus = computed(() => route.path.startsWith("/basics/menus"));
   width: 100%;
   max-width: none;
   margin: 0;
-  padding: 1rem 1.25rem 2rem;
+  padding: 1rem 1.25rem 0.75rem;
   font-size: 12.5px;
   background: transparent;
   display: flex;
   gap: 1rem;
   align-items: stretch;
   box-sizing: border-box;
-  min-height: 100%;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 .tools-nav {
   width: min(12.5rem, 28vw);
   flex-shrink: 0;
-  align-self: flex-start;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 /* 主标题区：无背景、单独一列，样式同 style.md §4 页头 */
 .nav-head {
   margin: 0 0.25rem 1rem;
+  flex-shrink: 0;
 }
 .nav-title {
   margin: 0 0 0.25rem;
@@ -66,6 +72,9 @@ const onMenus = computed(() => route.path.startsWith("/basics/menus"));
   color: var(--muted);
 }
 .nav-card {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -106,5 +115,9 @@ const onMenus = computed(() => route.path.startsWith("/basics/menus"));
 .tools-main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 </style>

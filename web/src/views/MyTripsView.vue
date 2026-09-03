@@ -314,11 +314,15 @@ onMounted(() => {
 <style scoped>
 .trips-page {
   min-width: 0;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  overflow: hidden;
 }
 .top-bar {
+  flex-shrink: 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -352,6 +356,7 @@ onMounted(() => {
 }
 .hero {
   position: relative;
+  flex-shrink: 0;
   overflow: hidden;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -486,8 +491,14 @@ onMounted(() => {
 }
 .list-card {
   margin: 0;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .filters {
+  flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
@@ -529,6 +540,7 @@ onMounted(() => {
   color: var(--text);
 }
 .empty-card {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -592,6 +604,9 @@ onMounted(() => {
   text-decoration: underline;
 }
 .table-wrap {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
   overflow: auto;
 }
 table {
@@ -619,6 +634,7 @@ th {
   margin-top: 0.55rem;
   color: var(--muted);
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 .pager .btn:disabled {
   opacity: 0.5;

@@ -82,7 +82,7 @@ const onMarket = computed(() => route.path.startsWith("/tools/market"));
             @click="consultOpen = !consultOpen"
           >
             <Icon name="headset" />
-            <span>AI咨询</span>
+            <span>AI资讯</span>
             <Icon class="chev" name="chevron" />
           </button>
           <div v-show="consultOpen" class="nav-children">
@@ -93,7 +93,7 @@ const onMarket = computed(() => route.path.startsWith("/tools/market"));
               exact-active-class=""
               :class="{ on: onConsultDesk }"
             >
-              咨询台
+              资讯中心
             </RouterLink>
             <RouterLink
               to="/tools/consult/history"
@@ -176,22 +176,28 @@ const onMarket = computed(() => route.path.startsWith("/tools/market"));
   width: 100%;
   max-width: none;
   margin: 0;
-  padding: 1rem 1.25rem 2rem;
+  padding: 1rem 1.25rem 0.75rem;
   font-size: 12.5px;
   background: transparent;
   display: flex;
   gap: 1rem;
   align-items: stretch;
   box-sizing: border-box;
-  min-height: 100%;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 .tools-nav {
   width: 13.75rem;
   flex-shrink: 0;
-  align-self: flex-start;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .nav-head {
   margin: 0 0.15rem 0.85rem;
+  flex-shrink: 0;
 }
 .nav-title {
   margin: 0 0 0.25rem;
@@ -205,6 +211,9 @@ const onMarket = computed(() => route.path.startsWith("/tools/market"));
   color: var(--muted);
 }
 .nav-card {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -280,6 +289,10 @@ const onMarket = computed(() => route.path.startsWith("/tools/market"));
 .tools-main {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .tools-main :deep(.placeholder-page) {
   padding: 0;

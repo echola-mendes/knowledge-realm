@@ -97,7 +97,7 @@ function onDragEnd() {
       </div>
       <button class="btn" type="button" @click="resetNavConfig()">恢复默认</button>
     </div>
-    <div class="card pad">
+    <div class="card pad list-card">
       <ul class="menu-list">
         <li
           v-for="(row, index) in rows"
@@ -157,6 +157,12 @@ function onDragEnd() {
 <style scoped>
 .menu-page {
   width: 100%;
+  min-width: 0;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .page-head {
   display: flex;
@@ -164,6 +170,7 @@ function onDragEnd() {
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: 1rem;
+  flex-shrink: 0;
 }
 .page-head h1 {
   margin: 0 0 0.25rem;
@@ -177,6 +184,14 @@ function onDragEnd() {
   font-size: 0.75rem;
   line-height: 1.5;
 }
+.list-card {
+  margin: 0;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .menu-list {
   list-style: none;
   margin: 0;
@@ -184,6 +199,9 @@ function onDragEnd() {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 .menu-row {
   display: flex;
