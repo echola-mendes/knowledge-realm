@@ -3,6 +3,7 @@
 **依据页面：**  
 - 调试 / 配置：`web/src/views/DebugView.vue`（`main.page.debug-page`）  
 - **列表 + 筛选：** `web/src/views/DocumentsView.vue`（`main.page.docs-page`）  
+- **首页提问搜索框：** `web/src/views/HomeView.vue`（`.ask` + `.btn.btn-primary`）  
 **全局 token：** `web/src/styles.css` 的 `:root` 与 `.page` / `.card` / `.btn` / `.pill`  
 **用途：** 登录页以外的业务页（文档、检索、对话、知识库、设置、调试）生成 UI 时对照本文，不要另起一套密度或配色。
 
@@ -48,7 +49,7 @@
 
 **视觉：** 侧栏与主栏之间无额外 gap；主栏浅灰底上叠白卡片。列表页标题、筛选、表格左缘与 **`padding-left: 1.25rem`** 对齐，与菜单栏右缘留出统一 gutter（见 §3.1）。
 
-侧栏（不要在内容页复刻）：底 `#f9fafb`，默认字 `#4b5563`，激活底 `#eff6ff`、字 `#2563eb`，品牌字 `#111827`。折叠宽 `--rail: 4.5rem`（小屏 `4.2rem`），**固定折叠、不随 hover 展开**。
+侧栏（不要在内容页复刻）：底 `#f9fafb`，默认字 `#4b5563`，激活底 `#eff6ff`、字 `#2563eb`，品牌字 `#111827`。折叠宽 `--rail: 4.5rem`（小屏 `4.2rem`），**固定折叠、不随 hover 展开**。菜单区 `.sidenav .nav` 可纵向滚动：`overflow-y: auto; overscroll-behavior: contain`，**滚动条隐藏**（`scrollbar-width: none` + `::-webkit-scrollbar { display: none }`，仍可滚动手势/触控板操作）；品牌头部（`.sidenav-head`）与底部（`.sidenav-foot`）固定不滚动。
 
 ---
 
@@ -127,6 +128,7 @@
 | 阶段卡内边距 | 标题 `0.4rem 0.55rem`；body `0.35rem 0.55rem 0.5rem` | 紧凑配置格 |
 | 表单元格 | `0.4rem 0.45rem` | `th, td`；文档列表 tbody 另设 `min-height: 36px`、上下 `0.55rem` |
 | 输入框 | `padding: 0.4rem 0.5rem`；圆角 `8px` | 普通表单 |
+| **首页提问搜索框** | `padding: 0.45rem 0.7rem`；圆角 **10px**；行高约 **36px** | `HomeView` `.ask input`，见 §6 |
 | 阶段数字框 | 高 `1.55rem`，`padding: 0.12rem 0.35rem`，圆角 `6px` | 密表单 |
 | label 上下 | `margin: 0.3rem 0 0.15rem`（普通）；阶段 `0.2rem 0 0.08rem` | |
 
@@ -161,6 +163,24 @@
 
 列表页（`.docs-page`）页头下间距：`margin-bottom: 0.45rem`（略紧于全局 `.page-head` 的 `1rem`）。
 
+### 主标题 + 说明块的上下左右边距
+
+标题与说明包在 `.page-head` 左侧 `<div>` 里，**块自身不设任何 margin / padding**，四周距离全部来自外层容器与 `.page-head`：
+
+| 方位 | 距离 | 来源 |
+|---|---|---|
+| 上 | `1rem`（16px） | 页面容器 `padding-top`（列表/工具/基础页均为 `1rem`；全局 `.page` 旧窄栏为 `1.15rem`） |
+| 左 | `1.25rem`（20px） | 页面容器 `padding-left`（标准 gutter，见 §3.1）；块内元素不额外缩进 |
+| 下 | `1rem`（16px） | `.page-head { margin-bottom: 1rem }` 与正文卡片隔开；列表页覆盖为 `0.45rem` |
+| 右 | 随容器右缘 | `.page-head` 占满容器宽度，右侧操作块（`.head-actions`）贴容器右缘 |
+
+块内节奏：
+
+- `h1` 与 `.sub` 之间 `0.25rem`（`h1` 的 `margin-bottom`），`.sub` 自身 `margin: 0`
+- `.page-head` 为 flex：`justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap`，窄屏时右块折行
+- 块内文字一律左对齐，`h1`、`.sub` 均无左右 margin
+- 自带 scoped 样式的页面（工具占位、监控、菜单管理等）照抄同一套值：容器 `padding: 1rem 1.25rem 2rem`、`h1` `font-size: 1.05rem; margin: 0 0 0.25rem`、`.sub` `0.75rem; margin: 0`、`page-head` `margin-bottom: 1rem`
+
 - `.page-head`：`display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap`
 - 次按钮白底描边；**一页一个** `.btn-primary`（蓝底白字）
 - 调试页按钮额外：`padding: 0.5rem 0.85rem; border-radius: 10px; font-size: inherit`
@@ -186,7 +206,35 @@
 
 ## 6. 控件
 
+全局实现在 `web/src/styles.css`。首页提问条见本节「搜索框 + 提问按钮」。
+
 ### 按钮
+
+定义在 `styles.css`，各页直接用 `.btn` / `.btn-primary`，不要再写一套蓝按钮。
+
+```css
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.32rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+.btn-primary {
+  background: var(--teal);      /* #2563eb */
+  border-color: var(--teal);
+  color: #fff;
+}
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+```
 
 | 类 | 外观 |
 |---|---|
@@ -194,6 +242,53 @@
 | `.btn-primary` | 底/边 `--teal`，字白；disabled `opacity: 0.6` |
 | `.btn-link` | 无边无底，字 `--teal` |
 | `.btn-danger` | 无边无底，字 `--danger` |
+
+调试 / 列表页按钮可覆盖为 `padding: 0.5rem 0.85rem; border-radius: 10px; font-size: inherit`。首页提问按钮**不要**覆盖，跟全局 `.btn-primary`。
+
+### 搜索框 + 提问按钮（首页 `.ask`）
+
+**参考实现：** `HomeView.vue` → `section.hero-row` 内 `.card.hero > .ask`。  
+新页需要「一行输入 + 主操作」时复用这一套，不要另起高度或圆角。
+
+```html
+<div class="ask">
+  <input placeholder="例如：梳理文档的核心结论…" />
+  <button class="btn btn-primary" type="button">提问 →</button>
+</div>
+```
+
+```css
+.ask {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+.ask input {
+  flex: 1;
+  min-width: 12rem;
+  border: 1px solid var(--line); /* #e2e8f0 */
+  border-radius: 10px;
+  padding: 0.45rem 0.7rem;
+  background: #fff;
+  color: var(--text);
+  font: inherit; /* body 14px */
+}
+```
+
+| 元素 | 规则 | 实测 |
+|---|---|---|
+| `.ask` | 横排 flex，`gap: 0.6rem`，默认同行 stretch（按钮跟输入框同高） | — |
+| 搜索框 | 边 `1px var(--line)`，圆角 **10px**，`padding: 0.45rem 0.7rem`，`flex: 1`，`min-width: 12rem` | 高约 **36px** |
+| 提问按钮 | 全局 `.btn.btn-primary`，文案「提问 →」；不另设 padding / 圆角 | 高约 **36px**（随输入框 stretch） |
+
+约定：
+
+- placeholder 用「例如：…」示例句，**不要**写「请输入」
+- Enter 等同点击主按钮
+- 输入框圆角 **10px**，比普通表单 8px 略大；按钮仍用全局 **8px**
+- 不要给输入框加左边图标条或外层描边容器（那是检索页 `.bar-field`，见 `SearchView`）
+- 字色 `--text`，placeholder 走浏览器默认（muted 感即可），边框 focus 不要换成粗彩边；需要强调时用 `outline: 2px solid var(--teal); outline-offset: 2px`（§10）
 
 ### Chip / Pill
 
@@ -214,11 +309,12 @@
 - 圆钮白 `0.9rem`，过渡 `left 0.15s`（尊重 `prefers-reduced-motion`）
 - 旁标 `0.72rem`、`--muted`
 
-### 输入
+### 输入（普通表单）
 
 - 边 `1px var(--line)`，圆角 **8px**（密表单 6px）
 - 宽 100%（卡片内）
 - placeholder 不要当唯一 label；label 在字段上方
+- 首页 / 对话入口那种「一行提问」用上方 **搜索框 + 提问按钮**（圆角 10px、高约 36px），不要套本段 8px 表单输入
 
 ---
 
@@ -489,3 +585,115 @@ Pipeline：横向 `flex` + 节点 `flex: 1`，`min-width: 7.2rem`，箭头 `→`
 ```
 
 样式当前在 `DocumentsView.vue` 的 `<style scoped>`；新页先复制同类名与数值，全局化时再迁入 `styles.css`。
+
+---
+
+## 13. 工具页二级菜单（`.tools-page`）
+
+**参考实现：** `ToolsLayout.vue` → `aside.tools-nav` + `.nav-card`。侧栏折叠图标栏点「工具」后，主栏左侧再出一组可折叠分组菜单；右侧 `RouterView` 为对应工具页。
+
+### 13.1 页面壳
+
+| 类 | 规则 |
+|---|---|
+| `.tools-page` | 全宽；`padding: 1rem 1.25rem 2rem`；`font-size: 12.5px`；`display: flex; gap: 1rem`；透出 `--bg` |
+| `.tools-nav` | 宽 **`13.75rem`（220px）**，`flex-shrink: 0`，`align-self: flex-start` |
+| `.tools-main` | `flex: 1; min-width: 0`；内嵌占位页去掉自身 padding，避免与壳 gutter 叠加 |
+
+页头（「工具」+ 副文案）在卡片**外面**，不要放进 `.nav-card`。
+
+| 元素 | 规则 |
+|---|---|
+| `.nav-head` | `margin: 0 0.15rem 0.85rem`，无背景 |
+| `.nav-title` | 同 §4 `h1`：`1.05rem` / `700` / `--text` |
+| `.nav-sub` | `0.75rem` / `--muted`；文案「发现更多 AI 工具，提升效率」 |
+
+### 13.2 菜单卡片与分组
+
+白卡片一层，里面不要再套卡片。
+
+```css
+.nav-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius); /* 12px */
+  box-shadow: var(--shadow);
+  padding: 0.45rem 0.4rem;
+}
+```
+
+分组顺序（图标见 `Icon.vue`）：
+
+| 分组 | 图标 `name` | 子项 | 路由 |
+|---|---|---|---|
+| 旅程 | `plane` | 我的行程单、创建新行程 | `/tools/trips`、`/tools/trips/new` |
+| AI咨询 | `headset` | 咨询台、历史记录 | `/tools/consult`、`/tools/consult/history` |
+| AI生图 | `image` | 生图台、我的作品 | `/tools/image`、`/tools/image/works` |
+| 更多工具 | `apps` | 工具市场 | `/tools/market` |
+
+父级行（`.nav-parent`）：
+
+| 状态 | 底 | 字/图标 |
+|---|---|---|
+| 默认 | 透明 | `--text` `#1e293b`，字 `0.82rem` / `600` |
+| hover | `#f8fafc` | 不变 |
+| 组内有选中 `.on` | `#eff6ff`（与侧栏激活底相同，比 `--teal-soft` 更浅） | `var(--teal)` |
+
+布局：`grid-template-columns: 1.05rem 1fr 0.75rem`，`padding: 0.5rem 0.5rem`，`border-radius: 8px`。右侧 chevron 色 `#94a3b8`；收起旋转 `-90deg`，展开 `0deg`（朝下）。
+
+### 13.3 子项
+
+子项相对父级标题文字对齐（给图标留位）：`padding-left: 1.5rem`。
+
+| 类 | 规则 |
+|---|---|
+| `.nav-child` | `padding: 0.42rem 0.5rem`；圆角 **8px**；字 `0.78rem` / `400`；色 `#4b5563`；无下划线 |
+| hover | 底 `#f8fafc` |
+| `.on` 当前页 | 底 `var(--teal-soft)` `#dbeafe`；字 `var(--teal)`；`font-weight: 600` |
+
+约定：
+
+- 只高亮**精确子路由**（「我的行程单」不要在「创建新行程」时也亮）
+- 父级 `.on` 表示该组下任一子路由命中
+- 进入某组路由时自动展开该组；不要默认全部收起
+- 描边 SVG 图标，`stroke-width` 跟 `Icon.vue`；不要用 emoji
+
+---
+
+## 14. 我的行程单（`.trips-page`）
+
+**参考实现：** `MyTripsView.vue`。无行程状态；用 **行程类型** 筛选与展示。
+
+### 14.1 顶栏
+
+左面包屑 `工具 › 旅程 › 我的行程单`（`0.75rem` / `--muted`，当前项 `--text`）。右：搜索框 + 一个 `.btn-primary`「+ 新建行程」。
+
+| 元素 | 规则 |
+|---|---|
+| 搜索 | 边 `1px var(--line)`，圆角 **8px**，`padding: 0.4rem 0.5rem`，placeholder「搜索行程目的地、关键词…」 |
+| 新建 | 链到 `/tools/trips/new`，仍走对话规划占位，不要在本页造第二套创建表单 |
+
+### 14.2 说明卡（`.hero`）
+
+本页例外：浅蓝渐变横幅（token `#eff6ff` → `--teal-soft` `#dbeafe`），圆角仍 `--radius`，边 `var(--line)`。不要照片图、不要行程状态徽章。
+
+| 区域 | 规则 |
+|---|---|
+| 左上 | 地图+定位针小插画 + `h1`（同 §4）+ `.sub` |
+| 右上 | 白底 `.guide-btn`「使用指南」（书图标，同 `.btn` 密度） |
+| 右下 | 山形/航线 SVG 装饰 + 灰色引言「“让每一次出发，都更从容”」（`#94a3b8`，弱图标色） |
+| 左下三项 | 白底小图标 + 标题 `0.75rem` / `--text` + 说明 `0.68rem` / `--muted`：AI 智能规划（快速生成个性化行程）、多方案对比（灵活选择最佳方案）、一键导出分享（支持 PDF / 链接分享） |
+
+### 14.3 类型 Tab + 日期
+
+类型 pill（同 §6 Chip）：未选底 `#eef1f4`、字 `--muted`；选中 `.on` 底 `--teal`、字白。文案带真实条数：`全部` / `商务出行` / `旅游度假` / `学习交流` / `其他`。
+
+右侧：开始日期 → 结束日期（按 **出发日期** 过滤）+「重置」。**不要**状态下拉。
+
+### 14.4 表
+
+列：行程名称、出发日期、创建时间、方案页、对话。不要状态列、不要复选框（无批量操作则不加）。
+
+行程名称：左侧 2rem 浅底缩略图标 + 标题；第二行 muted `行程类型` + 可选 `N天M晚`（`nights` 为晚数，展示为 `{nights+1}天{nights}晚`）。
+
+出发日期：`YYYY-MM-DD 周X`。底栏：`共 N 条记录` + `10 条/页` + 上一页/下一页。

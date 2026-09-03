@@ -30,6 +30,7 @@
 
 - Vue 3 `<script setup>` + TypeScript + Vite  
 - Vue Router：首页、文档、搜索、对话、阅读、设置（可合并）  
+- 侧边栏菜单配置：`web/src/navConfig.ts` 定义带稳定 key 的菜单元数据（默认顺序：首页/对话/搜索/知识库/文档/图谱/检测/工具/监控/基础/设置，调试随开关追加在设置前），顺序与自定义名称持久化在 localStorage（key `zhiyu-nav-config`）；`web/src/views/MenuManageView.vue`（基础页"菜单管理"）支持改名与原生 HTML5 拖拽排序（附上移/下移按钮兜底），`/basics` 使用 `BasicsLayout.vue` 二级菜单布局，`/tools` 使用 `ToolsLayout.vue` 二级菜单（旅程 / AI咨询 / AI生图 / 更多工具，样式见 `web/style.md` §13），`MyTripsView` 用行程类型、无状态（`web/style.md` §14；`plan_record.trip_type` / `nights`），`/monitoring` 复用 `ToolPlaceholderView.vue` 占位  
 - Markdown 展示：`markdown-it`  
 - HTTP：`fetch`；SSE 用 `fetch` 读 stream  
 - 开发：Vite 代理 `/api` → FastAPI  
@@ -128,7 +129,7 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、Meilisearc
 
 ### P4 Master 入口（2026-08-31 起）
 
-- Agent 模式（含差旅与 `task=agent|report`）统一走 `/api/agent(/stream)`：**薄意图 → Master → 子能力**；`/api/chat` 不改，禁止并行第二条 travel API。
+- 对话模式分流：`task=knowledge` 直连旧版单知识库 Agent（`graph.py`，不经 Master）；`task=agent|report` 仍走 `/api/agent(/stream)`：**薄意图 → Master → 子能力**；`/api/chat` 不改，禁止并行第二条 travel API。
 - **意图 ≠ Master**：`intent.py` 只输出标签（一次结构化 LLM 分类，失败回退启发式）；`master.py` 只按标签调度并整合，不做第二套意图识别。
 - Master 图：`intent → (knowledge | chat | plan | booking) → finalize`。knowledge = 现有 `graph.py` 作为子图挂载（内部 checkpoint `thread_id=conversation_id` 不变）；plan = `plan_agent.py` ReAct 子图；booking = `booking_agent.py` HITL 子图。Master 自身 checkpoint 用 `master-{conversation_id}` 前缀，二者互不覆盖。
 - `AgentOut` / stream 终态新增 `intent` 字段；stream 首个 SSE 事件为 `{type:'intent', intent}`。
@@ -163,7 +164,7 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、Meilisearc
 | `web/src/views/SettingsView.vue` | 设置；调试 panel 内可开调试模式，开启后同 panel 配置用户级 Chunk Size/Overlap |
 | `web/src/components/RetrievalDebugPanel.vue` | 对话页 Retrieval Debug 抽屉 |
 | `server/app/routers/retrieval_debug.py` | `POST /api/retrieval-debug`、labels、`POST /api/retrieval-debug/answer-quality` |
-| `server/app/routers/master.py` | `/api/agent`、`/api/agent/stream`（伪流式）与旁路 `POST /api/agent/trace`（`stream_mode="updates"` 逐节点 SSE，不落库） |
+| `server/app/routers/master.py` | `/api/agent`、`/api/agent/stream`（伪流式，**sync def** 跑线程池，避免占事件循环卡住侧栏 `/me`）与旁路 `POST /api/agent/trace`（`stream_mode="updates"` 逐节点 SSE，不落库） |
 | `server/alembic/` | 迁移；当前 `20260901_0018`（新增 `booking_record`） |
 | `web/src/styles.css` | 全局设计 token 与顶栏/页面自适应容器（不锁 1440×900） |
 | `server/app/routers/tags.py` | 标签创建/列表/删除 |
@@ -181,7 +182,7 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、Meilisearc
 | `web/src/api-insights.ts` | 洞察 API 客户端 |
 | `server/app/llm.py` | LangChain 单链 Chat；`chat_with_usage()` 返回 usage；Agent Trace 读取 token；无命中不调用 |
 | `server/app/chat.py` | 问答：检索只用当前句；最近 6 条历史给 LLM |
-| `server/app/routers/chat.py` | `POST /chat`、`/chat/stream`；会话列表/消息/删除 |
+| `server/app/routers/chat.py` | `POST /chat`、`/chat/stream`（sync def，与 agent/stream 同样不占事件循环）；会话列表/消息/删除 |
 | `server/app/url_import.py` | 公开页 httpx + trafilatura；超时 20s；无浏览器自动化 |
 | `server/app/parse.py` | md/txt UTF-8；PDF PyMuPDF 按页 `## Page N`；DOCX 按段落。无 OCR/MinerU |
 | `server/app/chunk.py` | LangChain 标题切分；默认 800/120；`split_markdown(..., chunk_size, chunk_overlap)`；无 LlamaIndex |
@@ -206,8 +207,11 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、Meilisearc
 | `server/app/travel/flyai.py` | flyai skill CLI 封装：`search-flight`/`search-hotel`；stdout 单行 JSON 原样返回（含 `itemList`）；失败抛 `FlyaiError` |
 | `server/app/travel/tools.py` | 差旅工具：机票透传/酒店占位（无源不伪造）/`plan_itinerary`（LLM 结构化+兜底）/`save_plan_html`（HTML→MinIO） |
 | `server/app/travel/minio_store.py` | MinIO 软依赖：`plans/{conversation_id}/{ts}.html` 与 `reports/{conversation_id}/{ts}.html` 前缀分离；未配置/失败返回 None 降级 |
-| `server/app/routers/master.py` | P1.2 `POST /api/compare`；P1.3/P4 `POST /api/agent` 与 `/api/agent/stream` 改调 `build_master_graph()`（薄意图 → Master → 子能力；每轮重灌 STM；stream 首事件 `{type:'intent'}`，booking 路径转发 `{type:'hitl'}`；HITL 确认复用同 `conversation_id` 并读取 checkpoint 中的 `pending_action`）；P1.4/P3-EXT `GET /api/graph`、`GET /api/graph/search`、`GET /api/graph/search/details`、`GET /api/graph/documents`；`POST /api/agent/trace` 旁路 SSE 带 token（暂仍走旧 p1 图，后续对齐 Master） |
-| `web/src/views/ChatView.vue` | 默认 `/api/chat/stream`；「Agent / 报告」走 `/api/agent/stream`（共享 `conversation_id`）；Agent 消息渲染 HITL 确认卡片，用户确认/取消后重发并带 `hitl_confirm` |
+| `server/app/models.py` / Alembic `20260902_0019` | `plan_record`：本人行程方案元数据（title/origin/destination/depart_date/minio_key/url/payload） |
+| `server/app/routers/plans.py` | `GET /api/plans`、`GET /api/plans/{id}`：Session 用户隔离 |
+| `server/app/plan_agent.py` | `save` 后 `persist_plan_record`（无 MinIO 也落库）；Master `node_plan` 传入 session/user_id |
+| `server/app/routers/master.py` | P1.2 `POST /api/compare`；`POST /api/agent` 与 `/api/agent/stream`：`task=knowledge` 直连 `build_graph()`；`task=agent|report` 调 `build_master_graph()`（薄意图 → Master → 子能力；stream 首事件 `{type:'intent'}`；booking HITL）；旁路 `POST /api/agent/trace` 仍走 `graph.py` |
+| `web/src/views/ChatView.vue` | 默认 `/api/chat/stream`；「知识 Agent」→ `task=knowledge` 直连 `graph.py`；「Multi Agent / Report」→ `task=agent|report` 经 Master；共享 `conversation_id`；离开页 abort SSE，且仅在 `/chat` 上 sync query，避免思考中把侧栏导航拽回 |
 | `web/src/views/ReaderView.vue` | 阅读页：摘要/自动标签；P1.4「抽取图谱」+ 实体/关系列表 + 相近文档；P3-EXT 抽取后「查看图谱」入口 |
 
 | `server/app/tools.py` | 新增 `search_graph()` 与 `search_graph_details()`：实体名子串匹配 → 沿 `entity_link` 扩展 1–2 跳 → 返回关联文档切片；`search_graph_details` 额外返回命中实体、关系、路径、相关文档；两者不建第二套向量集合 |
@@ -215,8 +219,12 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、Meilisearc
 | `server/app/graph.py` | Agent StateGraph 新增 `GRAPH` action：`reason` 输出 `action=graph`，`run_tool` 调用 `search_graph` |
 | `web/src/views/KnowledgeGraphView.vue` | `/knowledge-graph` 力导向 SVG 可视化页：知识库/实体/关系筛选与重置、力导向布局、搜索高亮、4 Tab 面板（节点详情、路径探索、邻居节点、检索辅助）、画布控制、统计 |
 | `web/src/components/Icon.vue` | 补齐 `minus / maximize / refresh / fullscreen` 等图谱控制图标 |
-| `web/src/router.ts` | 新增 `/knowledge-graph` 路由 |
-| `web/src/App.vue` | 侧栏新增「知识图谱」入口（`nodes` 图标） |
+| `web/src/router.ts` | `/knowledge-graph`；`/tools` 布局（默认 `trips`；另有 `consult` / `image` 占位） |
+| `web/src/App.vue` | 侧栏「知识图谱」；「工具」（`tools` 图标）→ `/tools` |
+| `web/src/views/ToolsLayout.vue` | 工具页内二级菜单：旅程 / AI咨询 / AI生图 |
+| `web/src/views/MyTripsView.vue` | 工具 → 我的行程单：接 `GET /api/plans` 列表；空态引导 Multi Agent |
+| `server/app/message_ui.py` | 助手消息 UI 载荷：`plan_html`/`travel_data` 随 `message.citations` envelope 落库；`GET .../messages` 解包回放，旧消息可从 `plan_record` 补 url |
+| `web/src/views/ToolPlaceholderView.vue` | 工具占位页：读 `route.meta.title/sub`，展示「即将推出」 |
 
 | `web/` | Vite + Vue 3 + TS；左侧栏 + 首页/文档/搜索/对话/Debug/阅读/设置 |
 | `data/files/`、`data/parsed/` | 原件与解析稿；内容被 gitignore |
