@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, onBeforeUnmount, ref } from "vue";
 import { RouterLink } from "vue-router";
 import Icon from "../components/Icon.vue";
 import { listKnowledgeBases, listTags, searchChunks, type KnowledgeBase, type SearchHit, type TagItem } from "../api";
@@ -10,6 +10,7 @@ const kind = ref("");
 const kbId = ref("");
 const createdAfter = ref("");
 const createdBefore = ref("");
+const topK = ref(5);
 
 const hits = ref<SearchHit[]>([]);
 const tags = ref<TagItem[]>([]);
@@ -83,29 +84,143 @@ function timeAgo(at: number) {
   return `${Math.floor(h / 24)}天前`;
 }
 
-function toIso(local: string, endOfMinute = false) {
+const SAVED_KEY = "search-saved-v1";
+type SavedItem = {
+  query: string;
+  tagId: string;
+  kind: string;
+  kbId: string;
+  createdAfter: string;
+  createdBefore: string;
+  at: number;
+};
+const savedSearches = ref<SavedItem[]>(loadSaved());
+
+function loadSaved(): SavedItem[] {
+  try {
+    return JSON.parse(localStorage.getItem(SAVED_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+function saveSaved() {
+  localStorage.setItem(SAVED_KEY, JSON.stringify(savedSearches.value.slice(0, 10)));
+}
+function saveSearch() {
+  const q = query.value.trim();
+  if (!q) return;
+  const item: SavedItem = {
+    query: q,
+    tagId: tagId.value,
+    kind: kind.value,
+    kbId: kbId.value,
+    createdAfter: createdAfter.value,
+    createdBefore: createdBefore.value,
+    at: Date.now(),
+  };
+  savedSearches.value = [item, ...savedSearches.value.filter((s) => s.query !== q)];
+  saveSaved();
+}
+function applySaved(s: SavedItem) {
+  query.value = s.query;
+  tagId.value = s.tagId;
+  kind.value = s.kind;
+  kbId.value = s.kbId;
+  createdAfter.value = s.createdAfter;
+  createdBefore.value = s.createdBefore;
+  run();
+}
+function removeSaved(s: SavedItem) {
+  savedSearches.value = savedSearches.value.filter((x) => x.query !== s.query);
+  saveSaved();
+}
+
+function toIso(local: string, endOfDay = false) {
   if (!local.trim()) return undefined;
-  const raw = local.length === 16 ? `${local}:00` : local;
-  const d = new Date(raw);
+  const date = local.slice(0, 10);
+  const d = new Date(`${date}T00:00`);
   if (Number.isNaN(d.getTime())) return undefined;
-  if (endOfMinute) d.setSeconds(59, 999);
+  if (endOfDay) d.setDate(d.getDate() + 1);
   return d.toISOString();
 }
-function fmtLocal(d: Date, endOfDay = false) {
-  const p = (n: number) => String(n).padStart(2, "0");
-  const base = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  return endOfDay ? `${base}T23:59` : `${base}T00:00`;
+const p2 = (n: number) => String(n).padStart(2, "0");
+function fmtLocal(d: Date) {
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+}
+const quickPick = ref("");
+const dateOpen = ref(false);
+const dateWrap = ref<HTMLElement | null>(null);
+const calCursor = ref(new Date());
+const rangeAnchor = ref("");
+const weekLabels = ["日", "一", "二", "三", "四", "五", "六"];
+const calTitle = computed(() => `${calCursor.value.getFullYear()}年${calCursor.value.getMonth() + 1}月`);
+const calCells = computed(() => {
+  const y = calCursor.value.getFullYear();
+  const m = calCursor.value.getMonth();
+  const firstDow = new Date(y, m, 1).getDay();
+  const last = new Date(y, m + 1, 0).getDate();
+  const cells: (string | null)[] = [];
+  for (let i = 0; i < firstDow; i++) cells.push(null);
+  for (let d = 1; d <= last; d++) cells.push(fmtLocal(new Date(y, m, d)));
+  return cells;
+});
+function inRange(iso: string) {
+  if (!createdAfter.value || !createdBefore.value) return iso === createdAfter.value;
+  return iso >= createdAfter.value && iso <= createdBefore.value;
+}
+function shiftMonth(delta: number) {
+  const d = new Date(calCursor.value);
+  d.setMonth(d.getMonth() + delta);
+  calCursor.value = d;
+}
+function openDatePop() {
+  dateOpen.value = !dateOpen.value;
+  rangeAnchor.value = "";
+  const seed = createdAfter.value || createdBefore.value;
+  calCursor.value = seed ? new Date(`${seed}T00:00`) : new Date();
+}
+function pickDay(iso: string) {
+  markCustom();
+  if (!rangeAnchor.value) {
+    createdAfter.value = iso;
+    createdBefore.value = "";
+    rangeAnchor.value = iso;
+    return;
+  }
+  const a = rangeAnchor.value;
+  createdAfter.value = a <= iso ? a : iso;
+  createdBefore.value = a <= iso ? iso : a;
+  rangeAnchor.value = "";
+  dateOpen.value = false;
 }
 function quickRange(days: number) {
   const end = new Date();
   const start = new Date();
   start.setDate(end.getDate() - days);
   createdAfter.value = fmtLocal(start);
-  createdBefore.value = fmtLocal(end, true);
+  createdBefore.value = fmtLocal(end);
+  quickPick.value = days === 0 ? "today" : `d${days}`;
+  dateOpen.value = false;
+  rangeAnchor.value = "";
+}
+function markCustom() {
+  quickPick.value = "custom";
+}
+function openCustom() {
+  markCustom();
+  if (!dateOpen.value) openDatePop();
+  else dateOpen.value = true;
 }
 function clearTime() {
   createdAfter.value = "";
   createdBefore.value = "";
+  quickPick.value = "";
+  rangeAnchor.value = "";
+  dateOpen.value = false;
+}
+function fmtDate(iso?: string | null) {
+  if (!iso) return "";
+  return iso.slice(0, 10);
 }
 
 const docCount = computed(() => new Set(hits.value.map((h) => h.document_id)).size);
@@ -113,6 +228,17 @@ const maxScore = computed(() => (hits.value.length ? Math.max(...hits.value.map(
 const avgScore = computed(() =>
   hits.value.length ? hits.value.reduce((s, h) => s + h.score, 0) / hits.value.length : 0,
 );
+
+const sortBy = ref("score-desc");
+const viewMode = ref<"list" | "grid">("list");
+const sortedHits = computed(() => {
+  const rows = [...hits.value];
+  if (sortBy.value === "score-asc") rows.sort((a, b) => a.score - b.score);
+  else if (sortBy.value === "date-desc")
+    rows.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+  else rows.sort((a, b) => b.score - a.score);
+  return rows;
+});
 
 async function run() {
   error.value = "";
@@ -125,6 +251,7 @@ async function run() {
       knowledge_base_id: kbId.value || undefined,
       tag_id: tagId.value || undefined,
       kind: kind.value || undefined,
+      k: topK.value,
       created_after: toIso(createdAfter.value),
       created_before: toIso(createdBefore.value, true),
     });
@@ -157,6 +284,19 @@ function exportResults() {
   URL.revokeObjectURL(a.href);
 }
 
+const cfgOpen = ref(false);
+const cfgWrap = ref<HTMLElement | null>(null);
+function onDocClick(e: MouseEvent) {
+  if (cfgWrap.value && !cfgWrap.value.contains(e.target as Node)) cfgOpen.value = false;
+  if (dateWrap.value && !dateWrap.value.contains(e.target as Node)) {
+    dateOpen.value = false;
+    rangeAnchor.value = "";
+  }
+}
+onMounted(() => document.addEventListener("click", onDocClick));
+onBeforeUnmount(() => document.removeEventListener("click", onDocClick));
+const kOptions = [5, 10, 20];
+
 function kindLabel(k: string) {
   return k === "url" ? "网页" : k === "note" ? "笔记" : k.toUpperCase();
 }
@@ -188,9 +328,33 @@ function pct(score: number) {
           <p class="sub">在知识库中快速检索相关内容，支持多维度精准过滤与结果分析</p>
         </div>
         <div class="head-actions">
+          <button class="btn" type="button" @click="saveSearch" :disabled="!query.trim()">
+            <Icon name="doc" /> 保存搜索
+          </button>
           <button class="btn" type="button" @click="exportResults" :disabled="!hits.length">
             <Icon name="doc" /> 导出结果
           </button>
+          <div ref="cfgWrap" class="cfg-wrap">
+            <button class="btn" type="button" @click="cfgOpen = !cfgOpen">
+              <Icon name="gear" /> 搜索配置
+            </button>
+            <div v-if="cfgOpen" class="cfg-menu card">
+              <span class="cfg-label">返回条数（Top K）</span>
+              <div class="cfg-opts">
+                <button
+                  v-for="k in kOptions"
+                  :key="k"
+                  type="button"
+                  class="pill"
+                  :class="{ on: topK === k }"
+                  @click="topK = k"
+                >
+                  {{ k }}
+                </button>
+              </div>
+              <span class="cfg-note">每次搜索返回的相似片段数量上限</span>
+            </div>
+          </div>
         </div>
       </div>
       <section class="card search-card">
@@ -202,7 +366,6 @@ function pct(score: number) {
             <input v-model="query" placeholder="输入关键词，例如：工作记忆模型" @keyup.enter="run" />
           </div>
           <button class="btn btn-primary" type="button" :disabled="searching" @click="run">
-            <Icon name="search" />
             {{ searching ? "搜索中…" : "搜索" }}
           </button>
           <button class="btn" type="button" @click="reset">重置</button>
@@ -259,13 +422,57 @@ function pct(score: number) {
 
         <div class="row">
           <span>时间</span>
-          <input v-model="createdAfter" type="datetime-local" aria-label="起始时间" />
-          <em class="tilde">~</em>
-          <input v-model="createdBefore" type="datetime-local" aria-label="结束时间" />
-          <button class="pill" :class="{ on: createdAfter && !createdBefore.includes('T00') }" type="button" @click="quickRange(0)">今天</button>
-          <button class="pill" type="button" @click="quickRange(7)">近7天</button>
-          <button class="pill" type="button" @click="quickRange(30)">近30天</button>
-          <button class="pill" type="button" @click="clearTime">不限</button>
+          <div ref="dateWrap" class="date-range">
+            <div class="date-range-btn" role="button" tabindex="0" aria-label="选择日期范围" @click="openDatePop" @keydown.enter.prevent="openDatePop">
+              <span class="seg" :class="{ ph: !createdAfter }">{{ createdAfter || "开始日期" }}</span>
+              <em>-</em>
+              <span class="seg" :class="{ ph: !createdBefore }">{{ createdBefore || "结束日期" }}</span>
+              <button
+                v-if="createdAfter || createdBefore"
+                class="date-clear"
+                type="button"
+                aria-label="清除日期"
+                @click.stop="clearTime"
+              >
+                ×
+              </button>
+              <svg class="cal-ico" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3.5" y="5" width="17" height="15.5" rx="2" />
+                <path d="M8 3.5v3M16 3.5v3M3.5 9.5h17" />
+              </svg>
+            </div>
+            <div v-if="dateOpen" class="date-pop" role="dialog" aria-label="日期范围">
+              <div class="cal-nav">
+                <button type="button" @click="shiftMonth(-1)">‹</button>
+                <strong>{{ calTitle }}</strong>
+                <button type="button" @click="shiftMonth(1)">›</button>
+              </div>
+              <div class="cal-grid">
+                <span v-for="w in weekLabels" :key="w" class="cal-w">{{ w }}</span>
+                <button
+                  v-for="(cell, i) in calCells"
+                  :key="i"
+                  type="button"
+                  class="cal-d"
+                  :class="{
+                    empty: !cell,
+                    on: cell && inRange(cell),
+                    start: cell && cell === createdAfter,
+                    end: cell && cell === createdBefore,
+                  }"
+                  :disabled="!cell"
+                  @click="cell && pickDay(cell)"
+                >
+                  {{ cell ? Number(cell.slice(8)) : "" }}
+                </button>
+              </div>
+              <p class="cal-hint">{{ rangeAnchor ? "再点结束日期" : "先选开始日期" }}</p>
+            </div>
+          </div>
+          <button class="pill" :class="{ on: quickPick === 'today' }" type="button" @click="quickRange(0)">今天</button>
+          <button class="pill" :class="{ on: quickPick === 'd7' }" type="button" @click="quickRange(7)">近7天</button>
+          <button class="pill" :class="{ on: quickPick === 'd30' }" type="button" @click="quickRange(30)">近30天</button>
+          <button class="pill" :class="{ on: quickPick === 'custom' }" type="button" @click="openCustom">自定义</button>
         </div>
 
         <div class="row adv">
@@ -287,6 +494,8 @@ function pct(score: number) {
         </div>
       </section>
 
+      <div class="search-body">
+      <div class="search-lower">
       <div class="stats">
         <div class="card stat">
           <div class="stat-info">
@@ -337,31 +546,65 @@ function pct(score: number) {
         </div>
 
         <template v-if="activeTab === 'result'">
-          <p v-if="ran" class="meta">
-            共找到 {{ hits.length }} 个相关片段（用时 {{ elapsedMs }}ms）· 按相似度排序
-          </p>
-          <p v-else class="meta">输入关键词开始搜索，结果只来自已开启的知识库</p>
-
-          <article v-for="hit in hits" :key="hit.chunk_id" class="hit">
-            <div class="hit-head">
-              <span class="kind-badge" :style="{ background: kindColors[hit.kind] || '#64748b' }">
-                {{ kindLabel(hit.kind) }}
-              </span>
-              <RouterLink class="hit-title" :to="{ path: `/documents/${hit.document_id}`, hash: hashFor(hit) }">
-                {{ hit.document_name }}
-              </RouterLink>
-              <span class="hit-score">相关度 {{ pct(hit.score) }}</span>
+          <div class="result-bar">
+            <p v-if="ran" class="meta">
+              共找到 {{ hits.length }} 个相关片段（用时 {{ elapsedMs }}ms）
+            </p>
+            <p v-else class="meta">输入关键词开始搜索，结果只来自已开启的知识库</p>
+            <div class="result-tools">
+              <select v-model="sortBy" class="sort-select" aria-label="结果排序">
+                <option value="score-desc">相关度 高→低</option>
+                <option value="score-asc">相关度 低→高</option>
+                <option value="date-desc">时间 最新优先</option>
+              </select>
+              <div class="view-toggle">
+                <button
+                  type="button"
+                  class="view-btn"
+                  :class="{ on: viewMode === 'list' }"
+                  aria-label="列表视图"
+                  @click="viewMode = 'list'"
+                >
+                  <Icon name="list" />
+                </button>
+                <button
+                  type="button"
+                  class="view-btn"
+                  :class="{ on: viewMode === 'grid' }"
+                  aria-label="网格视图"
+                  @click="viewMode = 'grid'"
+                >
+                  <Icon name="nodes" />
+                </button>
+              </div>
             </div>
-            <p class="hit-body">{{ hit.content.slice(0, 220) }}{{ hit.content.length > 220 ? "…" : "" }}</p>
-            <div class="hit-foot">
-              <span>
-                <template v-if="hit.page != null">第 {{ hit.page }} 页 · </template>片段 #{{ hit.chunk_id.slice(0, 6) }}
-              </span>
+          </div>
+
+          <div class="hit-wrap" :class="{ grid: viewMode === 'grid' }">
+            <article v-for="hit in sortedHits" :key="hit.chunk_id" class="hit">
+              <div class="hit-head">
+                <span class="kind-badge" :style="{ background: kindColors[hit.kind || ''] || '#64748b' }">
+                  {{ kindLabel(hit.kind || "txt") }}
+                </span>
+                <RouterLink class="hit-title" :to="{ path: `/documents/${hit.document_id}`, hash: hashFor(hit) }">
+                  {{ hit.document_name }}
+                </RouterLink>
+                <span v-for="t in hit.tags || []" :key="t" class="hit-tag">{{ t }}</span>
+                <span v-if="hit.knowledge_base_name" class="hit-kb">知识库：{{ hit.knowledge_base_name }}</span>
+              </div>
+              <p class="hit-body">{{ hit.content.slice(0, 220) }}{{ hit.content.length > 220 ? "…" : "" }}</p>
+              <div class="hit-foot">
+                <span>
+                  <template v-if="hit.page != null">第 {{ hit.page }} 页 · </template>片段 #{{ hit.chunk_id.slice(0, 6) }}
+                  · 相关度 {{ pct(hit.score) }}
+                </span>
+                <span class="hit-date">{{ fmtDate(hit.created_at) }}</span>
+              </div>
               <RouterLink class="read" :to="{ path: `/documents/${hit.document_id}`, hash: hashFor(hit) }">
                 阅读原文 →
               </RouterLink>
-            </div>
-          </article>
+            </article>
+          </div>
           <p v-if="ran && !hits.length && !error" class="meta empty">没有匹配的片段，试试更换关键词或放宽筛选条件</p>
         </template>
 
@@ -370,9 +613,24 @@ function pct(score: number) {
           <p>{{ tabs.find((t) => t.key === activeTab)?.label }}为原型占位，暂未开放</p>
         </div>
       </section>
-    </div>
+      </div>
 
     <aside class="search-side">
+      <section v-if="savedSearches.length" class="card side-card saved-card">
+        <header class="side-head">
+          <h2><span class="side-ico flame flame-blue"></span> 已保存搜索</h2>
+        </header>
+        <ul class="history">
+          <li v-for="s in savedSearches" :key="s.query + s.at">
+            <button type="button" class="history-item" @click="applySaved(s)">
+              <span class="history-q">{{ s.query }}</span>
+              <span class="history-meta">已保存条件 · {{ timeAgo(s.at) }}</span>
+            </button>
+            <button type="button" class="saved-del" aria-label="删除" @click="removeSaved(s)">×</button>
+          </li>
+        </ul>
+      </section>
+
       <section class="card side-card">
         <header class="side-head">
           <h2><span class="side-ico flame flame-blue"></span> 搜索历史</h2>
@@ -405,6 +663,8 @@ function pct(score: number) {
         <p v-else class="side-empty">搜索后生成热门榜</p>
       </section>
     </aside>
+      </div>
+    </div>
   </main>
 </template>
 
@@ -413,61 +673,124 @@ function pct(score: number) {
   width: 100%;
   max-width: 100%;
   margin: 0;
-  padding: 1.1rem 1.25rem 2rem;
+  padding: 1.1rem 1.25rem;
   box-sizing: border-box;
   display: flex;
-  gap: 1rem;
-  align-items: flex-start;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 .search-main {
-  flex: 1;
+  width: 100%;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
+  flex: 1;
+  min-height: 0;
 }
 .search-card {
+  width: 100%;
   padding: 1rem 1.3rem;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.search-body {
+  display: flex;
+  gap: 1rem;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+}
+.search-lower {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
 }
 .search-page .page-head {
   margin-bottom: 0;
+  flex-shrink: 0;
 }
 .head-actions {
   display: flex;
   gap: 0.5rem;
   flex-shrink: 0;
+  align-items: flex-start;
+}
+.cfg-wrap {
+  position: relative;
+}
+.cfg-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.4rem);
+  z-index: 30;
+  width: 13rem;
+  padding: 0.8rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.cfg-label {
+  font-size: 0.78rem;
+  color: var(--text);
+  font-weight: 600;
+}
+.cfg-opts {
+  display: flex;
+  gap: 0.35rem;
+}
+.cfg-note {
+  font-size: 0.68rem;
+  color: var(--muted);
 }
 .bar {
   display: flex;
-  gap: 0.6rem;
-  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex-wrap: nowrap;
+  align-items: center;
   margin: 1.1rem 0 1rem;
 }
 .bar-field {
   flex: 1;
-  min-width: 14rem;
+  min-width: 0;
+  height: 1.85rem;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 0.15rem 0.9rem;
+  gap: 0.35rem;
+  padding: 0 0.55rem;
+  border: 1px solid #2563eb;
+  border-radius: 8px;
+  background: #f8fafc;
   color: var(--muted);
-  background: #fff;
 }
-.bar-field:focus-within {
-  border-color: var(--teal);
+.bar-field .ico {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 .bar-field input {
   flex: 1;
+  min-width: 0;
   border: none;
   outline: none;
-  padding: 0.6rem 0;
-  background: transparent;
+  padding: 0;
+  background: none;
+  width: 100%;
+  font: inherit;
+  font-size: 0.72rem;
+  color: inherit;
 }
-.bar .btn-primary .ico {
-  width: 15px;
-  height: 15px;
+.bar-field input::placeholder {
+  color: #94a3b8;
+}
+.bar .btn {
+  flex-shrink: 0;
 }
 .row {
   display: flex;
@@ -482,17 +805,131 @@ function pct(score: number) {
   font-size: 0.82rem;
   flex-shrink: 0;
 }
-.row input[type="datetime-local"] {
+.date-range {
+  position: relative;
+  flex: 0 0 30%;
+  width: 30%;
+  max-width: 30%;
+}
+.date-range-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  box-sizing: border-box;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 0.28rem 0.6rem;
+  padding: 0.28rem 0.55rem 0.28rem 0.85rem;
   background: #fff;
   color: var(--text);
   font-size: 0.78rem;
+  cursor: pointer;
 }
-.tilde {
+.date-range-btn .seg {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+.date-range-btn .ph {
+  color: var(--muted);
+}
+.date-range-btn em {
+  flex: none;
   color: var(--muted);
   font-style: normal;
+}
+.date-clear {
+  flex: none;
+  width: 1.1rem;
+  height: 1.1rem;
+  border: none;
+  border-radius: 50%;
+  background: #e2e8f0;
+  color: #64748b;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.date-clear:hover {
+  background: #cbd5e1;
+  color: var(--text);
+}
+.date-range-btn .cal-ico {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.6;
+  color: var(--text);
+}
+.date-pop {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  width: 16.5rem;
+  padding: 0.7rem 0.75rem 0.55rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.cal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.45rem;
+}
+.cal-nav strong {
+  font-size: 0.82rem;
+}
+.cal-nav button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 1rem;
+  padding: 0 0.25rem;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.12rem;
+}
+.cal-w,
+.cal-d {
+  text-align: center;
+  font-size: 0.72rem;
+  line-height: 1.7rem;
+}
+.cal-w {
+  color: var(--muted);
+}
+.cal-d {
+  border: none;
+  background: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+}
+.cal-d.empty {
+  cursor: default;
+}
+.cal-d.on {
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+.cal-d.start,
+.cal-d.end {
+  background: var(--teal);
+  color: #fff;
+}
+.cal-hint {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.68rem;
 }
 .kind-dot {
   width: 0.5rem;
@@ -550,6 +987,7 @@ function pct(score: number) {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 0.9rem;
+  flex-shrink: 0;
 }
 .stat {
   display: flex;
@@ -604,13 +1042,18 @@ function pct(score: number) {
 }
 
 .results-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 0.6rem 1.3rem 1.1rem;
 }
 .tabs {
   display: flex;
   gap: 1.4rem;
   border-bottom: 1px solid var(--line);
-  margin-bottom: 0.8rem;
+  flex-shrink: 0;
 }
 .tab {
   border: none;
@@ -627,14 +1070,75 @@ function pct(score: number) {
   font-weight: 600;
   border-bottom-color: var(--teal);
 }
+.result-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
 .meta {
   color: var(--muted);
   font-size: 0.82rem;
   margin: 0.3rem 0 0.8rem;
 }
+.result-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.sort-select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.28rem 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text);
+  background: #fff;
+}
+.view-toggle {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.view-btn {
+  border: none;
+  background: #fff;
+  color: var(--muted);
+  padding: 0.3rem 0.5rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+.view-btn + .view-btn {
+  border-left: 1px solid var(--line);
+}
+.view-btn.on {
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+.view-btn .ico {
+  width: 14px;
+  height: 14px;
+}
 .empty {
   text-align: center;
   padding: 1.5rem 0;
+}
+.hit-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.hit-wrap.grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.7rem;
+  align-content: start;
+}
+.hit-wrap.grid .hit {
+  margin-bottom: 0;
 }
 .hit {
   border: 1px solid var(--line);
@@ -661,11 +1165,17 @@ function pct(score: number) {
   font-weight: 700;
   font-size: 0.92rem;
 }
-.hit-score {
+.hit-tag {
+  font-size: 0.68rem;
+  color: var(--muted);
+  background: #f1f5f9;
+  border-radius: 5px;
+  padding: 0.1rem 0.4rem;
+}
+.hit-kb {
   margin-left: auto;
-  color: var(--teal);
-  font-size: 0.78rem;
-  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 .hit-body {
   color: var(--muted);
@@ -679,7 +1189,12 @@ function pct(score: number) {
   color: var(--muted);
   font-size: 0.75rem;
 }
+.hit-date {
+  color: var(--muted);
+}
 .read {
+  display: inline-block;
+  margin-top: 0.35rem;
   font-size: 0.8rem;
 }
 
@@ -687,9 +1202,12 @@ function pct(score: number) {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
   color: var(--muted);
   padding: 2.5rem 0;
+  flex: 1;
+  min-height: 0;
 }
 .placeholder .ico {
   width: 22px;
@@ -702,9 +1220,19 @@ function pct(score: number) {
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
+  min-height: 0;
 }
 .side-card {
   padding: 0.9rem 1rem;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.saved-card {
+  flex: 0 0 auto;
+  max-height: 30%;
 }
 .side-head {
   display: flex;
@@ -750,9 +1278,17 @@ function pct(score: number) {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.history li {
+  display: flex;
+  align-items: center;
 }
 .history-item {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   border: none;
   background: none;
   text-align: left;
@@ -766,6 +1302,18 @@ function pct(score: number) {
 .history-item:hover,
 .hot-item:hover {
   background: #f1f5f9;
+}
+.saved-del {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0.2rem 0.45rem;
+  flex-shrink: 0;
+}
+.saved-del:hover {
+  color: var(--danger);
 }
 .history-q {
   font-size: 0.82rem;
@@ -839,6 +1387,9 @@ function pct(score: number) {
 }
 @media (max-width: 640px) {
   .stats {
+    grid-template-columns: 1fr;
+  }
+  .hit-wrap.grid {
     grid-template-columns: 1fr;
   }
 }

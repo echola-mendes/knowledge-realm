@@ -82,6 +82,11 @@ def test_search_isolates_kb_tag_kind_and_skips_chat(monkeypatch):
         assert "apple.md" in names
         assert "orange.md" not in names
 
+        apple_hit = next(h for h in in_a.json() if h["document_name"] == "apple.md")
+        assert apple_hit["knowledge_base_name"] == kb_a["name"]
+        assert apple_hit["tags"] == [tag["name"]]
+        assert apple_hit["created_at"]
+
         tagged = client.post(
             "/api/search",
             json={"query": "苹果", "knowledge_base_id": kb_a["id"], "tag_id": tag["id"]},

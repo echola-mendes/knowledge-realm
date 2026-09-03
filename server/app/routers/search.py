@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import index as index_mod
 from app.deps import current_user
 from app.kb import KnowledgeBaseAccessError
-from app.models import User
+from app.models import Document, DocumentTag, KnowledgeBase, Tag, User
 from app.routers.documents import get_db
 from app.schemas import SearchHitOut, SearchRequest
-from app.search import search_chunks
+from app.search import SearchHit, search_chunks
 
 router = APIRouter(prefix="/api", tags=["search"])
 
@@ -36,16 +37,31 @@ def search_api(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return [
-        SearchHitOut(
-            document_id=h.document_id,
-            document_name=h.document_name,
-            chunk_id=h.chunk_id,
-            content=h.content,
-            score=h.score,
-            page=h.page,
-            heading=h.heading,
-            kind=h.kind,
-        )
-        for h in hits
-    ]
+    return [_to_out(session, h) for h in hits]
+
+
+def _to_out(session: Session, h: SearchHit) -> SearchHitOut:
+    doc_row = session.execute(
+        select(Document.created_at, KnowledgeBase.name)
+        .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
+        .where(Document.id == h.document_id)
+    ).first()
+    tag_names = session.execute(
+        select(Tag.name)
+        .join(DocumentTag, DocumentTag.tag_id == Tag.id)
+        .where(DocumentTag.document_id == h.document_id)
+        .order_by(Tag.name)
+    ).scalars().all()
+    return SearchHitOut(
+        document_id=h.document_id,
+        document_name=h.document_name,
+        chunk_id=h.chunk_id,
+        content=h.content,
+        score=h.score,
+        page=h.page,
+        heading=h.heading,
+        kind=h.kind,
+        knowledge_base_name=doc_row[1] if doc_row else None,
+        created_at=doc_row[0] if doc_row else None,
+        tags=list(tag_names),
+    )

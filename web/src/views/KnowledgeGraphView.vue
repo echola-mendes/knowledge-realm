@@ -564,9 +564,14 @@ watch(selectedNodeId, (id) => {
 </script>
 
 <template>
-  <div class="page kg-page">
+  <main class="page kg-page">
+    <div class="page-head">
+      <div>
+        <h1>知识图谱</h1>
+        <p class="sub">浏览已选知识库中的实体与关系，支持筛选、路径探索与检索辅助。</p>
+      </div>
+    </div>
     <header class="kg-header">
-      <h1>知识图谱</h1>
       <div class="kg-toolbar">
         <select v-model="selectedKbId" :disabled="loading">
           <option value="">选择知识库</option>
@@ -807,27 +812,47 @@ watch(selectedNodeId, (id) => {
         </div>
       </aside>
     </div>
-  </div>
+  </main>
 </template>
 
 <style scoped>
 .kg-page {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 3rem);
-  padding: 1rem;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 1rem 1.25rem;
   box-sizing: border-box;
+  font-size: 12.5px;
+  background: transparent;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.kg-page .page-head {
+  margin-bottom: 1rem;
+  flex-shrink: 0;
+}
+.kg-page h1 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 0.25rem;
+}
+.kg-page .sub {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--muted);
+  margin: 0;
 }
 .kg-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 0.75rem;
-}
-.kg-header h1 {
-  font-size: 1.25rem;
-  margin: 0;
+  margin-bottom: 0.45rem;
+  flex-shrink: 0;
 }
 .kg-toolbar {
   display: flex;
