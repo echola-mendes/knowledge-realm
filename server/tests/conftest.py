@@ -60,7 +60,7 @@ def isolate_from_user_database(tmp_path_factory):
     with get_engine().begin() as conn:
         conn.execute(
             text(
-                "TRUNCATE TABLE message, conversation, document_tag, favorite, "
+                "TRUNCATE TABLE plan_record, booking_record, message, conversation, document_tag, favorite, "
                 "document_chunk, entity_link, retrieval_label, rag_eval_case, user_memory, user_chunk_setting, document, entity, tag, knowledge_base, users CASCADE"
             )
         )

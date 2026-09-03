@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any, Literal, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
 from app.travel import tools as travel_tools
+from app.travel.params_parse import infer_trip_type, nights_from_params
 
 MAX_LOOPS = 6
 REQUIRED_FIELDS = ("origin", "destination", "depart_date")
@@ -38,6 +40,7 @@ class PlanState(TypedDict, total=False):
     summary: str
     ltm_hits: list[dict[str, Any]]
     conversation_id: str | None
+    user_id: str | None
     params: dict[str, Any]
     need_fields: list[str]
     next_action: Literal["flights", "hotels", "plan", "save", "ask", "direct"]
@@ -59,6 +62,7 @@ def plan_initial_state(
     summary: str | None = None,
     ltm_hits: list[dict[str, Any]] | None = None,
     conversation_id: str | None = None,
+    user_id: str | None = None,
 ) -> PlanState:
     return {
         "query": query,
@@ -66,6 +70,7 @@ def plan_initial_state(
         "summary": (summary or "").strip(),
         "ltm_hits": list(ltm_hits or []),
         "conversation_id": conversation_id,
+        "user_id": str(user_id) if user_id else None,
         "params": {},
         "need_fields": [],
         "next_action": "direct",
@@ -92,6 +97,87 @@ def _emit_progress(config: RunnableConfig, text: str, progress: list[str]) -> No
     _emit(config, {"type": "progress", "text": text})
     return None
 
+
+
+def _get_session(config: RunnableConfig):
+    from sqlalchemy.orm import Session
+
+    session = (config.get("configurable") or {}).get("session")
+    return session if isinstance(session, Session) else None
+
+
+def _get_user_id(state: PlanState, config: RunnableConfig) -> uuid.UUID | None:
+    raw = state.get("user_id") or (config.get("configurable") or {}).get("user_id")
+    if raw is None:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except ValueError:
+        return None
+
+
+def _parse_conversation_id(raw: str | None) -> uuid.UUID | None:
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except ValueError:
+        return None
+
+
+def _plan_title(params: dict[str, Any]) -> str:
+    origin = (params.get("origin") or "").strip()
+    destination = (params.get("destination") or "").strip()
+    if origin and destination:
+        return f"{origin}→{destination}"[:200]
+    if destination:
+        return f"前往{destination}"[:200]
+    return "行程方案"
+
+
+def persist_plan_record(
+    session,
+    user_id: uuid.UUID,
+    *,
+    conversation_id: str | None,
+    params: dict[str, Any],
+    plan: dict[str, Any],
+    plan_html: dict[str, Any],
+):
+    """方案页生成后落库；无 MinIO 也写（url/key 可空）。失败静默，不影响 SSE。"""
+    params = params or {}
+    try:
+        from app.models import PlanRecord
+
+        record = PlanRecord(
+            user_id=user_id,
+            conversation_id=_parse_conversation_id(conversation_id),
+            title=_plan_title(params),
+            origin=(params.get("origin") or None),
+            destination=(params.get("destination") or None),
+            depart_date=(params.get("depart_date") or params.get("dep_date") or None),
+            trip_type=infer_trip_type("", params),
+            nights=nights_from_params(params),
+            minio_key=(plan_html or {}).get("key"),
+            url=(plan_html or {}).get("url"),
+            payload={
+                "recommendation": (plan or {}).get("recommendation"),
+                "total_price_summary": (plan or {}).get("total_price_summary"),
+                "option_count": len((plan or {}).get("options") or []),
+                "options": (plan or {}).get("options") or [],
+                "params": params,
+            },
+        )
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return record
+    except Exception:
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        return None
 
 def _user_question(state: PlanState) -> str:
     for item in reversed(state.get("messages") or []):
@@ -125,9 +211,11 @@ def _reason_llm(state: PlanState) -> dict[str, Any] | None:
                     "system",
                     "你是出行规划调度器。只输出 JSON。"
                     '从对话抽取出行参数：{"params":{"origin","destination","depart_date","return_date",'
-                    '"cabin","adults","budget","poi_name","hotel_stars","max_price"},'
+                    '"cabin","adults","budget","poi_name","hotel_stars","max_price",'
+                    '"trip_type":"business|leisure|study|other"},'
                     '"action":"flights|hotels|plan|save|ask|direct"}。'
-                    "日期格式 YYYY-MM-DD。只写本轮新提及或更正的字段，未提及的字段不要输出（保留旧值由系统合并）。"
+                    "日期格式 YYYY-MM-DD。trip_type：出差会议=business，旅游度假=leisure，学习交流=study，否则 other。"
+                    "只写本轮新提及或更正的字段，未提及的字段不要输出（保留旧值由系统合并）。"
                     "动作规则：要素齐全先查机票（flights）；需要酒店且已启用再 hotels；"
                     "已有搜索结果则 plan 生成方案；方案生成后 save 保存方案页；"
                     "要素缺失（出发地/目的地/出发日期）选 ask；与出行无关选 direct。",
@@ -264,7 +352,13 @@ def node_run_tool(state: PlanState, config: RunnableConfig) -> dict[str, Any]:
                 progress.append(str(raw.get("systemMessage") or "往返无结果，已改为单程去程。"))
                 _emit_progress(config, progress[-1], progress)
         travel_data = dict(state.get("travel_data") or {})
-        travel_data["flights"] = raw.get("itemList") if raw.get("kind") != "error" else raw
+        from app.travel.tools import _dedupe_flight_items
+
+        item_list = raw.get("itemList") if raw.get("kind") != "error" else raw
+        if isinstance(item_list, list):
+            travel_data["flights"] = _dedupe_flight_items([i for i in item_list if isinstance(i, dict)])
+        else:
+            travel_data["flights"] = item_list
         _emit(config, {"type": "travel_data", **travel_data})
         updates.update({"flights_raw": raw, "travel_data": travel_data, "progress": progress})
         return updates
@@ -310,6 +404,19 @@ def node_run_tool(state: PlanState, config: RunnableConfig) -> dict[str, Any]:
             params,
             state.get("conversation_id"),
         )
+        session = _get_session(config)
+        user_id = _get_user_id(state, config)
+        if session is not None and user_id is not None:
+            record = persist_plan_record(
+                session,
+                user_id,
+                conversation_id=state.get("conversation_id"),
+                params=params,
+                plan=state.get("plan") or {},
+                plan_html=plan_html,
+            )
+            if record is not None:
+                plan_html = {**plan_html, "plan_id": str(record.id)}
         progress.append(plan_html.get("note") or "方案页已生成")
         _emit_progress(config, progress[-1], progress)
         _emit(config, {"type": "plan_html", **plan_html})
@@ -355,6 +462,16 @@ def _fallback_plan_answer(state: PlanState, *, flights_count: int) -> str:
     return "\n".join(lines)
 
 
+def _plan_confirmation_answer(state: PlanState) -> str | None:
+    """方案页已生成时，聊天区只给短确认（对齐 html-plan skill）。"""
+    plan_html = state.get("plan_html") or {}
+    if not plan_html.get("html"):
+        return None
+    note = str(plan_html.get("note") or "").strip()
+    base = "方案已生成，请查看下方完整方案展示。"
+    return f"{base}{note}" if note else base
+
+
 def node_finalize(state: PlanState) -> dict[str, Any]:
     from app import llm as llm_mod
 
@@ -372,6 +489,11 @@ def node_finalize(state: PlanState) -> dict[str, Any]:
                 msg += f" {hint}"
             return {"answer": msg}
         return {"answer": "暂未能生成行程方案：请补充出行要素（出发地、目的地、出发日期）后重试。"}
+
+    short = _plan_confirmation_answer(state)
+    if short:
+        return {"answer": short}
+
     context = json.dumps(
         {
             "params": params,
@@ -388,7 +510,7 @@ def node_finalize(state: PlanState) -> dict[str, Any]:
     ]
     try:
         answer = llm_mod.chat(
-            "请向用户总结行程方案：突出推荐方案与理由、对比要点、总价；末尾附方案页说明。简洁中文。",
+            "请用一两句话告知用户方案已准备好，引导其查看下方方案卡片；禁止输出航班明细、支付链接、退改签/行李规则、体验模式说明或长篇行程概览。",
             context,
             history,
             summary=(state.get("summary") or "").strip() or None,

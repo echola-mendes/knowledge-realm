@@ -103,6 +103,9 @@ class SearchHitOut(BaseModel):
     page: int | None = None
     heading: str | None = None
     kind: str
+    knowledge_base_name: str | None = None
+    tags: list[str] = []
+    created_at: datetime | None = None
 
 
 class ChatRequest(BaseModel):
@@ -133,13 +136,15 @@ class ConversationOut(BaseModel):
     id: uuid.UUID
     knowledge_base_id: uuid.UUID
     title: str
+    mode: str = "chat"
     updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
 
-class ConversationRename(BaseModel):
-    title: str
+class ConversationPatch(BaseModel):
+    title: str | None = None
+    mode: str | None = None
 
 
 class MessageOut(BaseModel):
@@ -147,6 +152,10 @@ class MessageOut(BaseModel):
     role: str
     content: str
     citations: list | dict | None = None
+    plan_html: dict | None = None
+    travel: dict | None = None
+    pending_action: dict | None = None
+    bookings: list[dict] | None = None
 
     model_config = {"from_attributes": True}
 
@@ -485,3 +494,18 @@ class GraphSearchDetailOut(BaseModel):
     links: list[GraphLinkOut]
     documents: list[GraphSearchDocumentOut]
     paths: list[GraphPathOut]
+
+
+class PlanRecordOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    origin: str | None = None
+    destination: str | None = None
+    depart_date: str | None = None
+    trip_type: str = "other"
+    nights: int | None = None
+    conversation_id: uuid.UUID | None = None
+    url: str | None = None
+    minio_key: str | None = None
+    created_at: datetime | None = None
+

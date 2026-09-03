@@ -161,4 +161,53 @@ def parse_travel_params(text: str, ref: dt.date | None = None) -> dict[str, Any]
     if ret:
         params["return_date"] = ret.isoformat()
 
+    params["trip_type"] = infer_trip_type(raw, params)
+    nights = nights_from_params(params)
+    if nights is not None:
+        params["nights"] = nights
+
     return params
+
+
+TRIP_TYPES = ("business", "leisure", "study", "other")
+TRIP_TYPE_LABELS = {
+    "business": "商务出行",
+    "leisure": "旅游度假",
+    "study": "学习交流",
+    "other": "其他",
+}
+
+_TYPE_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("business", ("出差", "商务", "会议", "客户", "办公")),
+    ("study", ("学习", "培训", "交流", "考试", "研修", "访学")),
+    ("leisure", ("旅游", "度假", "玩", "蜜月", "亲子", "观光")),
+)
+
+
+def infer_trip_type(text: str, params: dict[str, Any] | None = None) -> str:
+    """从已填字段或口语句识别行程类型；无法判断则为 other。无行程状态。"""
+    raw_type = str((params or {}).get("trip_type") or "").strip()
+    if raw_type in TRIP_TYPE_LABELS:
+        return raw_type
+    for key, label in TRIP_TYPE_LABELS.items():
+        if raw_type == label:
+            return key
+    blob = f"{text or ''} {' '.join(str(v) for v in (params or {}).values() if v)}"
+    for key, words in _TYPE_KEYWORDS:
+        if any(w in blob for w in words):
+            return key
+    return "other"
+
+
+def nights_from_params(params: dict[str, Any]) -> int | None:
+    depart = params.get("depart_date")
+    ret = params.get("return_date")
+    if not depart or not ret:
+        return None
+    try:
+        a = dt.date.fromisoformat(str(depart)[:10])
+        b = dt.date.fromisoformat(str(ret)[:10])
+    except ValueError:
+        return None
+    n = (b - a).days
+    return n if n >= 0 else None

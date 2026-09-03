@@ -222,6 +222,7 @@ def test_booking_agent_confirms_then_books(monkeypatch, session: Session):
         config=_config(session, user.id),
     )
     assert out2["answer"].startswith("预订已提交")
+    assert out2.get("pending_action") is None  # 确认后不得残留 HITL
     row = session.scalar(select(BookingRecord).where(BookingRecord.user_id == user.id))
     assert row is not None
     reset_booking_graph()

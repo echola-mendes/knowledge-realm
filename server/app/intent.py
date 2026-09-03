@@ -4,6 +4,7 @@ import json
 from typing import Literal
 
 from app.travel.params_parse import has_plan_oral_signal
+from app.travel.plan_confirm import is_confirm_plan_query
 
 IntentLabel = Literal["knowledge", "plan", "booking", "chat"]
 
@@ -33,6 +34,8 @@ def _heuristic_intent(query: str) -> IntentLabel:
     q = (query or "").strip().lower()
     if not q:
         return "chat"
+    if is_confirm_plan_query(query):
+        return "booking"
     if len(q) <= 12 and any(g in q for g in _GREETINGS):
         return "chat"
     if any(k in q for k in _BOOKING_KEYWORDS) and any(k in q for k in ("机票", "酒店", "航班", "房间", "订单")):
@@ -70,7 +73,7 @@ def _llm_label(query: str, history_tail: list[dict[str, str]] | None = None) -> 
                     '{"intent":"knowledge|plan|booking|chat"}。'
                     "knowledge=知识库问答/资料检索/报告生成；"
                     "plan=机酒出行规划（搜索比价、安排行程；含城市+日期+往返/出发/返回口述）；"
-                    "booking=下单/取消/查询预订；"
+                    "booking=下单/取消/查询预订；用户确认已给出的行程方案（如「确认方案1」「确认P1」「选方案2」）必须是 booking，禁止当成 knowledge 用 RAG 检索或编造支付链接；"
                     "chat=寒暄或与知识库、出行无关的闲聊。"
                     "用户给出出发地/目的地/日期并要求出行安排时必须是 plan，禁止当成 knowledge 直接编航班。",
                 ),
@@ -113,6 +116,9 @@ def classify_intent(
     """薄意图：只出标签，不做检索、不整合回答。task=report 强制走 knowledge。"""
     if task == "report":
         return "knowledge"
+    # 确认方案优先于 LLM：禁止误入 knowledge 编造支付链接
+    if is_confirm_plan_query(query):
+        return "booking"
     label = _llm_label(query, history_tail)
     if _rule_correct_to_plan(query, label):
         return "plan"

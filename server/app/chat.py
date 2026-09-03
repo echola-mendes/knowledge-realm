@@ -64,7 +64,7 @@ def run_chat(
         k=k,
     )
     if conversation_id is None:
-        convo = Conversation(user_id=user_id, knowledge_base_id=kb_id, title=query[:40])
+        convo = Conversation(user_id=user_id, knowledge_base_id=kb_id, title=query[:40], mode="chat")
         session.add(convo)
         session.flush()
         history: list[tuple[str, str]] = []
@@ -72,6 +72,7 @@ def run_chat(
         convo = session.get(Conversation, conversation_id)
         if convo is None or convo.user_id != user_id:
             raise LookupError("会话不存在")
+        convo.mode = "chat"
         history = _history(session, convo.id)
     if not llm_mod.llm_keys_ready():
         raise PermissionError("未配置 LLM API Key")

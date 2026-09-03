@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.models import BookingRecord
 from app.travel import rate_limit
+from app.travel.plan_confirm import is_confirm_plan_query, resolve_confirm_booking_params
 
 MAX_LOOPS = 6
 WRITE_ACTIONS = ("book_flight", "book_hotel", "cancel")
@@ -110,6 +111,7 @@ def _reason_llm(state: BookingState) -> dict[str, Any] | None:
         "你是出行预订助手。只输出 JSON。\n"
         "动作：list=查询我的预订；book_flight=订机票；book_hotel=订酒店；"
         "cancel=取消预订；ask=信息不足询问；direct=与预订无关。\n"
+        "用户说「确认方案N/确认P1/选方案N」时必须 book_flight（参数可空，系统会从已保存方案抽取）。\n"
         "参数：list 可不传；book_flight 需 flight_no/date/depart_date；"
         "book_hotel 需 hotel_name/check_in/check_out；cancel 需 booking_id。\n"
         f"当前会话是否有待确认动作：{'有' if pending else '无'}。"
@@ -148,11 +150,12 @@ def _reason_llm(state: BookingState) -> dict[str, Any] | None:
         return None
 
 
-def reason_decide(state: BookingState) -> dict[str, Any]:
+def reason_decide(state: BookingState, config: RunnableConfig | None = None) -> dict[str, Any]:
     """合并 LLM 输出，处理 hitl_confirm 与 pending_action。"""
     loop_count = int(state.get("loop_count") or 0) + 1
     pending = state.get("pending_action")
     hitl_confirm = state.get("hitl_confirm")
+    config = config or {}
 
     # 用户拒绝：无论是否有 pending_action，直接取消
     if hitl_confirm is False:
@@ -168,6 +171,36 @@ def reason_decide(state: BookingState) -> dict[str, Any]:
             "loop_count": loop_count,
             "next_action": pending.get("tool"),
             "params": dict(pending.get("args") or {}),
+            "answer": "",
+        }
+
+    question = _user_question(state) or state.get("query") or ""
+    # 「确认方案N」：从 plan_record 抽航班，直接进入 book_flight HITL
+    if is_confirm_plan_query(question):
+        session = _get_session(config)
+        user_id = _get_user_id(state, config)
+        if session is None or user_id is None:
+            return {
+                "loop_count": loop_count,
+                "next_action": "direct",
+                "answer": "服务异常：无法获取用户信息。",
+            }
+        resolved = resolve_confirm_booking_params(
+            session,
+            user_id,
+            question,
+            conversation_id=state.get("conversation_id"),
+        )
+        if not resolved.get("ok"):
+            return {
+                "loop_count": loop_count,
+                "next_action": "direct",
+                "answer": str(resolved.get("message") or "无法确认该方案。"),
+            }
+        return {
+            "loop_count": loop_count,
+            "next_action": "book_flight",
+            "params": dict(resolved.get("params") or {}),
             "answer": "",
         }
 
@@ -205,8 +238,8 @@ def _heuristic_decision(state: BookingState) -> dict[str, Any]:
     return {"action": "direct", "params": {}}
 
 
-def node_reason(state: BookingState) -> dict[str, Any]:
-    return reason_decide(state)
+def node_reason(state: BookingState, config: RunnableConfig) -> dict[str, Any]:
+    return reason_decide(state, config)
 
 
 def route_after_reason(
@@ -280,6 +313,55 @@ def _vendor_cancel(external_id: str | None) -> dict[str, Any]:
     return {"success": True, "external_id": external_id}
 
 
+def _flight_booking_summary(params: dict[str, Any]) -> str:
+    segments = str(params.get("segments_summary") or "").strip()
+    label = str(params.get("option_label") or params.get("option_id") or "").strip()
+    if segments:
+        return f"预订{label}：{segments}" if label else f"预订：{segments}"
+    flight_no = str(params.get("flight_no") or params.get("flightNo") or "")
+    depart_date = str(params.get("date") or params.get("depart_date") or "")
+    return f"预订机票 {flight_no}" + (f"（{depart_date}）" if depart_date else "")
+
+
+def _persist_flight_booking(
+    session: Session,
+    user_id: uuid.UUID,
+    *,
+    flight_no: str,
+    depart_date: str,
+    origin: Any = None,
+    destination: Any = None,
+    extra_payload: dict[str, Any] | None = None,
+) -> BookingRecord:
+    vendor_result = _vendor_book_flight(
+        flight_no=flight_no,
+        depart_date=depart_date,
+        origin=origin,
+        destination=destination,
+    )
+    payload = {
+        "flight_no": flight_no,
+        "depart_date": depart_date,
+        "origin": origin,
+        "destination": destination,
+    }
+    if extra_payload:
+        payload.update(extra_payload)
+    record = BookingRecord(
+        user_id=user_id,
+        kind="flight",
+        vendor="flyai",
+        external_id=vendor_result.get("external_id"),
+        payload=payload,
+        status="pending",
+        pay_url=vendor_result.get("pay_url"),
+    )
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record
+
+
 def book_flight_tool(
     session: Session,
     user_id: uuid.UUID,
@@ -288,45 +370,80 @@ def book_flight_tool(
 ) -> dict[str, Any]:
     flight_no = str(params.get("flight_no") or params.get("flightNo") or "")
     depart_date = str(params.get("date") or params.get("depart_date") or "")
-    summary = f"预订机票 {flight_no}" + (f"（{depart_date}）" if depart_date else "")
+    return_flight_no = str(params.get("return_flight_no") or "").strip()
+    return_date = str(params.get("return_date") or "").strip()
+    summary = _flight_booking_summary(params)
+    pending_args = {
+        "flight_no": flight_no,
+        "depart_date": depart_date,
+        "origin": params.get("origin"),
+        "destination": params.get("destination"),
+    }
+    for key in ("return_flight_no", "return_date", "option_id", "option_label", "segments_summary"):
+        if params.get(key):
+            pending_args[key] = params.get(key)
     if not confirmed:
         return {
             "kind": "pending",
             "pending_action": {
                 "tool": "book_flight",
-                "args": {"flight_no": flight_no, "depart_date": depart_date},
+                "args": pending_args,
                 "summary": summary,
             },
         }
     rate_limit.check_write_rate(user_id)
-    vendor_result = _vendor_book_flight(
+    record = _persist_flight_booking(
+        session,
+        user_id,
         flight_no=flight_no,
         depart_date=depart_date,
         origin=params.get("origin"),
         destination=params.get("destination"),
-    )
-    record = BookingRecord(
-        user_id=user_id,
-        kind="flight",
-        vendor="flyai",
-        external_id=vendor_result.get("external_id"),
-        payload={
-            "flight_no": flight_no,
-            "depart_date": depart_date,
-            "origin": params.get("origin"),
-            "destination": params.get("destination"),
+        extra_payload={
+            k: params.get(k)
+            for k in ("option_id", "option_label", "segments_summary")
+            if params.get(k)
         },
-        status="pending",
-        pay_url=vendor_result.get("pay_url"),
     )
-    session.add(record)
-    session.commit()
-    session.refresh(record)
+    items = [
+        {
+            "id": str(record.id),
+            "kind": "flight",
+            "external_id": record.external_id,
+            "status": "pending",
+            "pay_url": record.pay_url,
+        }
+    ]
+    if return_flight_no:
+        rate_limit.check_write_rate(user_id)
+        ret_record = _persist_flight_booking(
+            session,
+            user_id,
+            flight_no=return_flight_no,
+            depart_date=return_date,
+            origin=params.get("destination"),
+            destination=params.get("origin"),
+            extra_payload={
+                "leg": "return",
+                "option_id": params.get("option_id"),
+                "paired_booking_id": str(record.id),
+            },
+        )
+        items.append(
+            {
+                "id": str(ret_record.id),
+                "kind": "flight",
+                "external_id": ret_record.external_id,
+                "status": "pending",
+                "pay_url": ret_record.pay_url,
+            }
+        )
     return {
         "kind": "booked",
         "booking_id": str(record.id),
         "external_id": record.external_id,
         "pay_url": record.pay_url,
+        "bookings": items,
         "summary": summary,
     }
 
@@ -444,16 +561,24 @@ def node_run_tool(state: BookingState, config: RunnableConfig) -> dict[str, Any]
         items = tool_result.get("items") or []
         _emit_booking_data(config, items)
         updates["bookings"] = items
+        updates["pending_action"] = None
     elif tool_result.get("kind") == "booked":
-        item = {
-            "id": tool_result.get("booking_id"),
-            "kind": "flight" if action == "book_flight" else "hotel",
-            "external_id": tool_result.get("external_id"),
-            "status": "pending",
-            "pay_url": tool_result.get("pay_url"),
-        }
-        _emit_booking_data(config, [item])
-        updates["bookings"] = [item]
+        items = tool_result.get("bookings")
+        if not isinstance(items, list) or not items:
+            items = [
+                {
+                    "id": tool_result.get("booking_id"),
+                    "kind": "flight" if action == "book_flight" else "hotel",
+                    "external_id": tool_result.get("external_id"),
+                    "status": "pending",
+                    "pay_url": tool_result.get("pay_url"),
+                }
+            ]
+        _emit_booking_data(config, items)
+        updates["bookings"] = items
+        updates["pending_action"] = None  # 下单成功必须清 HITL，否则前端循环出确认卡
+    elif tool_result.get("kind") in ("cancelled", "error"):
+        updates["pending_action"] = None
     return updates
 
 
@@ -499,7 +624,7 @@ def node_finalize(state: BookingState) -> dict[str, Any]:
         return _with_bookings({"answer": "您的预订：\n" + "\n".join(lines), "bookings": items})
     if kind == "booked":
         pay = tool_result.get("pay_url")
-        booked_items = bookings or [
+        booked_items = bookings or tool_result.get("bookings") or [
             {
                 "id": tool_result.get("booking_id"),
                 "kind": "flight",
@@ -508,20 +633,39 @@ def node_finalize(state: BookingState) -> dict[str, Any]:
                 "pay_url": pay,
             }
         ]
+        pay_bits = [str(it.get("pay_url")) for it in booked_items if isinstance(it, dict) and it.get("pay_url")]
+        pay_text = "；".join(pay_bits) if pay_bits else (pay or "")
+        ids = "、".join(
+            str(it.get("id") or "")[:8]
+            for it in booked_items
+            if isinstance(it, dict) and it.get("id")
+        ) or str(tool_result.get("booking_id") or "")[:8]
         return _with_bookings(
             {
                 "answer": (
                     f"预订已提交：{tool_result['summary']}，"
-                    f"订单号 {tool_result['booking_id'][:8]}"
-                    f"{('，支付链接：' + pay) if pay else ''}。"
+                    f"订单号 {ids}"
+                    f"{('，支付链接：' + pay_text) if pay_text else ''}。"
+                    " 请在下方预订卡片中打开支付链接完成支付。"
                 ),
                 "bookings": booked_items,
+                "pending_action": None,
             }
         )
     if kind == "cancelled":
-        return _with_bookings({"answer": f"预订 {tool_result['booking_id'][:8]} 已取消。"})
+        return _with_bookings(
+            {
+                "answer": f"预订 {tool_result['booking_id'][:8]} 已取消。",
+                "pending_action": None,
+            }
+        )
     if kind == "error":
-        return _with_bookings({"answer": f"操作失败：{tool_result.get('message')}"})
+        return _with_bookings(
+            {
+                "answer": f"操作失败：{tool_result.get('message')}",
+                "pending_action": None,
+            }
+        )
 
     return _with_bookings({"answer": "预订助手已处理您的请求。"})
 

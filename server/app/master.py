@@ -175,6 +175,7 @@ def node_chat(state: MasterState) -> dict[str, Any]:
 def node_plan(state: MasterState, config: RunnableConfig) -> dict[str, Any]:
     from app.plan_agent import build_plan_graph, plan_initial_state
 
+    inner_configurable = config.get("configurable") or {}
     out = build_plan_graph().invoke(
         plan_initial_state(
             state.get("query") or "",
@@ -182,8 +183,15 @@ def node_plan(state: MasterState, config: RunnableConfig) -> dict[str, Any]:
             summary=state.get("summary") or "",
             ltm_hits=list(state.get("ltm_hits") or []),
             conversation_id=state.get("conversation_id"),
+            user_id=inner_configurable.get("user_id"),
         ),
-        config={"configurable": {"emit": (config.get("configurable") or {}).get("emit")}},
+        config={
+            "configurable": {
+                "emit": inner_configurable.get("emit"),
+                "session": inner_configurable.get("session"),
+                "user_id": inner_configurable.get("user_id"),
+            }
+        },
     )
     return {
         "answer": out.get("answer") or "",

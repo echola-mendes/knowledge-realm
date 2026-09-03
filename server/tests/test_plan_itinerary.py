@@ -87,8 +87,9 @@ def test_save_plan_html_key_and_note(monkeypatch):
 
     monkeypatch.setattr(travel_tools.minio_store, "minio_ready", lambda: True)
     monkeypatch.setattr(travel_tools.minio_store, "put_plan_html", fake_put)
+    plan = travel_tools._fallback_plan(FLIGHTS, None, {"cabin": "经济舱"})
     out = travel_tools.save_plan_html(
-        {"options": [], "comparison": [], "recommendation": None, "total_price_summary": "—"},
+        plan,
         FLIGHTS,
         None,
         {"cabin": "经济舱"},
@@ -196,7 +197,7 @@ def test_plan_agent_full_flow_search_plan_save(monkeypatch):
         plan_mod.plan_initial_state("下周二去北京，经济舱", conversation_id="convo-flow"),
         config=_config(events.append),
     )
-    assert out["answer"].startswith("推荐 opt-1")
+    assert out["answer"].startswith("方案已生成，请查看下方完整方案展示")
     assert len(out["travel_data"]["flights"]) == 3
     assert out["plan_html"]["url"] == "http://minio/p.html"
     # 事件顺序：progress → travel_data → … → plan_html，均先于 answer
@@ -243,7 +244,7 @@ def test_plan_agent_finalize_survives_llm_connection_error(monkeypatch):
     )
     assert out["answer"]
     assert "推荐" in out["answer"] or "方案" in out["answer"]
-    assert "最低 400" in out["answer"]
+    assert "方案已生成" in out["answer"]
 
 
 def test_plan_agent_keeps_params_across_preference_change(monkeypatch):

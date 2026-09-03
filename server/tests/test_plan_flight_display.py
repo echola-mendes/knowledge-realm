@@ -87,7 +87,7 @@ def test_plan_llm_payload_uses_flat_flights(monkeypatch):
     monkeypatch.setattr(travel_tools, "_plan_llm", fake)
     travel_tools.plan_itinerary(FLYAI_NESTED, None, {"cabin": "经济舱"})
     data = json.loads(captured["payload"])
-    assert data["flights"][0]["flight_no"] == "MU5109"
+    assert data["outbound_flights"][0]["flight_no"] == "MU5109"
     assert "journeys" not in captured["payload"]
 
 
@@ -120,7 +120,7 @@ def test_render_plan_html_comparison_uses_labels_not_opt_ids():
     assert "MU5109" in html
     assert "<th>opt-1</th>" not in html
     assert "总价" in html
-    assert "航班" in html
+    assert "去程交通" in html
 
 
 def test_plan_itinerary_empty_segments_falls_back(monkeypatch):
@@ -145,3 +145,32 @@ def test_render_plan_html_shows_recommended_flight():
     assert "MU5109" in html
     assert "虹桥T2" in html
     assert "<code>" not in html
+
+
+def test_fallback_recommend_reason_not_first_plan():
+    plan = travel_tools._fallback_plan(FLYAI_NESTED, None, {})
+    reason = (plan.get("recommendation") or {}).get("reason") or ""
+    assert "首个" not in reason
+    assert "第一套" not in reason
+    assert "总价最低" in reason or "优先推荐" in reason
+
+
+def test_render_plan_html_strips_trial_marketing():
+    flights = {
+        **FLYAI_NESTED,
+        "systemMessage": (
+            "往返联程无结果，已改为去程+返程分别搜索。"
+            "当前为体验模式，完整能力请申请 API Key：https://flyai.open.fliggy.com/"
+        ),
+    }
+    plan = travel_tools._fallback_plan(flights, None, {})
+    html = travel_tools.render_plan_html(
+        plan, flights, None, {"origin": "上海", "destination": "北京"}
+    )
+    assert "flyai.open.fliggy.com" not in html
+    assert "体验模式" not in html
+    assert "API Key" not in html
+    assert "检索说明" in html
+    assert "往返联程无结果" in html
+    assert "为什么是它" in html
+    assert html.index("👉 下一步") < html.index("🧭 Agent 为你做了什么")

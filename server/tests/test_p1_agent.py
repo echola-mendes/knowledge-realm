@@ -42,6 +42,9 @@ def test_agent_post_uses_graph_not_chat(monkeypatch):
     assert "build_master_graph" in inspect.getsource(master_router._agent_out)
     assert "run_chat" not in src
     assert "/api/chat" not in src
+    assert not inspect.iscoroutinefunction(master_router.agent_stream)
+    from app.routers.chat import chat_stream
+    assert not inspect.iscoroutinefunction(chat_stream)
     assert "langgraph" not in inspect.getsource(chat_mod)
     assert "langgraph" not in inspect.getsource(chains_mod)
 
