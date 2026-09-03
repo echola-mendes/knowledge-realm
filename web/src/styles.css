@@ -210,8 +210,17 @@ textarea {
   gap: 0.5rem;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto; /* 菜单多时纵向滚动，头部与底部固定 */
+  overscroll-behavior: contain;
   padding: 0;
+}
+
+.sidenav .nav::-webkit-scrollbar {
+  display: none; /* 隐藏滚动条，仅保留滚动 */
+}
+
+.sidenav .nav {
+  scrollbar-width: none; /* Firefox */
 }
 
 .sidenav-foot {

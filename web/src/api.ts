@@ -73,6 +73,9 @@ export type SearchHit = {
   page: number | null;
   heading: string | null;
   kind?: string;
+  knowledge_base_name?: string | null;
+  tags?: string[];
+  created_at?: string | null;
 };
 
 export type Citation = {
@@ -85,7 +88,15 @@ export type Citation = {
   score: number;
 };
 
-export type Conversation = { id: string; knowledge_base_id: string; title: string; updated_at?: string | null };
+export type ConversationMode = "chat" | "knowledge" | "agent" | "report";
+
+export type Conversation = {
+  id: string;
+  knowledge_base_id: string;
+  title: string;
+  mode?: ConversationMode;
+  updated_at?: string | null;
+};
 
 export type AppUser = { id: string; username: string };
 
@@ -234,6 +245,7 @@ export function searchChunks(body: {
   knowledge_base_id?: string;
   tag_id?: string;
   kind?: string;
+  k?: number;
   created_after?: string;
   created_before?: string;
 }) {
@@ -254,18 +266,44 @@ export type ChatMessage = {
   role: string;
   content: string;
   citations?: Citation[] | null;
+  plan_html?: {
+    html?: string | null;
+    url?: string | null;
+    key?: string | null;
+    note?: string;
+    plan_id?: string;
+  } | null;
+  travel?: Record<string, unknown> | null;
+  pending_action?: {
+    tool: string;
+    args?: Record<string, unknown>;
+    summary: string;
+    confirmed?: boolean | null;
+  } | null;
+  bookings?: Array<Record<string, unknown>> | null;
 };
 
 export function listMessages(conversationId: string) {
   return api<ChatMessage[]>(`/api/conversations/${conversationId}/messages`);
 }
 
-export function renameConversation(conversationId: string, title: string) {
+export function patchConversation(
+  conversationId: string,
+  body: { title?: string; mode?: ConversationMode },
+) {
   return api<Conversation>(`/api/conversations/${conversationId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
+    body: JSON.stringify(body),
   });
+}
+
+export function renameConversation(conversationId: string, title: string) {
+  return patchConversation(conversationId, { title });
+}
+
+export function deleteConversation(conversationId: string) {
+  return api<{ ok: boolean }>(`/api/conversations/${conversationId}`, { method: "DELETE" });
 }
 
 export function getHealth() {
@@ -718,4 +756,22 @@ export type RecommendationItem = {
 
 export function listRecommendations() {
   return api<RecommendationItem[]>("/api/recommendations");
+}
+
+export type PlanRecordItem = {
+  id: string;
+  title: string;
+  origin: string | null;
+  destination: string | null;
+  depart_date: string | null;
+  trip_type: string;
+  nights: number | null;
+  conversation_id: string | null;
+  url: string | null;
+  minio_key: string | null;
+  created_at?: string | null;
+};
+
+export function listPlans() {
+  return api<PlanRecordItem[]>("/api/plans");
 }

@@ -5,25 +5,25 @@ import { getMe, type AppUser } from "./api";
 import Icon from "./components/Icon.vue";
 import { loadKnowledgeBases } from "./kb";
 import { debugEnabled } from "./debugFlag";
+import { NAV_ITEMS, navConfig, type NavItemDef } from "./navConfig";
 
 const route = useRoute();
 const me = ref<AppUser | null>(null);
 const isLogin = computed(() => route.name === "login");
 const initial = computed(() => (me.value?.username?.trim().charAt(0) || "?").toUpperCase());
 
-const allLinks = [
-  { to: "/", label: "首页", icon: "home", match: "home" },
-  { to: "/chat", label: "对话", icon: "chat", match: "chat" },
-  { to: "/knowledge-bases", label: "知识库", icon: "db", match: "kbs" },
-  { to: "/documents", label: "文档", icon: "doc", match: "docs" },
-  { to: "/search", label: "搜索", icon: "search", match: "search" },
-  { to: "/debug", label: "调试", icon: "bug", match: "debug" },
-  { to: "/knowledge-graph", label: "知识图谱", icon: "nodes", match: "knowledge-graph" },
-  { to: "/insights", label: "知识洞察", icon: "spark", match: "insights" },
-  { to: "/settings", label: "设置", icon: "gear", match: "settings" },
-] as const;
-
-const links = computed(() => allLinks.filter((item) => item.match !== "debug" || debugEnabled.value));
+const links = computed<NavItemDef[]>(() => {
+  const { order, labels } = navConfig.value;
+  const byMatch = new Map(NAV_ITEMS.map((item) => [item.match, item]));
+  const list: NavItemDef[] = [];
+  for (const match of order) {
+    const item = byMatch.get(match);
+    if (!item) continue;
+    if (item.match === "debug" && !debugEnabled.value) continue;
+    list.push({ ...item, label: labels[item.match] ?? item.label });
+  }
+  return list;
+});
 
 function navOn(match: string) {
   const p = route.path;
@@ -37,6 +37,9 @@ function navOn(match: string) {
   if (match === "settings") return p === "/settings";
   if (match === "knowledge-graph") return p === "/knowledge-graph";
   if (match === "insights") return p === "/insights";
+  if (match === "tools") return p === "/tools" || p.startsWith("/tools/");
+  if (match === "monitoring") return p === "/monitoring";
+  if (match === "basics") return p === "/basics" || p.startsWith("/basics/");
   return false;
 }
 

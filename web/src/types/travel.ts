@@ -1,5 +1,7 @@
 // P4 TRAVEL-PLAN-1 差旅类型（后端契约见 docs/TECH.md「P4 Master 入口」）
 
+import { extractPrice } from "../utils/flightDisplay";
+
 // flyai search-flight 响应 itemList 单项原结构（字段透传，不归一化）
 export type FlyaiFlightItem = Record<string, unknown> & {
   flightNo?: string;
@@ -12,6 +14,7 @@ export type FlyaiFlightItem = Record<string, unknown> & {
   price?: number | string;
   lowestPrice?: number | string;
   minPrice?: number | string;
+  adultPrice?: number | string;
 };
 
 export type HotelPlaceholder = {
@@ -64,8 +67,8 @@ export type TravelData = {
 };
 
 export function flightPrice(item: FlyaiFlightItem): string {
-  const raw = item.price ?? item.lowestPrice ?? item.minPrice;
-  return raw === undefined || raw === null || raw === "" ? "—" : `¥${raw}`;
+  const raw = extractPrice(item as Record<string, unknown>);
+  return raw ? `¥${raw}` : "—";
 }
 
 export function flightLabel(item: FlyaiFlightItem): string {

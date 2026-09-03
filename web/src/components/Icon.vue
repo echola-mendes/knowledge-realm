@@ -158,7 +158,13 @@ defineProps<{ name: string }>();
       <circle cx="14.6" cy="9.4" r="1" />
     </template>
     <template v-else-if="name === 'spark'">
-      <path d="M12 3.5v3.2M12 17.3v3.2M4.2 12h3.2M16.6 12h3.2M6.4 6.4l2.3 2.3M15.3 15.3l2.3 2.3M6.4 17.6l2.3-2.3M15.3 8.7l2.3-2.3" />
+      <path d="m12 3-1.8 5.6L4.5 12l5.7 3.4L12 21l1.8-5.6L19.5 12l-5.7-3.4L12 3Z" />
+      <path d="M4.5 3.5v3M3 5h3M18.5 17.5v3M17 19h3" />
+    </template>
+    <template v-else-if="name === 'compare'">
+      <rect x="3.4" y="5" width="7.4" height="14" rx="1.4" />
+      <rect x="13.2" y="5" width="7.4" height="14" rx="1.4" />
+      <path d="M5.6 9.2h3M5.6 12.2h3M15.4 9.2h3M15.4 12.2h3" />
     </template>
     <template v-else-if="name === 'nodes'">
       <circle cx="6.5" cy="6.5" r="2.2" />
@@ -183,6 +189,44 @@ defineProps<{ name: string }>();
     </template>
     <template v-else-if="name === 'list'">
       <path d="M7.5 7.2h10.2M7.5 12h10.2M7.5 16.8h10.2M5 7.2h.01M5 12h.01M5 16.8h.01" />
+    </template>
+    <template v-else-if="name === 'plane'">
+      <path d="M21 16.2 14.2 13l-1.7 6.4-1.6-.7 1.1-5.2-5.6-2.6-1.5 1.8-1.1-.5 2.2-3.6L2.2 8l.8-1.2 4.6 1.2L12.4 4l.9.8-3.4 3.8 5.6 2.6 4.4-2.1.8 1.5-5.4 2.6 3.8 1.8.9 1.2Z" />
+    </template>
+    <template v-else-if="name === 'headset'">
+      <path d="M5.2 13.2V12a6.8 6.8 0 0 1 13.6 0v1.2" />
+      <path d="M5.2 13.2v2.4A1.8 1.8 0 0 0 7 17.4h1.2" />
+      <path d="M18.8 13.2v2.4a1.8 1.8 0 0 1-1.8 1.8H15.8" />
+      <path d="M9.2 19.4h5.6" />
+    </template>
+    <template v-else-if="name === 'apps'">
+      <rect x="4.2" y="4.2" width="15.6" height="15.6" rx="2.4" />
+      <path d="M12 8.2v7.6M8.2 12h7.6" />
+    </template>
+    <template v-else-if="name === 'monitor'">
+      <rect x="3.5" y="4.5" width="17" height="11.5" rx="1.4" />
+      <path d="M9 20.2h6M12 16v4.2M7 12.2l2.6-2.8 2.2 1.8 3-3.4" />
+    </template>
+    <template v-else-if="name === 'sliders'">
+      <path d="M4.5 7.5h9M17.5 7.5h2M4.5 16.5h2M10.5 16.5h9" />
+      <circle cx="15.5" cy="7.5" r="2" />
+      <circle cx="8.5" cy="16.5" r="2" />
+    </template>
+    <template v-else-if="name === 'robot'">
+      <rect x="4.4" y="6.2" width="15.2" height="12.2" rx="3.2" />
+      <circle cx="9.2" cy="12.2" r="1.15" fill="currentColor" stroke="none" />
+      <circle cx="14.8" cy="12.2" r="1.15" fill="currentColor" stroke="none" />
+      <path d="M12 3.6v2.6M8.2 18.4v1.4M15.8 18.4v1.4" />
+    </template>
+    <template v-else-if="name === 'clipboard'">
+      <path d="M8.2 5.4h2.1a1.7 1.7 0 0 0 3.4 0h2.1A1.6 1.6 0 0 1 17.4 7v11.4a1.6 1.6 0 0 1-1.6 1.6H8.2A1.6 1.6 0 0 1 6.6 18.4V7A1.6 1.6 0 0 1 8.2 5.4Z" />
+      <rect x="9.6" y="3.4" width="4.8" height="2.4" rx="0.7" />
+      <path d="m9.2 13.1 2 2 3.6-3.8" />
+    </template>
+    <template v-else-if="name === 'export'">
+      <path d="M7.2 8.2V18a1.4 1.4 0 0 0 1.4 1.4h7.8A1.4 1.4 0 0 0 17.8 18V8.2" />
+      <path d="M8.6 8.2h6.8" />
+      <path d="M12 14.2V4.6M9.2 7.2 12 4.4l2.8 2.8" />
     </template>
   </svg>
 </template>

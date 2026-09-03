@@ -1,25 +1,38 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter, RouterLink } from "vue-router";
 import {
+  deleteConversation,
   getMe,
   listConversations,
   listMessages,
   messageFromErrorBody,
+  patchConversation,
   renameConversation,
   type ChatMessage,
   type Citation,
   type Conversation,
+  type ConversationMode,
 } from "../api";
 import Icon from "../components/Icon.vue";
 import TravelResultCard from "../components/TravelResultCard.vue";
 import PlanItineraryPanel from "../components/PlanItineraryPanel.vue";
 import HotelPlaceholderCard from "../components/HotelPlaceholderCard.vue";
 import BookingListCard from "../components/BookingListCard.vue";
+import PlanHtmlBlock from "../components/PlanHtmlBlock.vue";
 import type { BookingItem, PendingAction, PlanHtmlEvent, TravelData, TravelError } from "../types/travel";
 import MarkdownIt from "markdown-it";
 
 const md = new MarkdownIt({ breaks: true });
+
+type ChatMode = ConversationMode;
+
+const MODE_BADGE: Record<ChatMode, string> = {
+  chat: "c",
+  knowledge: "a",
+  agent: "m",
+  report: "r",
+};
 
 type AgentMessage = ChatMessage & {
   travel?: TravelData;
@@ -39,8 +52,15 @@ const conversations = ref<Conversation[]>([]);
 const error = ref("");
 const pendingAction = ref<PendingAction | null>(null);
 const streaming = ref(false);
-const mode = ref<"chat" | "agent" | "report">(
-  route.query.mode === "report" ? "report" : route.query.mode === "agent" ? "agent" : "chat",
+const streamAbort = ref<AbortController | null>(null);
+const mode = ref<"chat" | "knowledge" | "agent" | "report">(
+  route.query.mode === "report"
+    ? "report"
+    : route.query.mode === "agent"
+      ? "agent"
+      : route.query.mode === "knowledge"
+        ? "knowledge"
+        : "chat",
 );
 const smartSearch = ref(false);
 const CHAT_KEY = "zhiyu-chat-id";
@@ -48,10 +68,12 @@ const userInitial = computed(() => (username.value.trim().charAt(0) || "U").toUp
 const mdContent = (text: string) => md.render(text.replace(/^\s+/, ""));
 
 function syncRouteQuery() {
+  if (route.path !== "/chat") return;
   const query: Record<string, string> = {};
   if (conversationId.value) query.c = conversationId.value;
   if (mode.value === "report") query.mode = "report";
   else if (mode.value === "agent") query.mode = "agent";
+  else if (mode.value === "knowledge") query.mode = "knowledge";
   router.replace({ path: "/chat", query });
 }
 
@@ -77,6 +99,12 @@ const threadMessages = computed<AgentMessage[]>(() =>
 const sidebarOpen = ref(true);
 const listSearch = ref("");
 const listAction = ref<"new" | "search">("new");
+const hoveredConvId = ref("");
+const menuConvId = ref("");
+const renamingConvId = ref("");
+const renameDraft = ref("");
+const scrollableTitles = ref<Record<string, boolean>>({});
+
 
 function toggleListAction(action: "search" | "new") {
   listAction.value = listAction.value === action && action === "search" ? "new" : action;
@@ -169,6 +197,80 @@ function formatConvTime(iso?: string | null) {
   return `${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+function conversationMode(c: Conversation | undefined): ChatMode {
+  const m = c?.mode;
+  if (m === "report" || m === "agent" || m === "knowledge") return m;
+  return "chat";
+}
+
+function convModeBadge(c: Conversation) {
+  return MODE_BADGE[conversationMode(c)];
+}
+
+function applyConversationMode(c: Conversation | undefined) {
+  if (!c) return;
+  mode.value = conversationMode(c);
+  syncRouteQuery();
+}
+
+function closeConvMenu() {
+  menuConvId.value = "";
+}
+
+function toggleConvMenu(id: string) {
+  menuConvId.value = menuConvId.value === id ? "" : id;
+}
+
+function onListItemEnter(id: string, event: MouseEvent) {
+  hoveredConvId.value = id;
+  const root = event.currentTarget as HTMLElement;
+  const wrap = root.querySelector(".list-title-wrap") as HTMLElement | null;
+  const title = root.querySelector(".list-title") as HTMLElement | null;
+  if (!wrap || !title) return;
+  const overflow = title.scrollWidth > wrap.clientWidth + 1;
+  scrollableTitles.value = { ...scrollableTitles.value, [id]: overflow };
+  if (overflow) {
+    title.style.setProperty("--scroll-offset", `-${title.scrollWidth - wrap.clientWidth}px`);
+  }
+}
+
+function onListItemLeave() {
+  hoveredConvId.value = "";
+}
+
+function startListRename(c: Conversation) {
+  renamingConvId.value = c.id;
+  renameDraft.value = c.title;
+  menuConvId.value = "";
+}
+
+async function saveListRename(id: string) {
+  if (renamingConvId.value !== id) return;
+  const title = renameDraft.value.trim();
+  renamingConvId.value = "";
+  if (!title) return;
+  const row = conversations.value.find((c) => c.id === id);
+  if (!row || title === row.title) return;
+  try {
+    const updated = await renameConversation(id, title);
+    row.title = updated.title;
+  } catch (e) {
+    error.value = messageFromErrorBody(String(e), "标题保存失败");
+  }
+}
+
+async function deleteConv(id: string) {
+  menuConvId.value = "";
+  if (!window.confirm("确定删除该对话？")) return;
+  try {
+    await deleteConversation(id);
+    conversations.value = conversations.value.filter((c) => c.id !== id);
+    if (conversationId.value === id) newChat();
+  } catch (e) {
+    error.value = messageFromErrorBody(String(e), "删除失败");
+  }
+}
+
 const conversationGroups = computed(() => {
   const q = listSearch.value.trim().toLowerCase();
   const rows = q
@@ -223,7 +325,10 @@ async function refreshConversations() {
 
 async function openConversation(id: string) {
   if (streaming.value) return;
+  closeConvMenu();
+  const row = conversations.value.find((c) => c.id === id);
   rememberConversation(id);
+  applyConversationMode(row);
   try {
     await loadHistory();
   } catch (e) {
@@ -243,8 +348,9 @@ function visibleDocs(m: ChatMessage) {
   return rows.slice(0, CITE_LIMIT);
 }
 
-function isThinking(m: ChatMessage) {
+function isThinking(m: AgentMessage) {
   const last = messages.value[messages.value.length - 1];
+  if (hasPlanPage(m)) return false;
   return m.role === "assistant" && !m.content.trim() && streaming.value && last === m;
 }
 
@@ -267,7 +373,25 @@ function scrollBottom() {
 async function loadHistory() {
   if (!conversationId.value) return;
   const rows = await listMessages(conversationId.value);
-  messages.value = rows;
+  messages.value = rows.map((row) => ({
+    ...row,
+    planHtml: row.plan_html
+      ? {
+          html: row.plan_html.html || undefined,
+          url: row.plan_html.url ?? null,
+          key: row.plan_html.key ?? null,
+          note: row.plan_html.note,
+        }
+      : null,
+    travel: (row.travel as AgentMessage["travel"]) || undefined,
+    pendingAction: (row.pending_action as PendingAction | null | undefined) || undefined,
+    bookings: (row.bookings as BookingItem[] | null | undefined) || undefined,
+  }));
+  // 恢复未决 HITL，便于刷新后继续点确认
+  const open = [...messages.value]
+    .reverse()
+    .find((m) => m.pendingAction && m.pendingAction.confirmed == null && !m.bookings?.length);
+  pendingAction.value = open?.pendingAction || null;
   scrollBottom();
 }
 
@@ -284,6 +408,30 @@ function travelFlightItems(m: AgentMessage) {
 function travelFlightError(m: AgentMessage): TravelError | null {
   const f = m.travel?.flights as TravelError | undefined;
   return f && !Array.isArray(f) && f.kind === "error" ? f : null;
+}
+
+function hasPlanPage(m: AgentMessage): boolean {
+  return Boolean(m.planHtml?.html || m.planHtml?.url);
+}
+
+function showAssistantText(m: AgentMessage): boolean {
+  if (hasPlanPage(m)) return false;
+  return Boolean(m.content?.trim()) && !isThinking(m);
+}
+
+function showMsgBubble(m: AgentMessage): boolean {
+  if (m.role === "user") return true;
+  if (isThinking(m)) return true;
+  if (showTravelAux(m)) return true;
+  if (showAssistantText(m)) return true;
+  if (m.bookings?.length) return true;
+  if (m.pendingAction && m.pendingAction.confirmed == null && !m.bookings?.length) return true;
+  if (m.citations?.length) return true;
+  return false;
+}
+
+function showTravelAux(m: AgentMessage): boolean {
+  return Boolean(m.travel) && !hasPlanPage(m);
 }
 
 function travelHotelPlaceholder(m: AgentMessage): { message: string } | null {
@@ -305,21 +453,27 @@ async function ask() {
   messages.value.push(assistant);
   draft.value = "";
   streaming.value = true;
+  streamAbort.value?.abort();
+  const ac = new AbortController();
+  streamAbort.value = ac;
   scrollBottom();
   const useGraph = mode.value !== "chat";
   try {
+    const agentTask =
+      mode.value === "report" ? "report" : mode.value === "knowledge" ? "knowledge" : "agent";
     const res = await fetch(useGraph ? "/api/agent/stream" : "/api/chat/stream", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
+      signal: ac.signal,
       body: JSON.stringify(
         useGraph
           ? {
-              task: mode.value === "report" ? "report" : "agent",
+              task: agentTask,
               query: q,
               conversation_id: conversationId.value || undefined,
               allow_web: smartSearch.value,
-              hitl_confirm: hitlConfirmForRequest.value,
+              hitl_confirm: mode.value === "agent" ? hitlConfirmForRequest.value : null,
             }
           : {
               query: q,
@@ -407,6 +561,7 @@ async function ask() {
             assistant.pendingAction = payload.pending_action;
             pendingAction.value = payload.pending_action;
           } else {
+            assistant.pendingAction = undefined;
             pendingAction.value = null;
           }
           if (payload.flights || payload.hotels || payload.plan) {
@@ -424,13 +579,26 @@ async function ask() {
     }
     await refreshConversations();
   } catch (e) {
+    if (ac.signal.aborted) return;
     error.value = String(e);
   } finally {
-    streaming.value = false;
+    if (streamAbort.value === ac) {
+      streaming.value = false;
+      streamAbort.value = null;
+    }
   }
 }
 
 function confirmHitl(confirm: boolean) {
+  // 立刻关掉已有 HITL 卡，避免确认后与新消息叠成循环
+  for (const m of messages.value) {
+    if (m.role === "assistant" && m.pendingAction && m.pendingAction.confirmed == null) {
+      m.pendingAction = { ...m.pendingAction, confirmed: confirm };
+    }
+  }
+  if (pendingAction.value) {
+    pendingAction.value = { ...pendingAction.value, confirmed: confirm };
+  }
   hitlConfirmForRequest.value = confirm;
   draft.value = confirm ? "确认" : "取消";
   ask();
@@ -459,11 +627,19 @@ onMounted(async () => {
     const me = await getMe();
     username.value = me.username;
     await refreshConversations();
+    const row = conversations.value.find((c) => c.id === conversationId.value);
+    if (row) applyConversationMode(row);
     await loadHistory();
   } catch (e) {
     error.value = String(e);
   }
   if (draft.value) ask();
+  document.addEventListener("click", closeConvMenu);
+});
+
+onBeforeUnmount(() => {
+  streamAbort.value?.abort();
+  document.removeEventListener("click", closeConvMenu);
 });
 
 watch(panelDocs, (rows) => {
@@ -476,14 +652,24 @@ watch(
   (m) => {
     if (m === "report") mode.value = "report";
     else if (m === "agent") mode.value = "agent";
+    else if (m === "knowledge") mode.value = "knowledge";
     else if (route.path === "/chat") mode.value = "chat";
   },
 );
 
-function setMode(next: "chat" | "agent" | "report") {
+async function setMode(next: ChatMode) {
   if (streaming.value) return;
   mode.value = next;
   syncRouteQuery();
+  const id = conversationId.value;
+  if (!id) return;
+  const row = conversations.value.find((c) => c.id === id);
+  if (row) row.mode = next;
+  try {
+    await patchConversation(id, { mode: next });
+  } catch (e) {
+    error.value = messageFromErrorBody(String(e), "模式保存失败");
+  }
 }
 
 function pickDoc(id: string) {
@@ -545,18 +731,51 @@ function pickDoc(id: string) {
         <div class="list-scroll">
           <section v-for="group in conversationGroups" :key="group.label" class="list-group">
             <h3>{{ group.label }}</h3>
-            <button
+            <div
               v-for="c in group.items"
               :key="c.id"
-              type="button"
               class="list-item"
-              :class="{ on: c.id === conversationId }"
-              @click="openConversation(c.id)"
+              :class="{ on: c.id === conversationId, hover: hoveredConvId === c.id }"
+              @mouseenter="onListItemEnter(c.id, $event)"
+              @mouseleave="onListItemLeave"
             >
-              <Icon name="session" class="list-icon" />
-              <span class="list-title">{{ c.title }}</span>
-              <span class="list-time">{{ formatConvTime(c.updated_at) }}</span>
-            </button>
+              <button type="button" class="list-item-body" @click="openConversation(c.id)">
+                <span class="list-icon-wrap" aria-hidden="true">
+                  <Icon name="session" class="list-icon" />
+                  <span class="list-mode-badge">{{ convModeBadge(c) }}</span>
+                </span>
+                <span v-if="renamingConvId !== c.id" class="list-title-wrap">
+                  <span
+                    class="list-title"
+                    :class="{ marquee: hoveredConvId === c.id && scrollableTitles[c.id] }"
+                  >{{ c.title }}</span>
+                </span>
+                <input
+                  v-else
+                  v-model="renameDraft"
+                  class="list-rename-input"
+                  v-focus
+                  @click.stop
+                  @keyup.enter="saveListRename(c.id)"
+                  @keyup.esc="renamingConvId = ''"
+                  @blur="saveListRename(c.id)"
+                />
+                <span class="list-time">{{ formatConvTime(c.updated_at) }}</span>
+              </button>
+              <button
+                v-show="hoveredConvId === c.id || menuConvId === c.id"
+                type="button"
+                class="list-more-btn"
+                aria-label="更多操作"
+                @click.stop="toggleConvMenu(c.id)"
+              >
+                <Icon name="more" />
+              </button>
+              <div v-if="menuConvId === c.id" class="list-menu" @click.stop>
+                <button type="button" @click="startListRename(c)">重命名</button>
+                <button type="button" class="danger" @click="deleteConv(c.id)">删除</button>
+              </div>
+            </div>
           </section>
           <p v-if="!conversations.length" class="list-empty">暂无对话</p>
           <p v-else-if="!conversationGroups.length" class="list-empty">无匹配对话</p>
@@ -605,7 +824,8 @@ function pickDoc(id: string) {
             <div class="head-tools">
               <div class="mode-switch" role="group" aria-label="Question mode">
                 <button type="button" :class="{ on: mode === 'chat' }" :disabled="streaming" @click="setMode('chat')">Chat</button>
-                <button type="button" :class="{ on: mode === 'agent' }" :disabled="streaming" @click="setMode('agent')">Agent</button>
+                <button type="button" :class="{ on: mode === 'knowledge' }" :disabled="streaming" @click="setMode('knowledge')">Agent</button>
+                <button type="button" :class="{ on: mode === 'agent' }" :disabled="streaming" @click="setMode('agent')">Multi Agent</button>
                 <button type="button" :class="{ on: mode === 'report' }" :disabled="streaming" @click="setMode('report')">Report</button>
               </div>
               <button class="icon-btn" type="button" aria-label="分享">
@@ -624,21 +844,23 @@ function pickDoc(id: string) {
         <p v-if="error" class="hint err">{{ error }}</p>
 
         <div ref="box" class="thread">
-          <div v-for="m in threadMessages" :key="m.id" :class="['msg', m.role]">
+          <div
+            v-for="m in threadMessages"
+            :key="m.id"
+            :class="['msg', m.role, { 'has-plan': m.role === 'assistant' && hasPlanPage(m) }]"
+          >
             <div v-if="m.role === 'user'" class="avatar user-avatar">{{ userInitial }}</div>
             <div v-else class="avatar bot-avatar"><Icon name="brand" /></div>
             <div class="bubble-wrap">
               <div class="msg-meta">
                 <span class="msg-who">{{ m.role === "user" ? "你" : "知识助手" }}</span>
               </div>
-              <div class="bubble">
+              <div v-if="showMsgBubble(m)" class="bubble">
                 <div v-if="isThinking(m)" class="thinking">
                   <span class="spin" aria-hidden="true"></span>
                   思考中……
                 </div>
-                <div v-else-if="m.role === 'assistant'" class="md-body" v-html="mdContent(m.content)"></div>
-                <pre v-else>{{ m.content.replace(/^\s+/, "") }}</pre>
-                <template v-if="m.role === 'assistant' && m.travel">
+                <template v-if="m.role === 'assistant' && showTravelAux(m)">
                   <div v-if="travelProgress(m).length" class="travel-progress">
                     <p v-for="(p, i) in travelProgress(m)" :key="i" class="travel-step">{{ p }}</p>
                   </div>
@@ -651,24 +873,19 @@ function pickDoc(id: string) {
                     v-if="travelHotelPlaceholder(m)"
                     :message="travelHotelPlaceholder(m)!.message"
                   />
-                  <PlanItineraryPanel v-if="m.travel.plan" :plan="m.travel.plan" />
-                  <div v-if="m.planHtml" class="card plan-page-card">
-                    <div class="plan-page-head">
-                      <h2>方案页</h2>
-                      <a v-if="m.planHtml.url" class="plan-page-link" :href="m.planHtml.url" target="_blank" rel="noopener">新窗口打开</a>
-                    </div>
-                    <p v-if="m.planHtml.note" class="plan-page-note">{{ m.planHtml.note }}</p>
-                    <iframe
-                      v-if="m.planHtml.html"
-                      class="plan-frame"
-                      sandbox=""
-                      :srcdoc="m.planHtml.html"
-                      title="行程方案页"
-                    ></iframe>
-                  </div>
+                  <PlanItineraryPanel v-if="m.travel?.plan" :plan="m.travel.plan" />
                 </template>
+                <div
+                  v-if="m.role === 'assistant' && showAssistantText(m)"
+                  class="md-body"
+                  v-html="mdContent(m.content)"
+                ></div>
+                <pre v-else-if="m.role === 'user'">{{ m.content.replace(/^\s+/, "") }}</pre>
                 <BookingListCard v-if="m.role === 'assistant' && m.bookings?.length" :items="m.bookings" />
-                <div v-if="m.role === 'assistant' && m.pendingAction" class="hitl-card card">
+                <div
+                  v-if="m.role === 'assistant' && m.pendingAction && m.pendingAction.confirmed == null && !m.bookings?.length"
+                  class="hitl-card card"
+                >
                   <p class="hitl-summary">{{ m.pendingAction.summary }}</p>
                   <div class="hitl-actions">
                     <button
@@ -712,6 +929,11 @@ function pickDoc(id: string) {
                 </div>
               </div>
             </div>
+            <PlanHtmlBlock
+              v-if="m.role === 'assistant' && hasPlanPage(m)"
+              class="plan-thread-block"
+              :data="m.planHtml!"
+            />
           </div>
         </div>
 
@@ -724,8 +946,10 @@ function pickDoc(id: string) {
                 mode === 'report'
                   ? '按主题生成研究报告…'
                   : mode === 'agent'
-                    ? 'Agent 可多步检索后再回答…'
-                    : '继续追问，或输入新问题...'
+                    ? 'Multi Agent：知识 / 行程规划 / 预订…'
+                    : mode === 'knowledge'
+                      ? 'Agent 可多步检索后再回答…'
+                      : '继续追问，或输入新问题...'
               "
               @keydown="onKey"
             ></textarea>
@@ -830,36 +1054,6 @@ function pickDoc(id: string) {
   color: var(--muted);
   margin: 0.1rem 0;
 }
-.plan-page-card {
-  margin: 0.4rem 0;
-  padding: 0.7rem 0.85rem;
-}
-.plan-page-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-.plan-page-head h2 {
-  font-size: 0.78rem;
-  margin: 0 0 0.3rem;
-}
-.plan-page-link {
-  font-size: 0.68rem;
-  color: var(--teal);
-}
-.plan-page-note {
-  font-size: 0.68rem;
-  color: var(--muted);
-  margin: 0 0 0.4rem;
-}
-.plan-frame {
-  width: 100%;
-  height: 420px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-}
-
 .hitl-card {
   margin: 0.5rem 0 0;
   padding: 0.7rem 0.85rem;
@@ -1026,7 +1220,21 @@ function pickDoc(id: string) {
   font-weight: 500;
 }
 .list-item {
+  position: relative;
   width: 100%;
+  height: 2.2rem;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  border-radius: 8px;
+  padding: 0.1rem 0.2rem 0.1rem 0;
+  font-size: 0.75rem;
+  color: inherit;
+}
+.list-item-body {
+  flex: 1;
+  min-width: 0;
   display: flex;
   justify-content: flex-start;
   align-items: center;
@@ -1034,31 +1242,145 @@ function pickDoc(id: string) {
   border: none;
   background: none;
   border-radius: 8px;
-  padding: 0.45rem 0.5rem;
+  padding: 0.35rem 0.35rem 0.35rem 0.5rem;
   cursor: pointer;
   text-align: left;
-  font-size: 0.75rem;
+  font: inherit;
   color: inherit;
+}
+.list-icon-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
 }
 .list-icon {
   flex-shrink: 0;
   color: #94a3b8;
 }
+.list-mode-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -5px;
+  min-width: 0.55rem;
+  font-size: 0.48rem;
+  line-height: 1;
+  font-weight: 700;
+  text-align: center;
+  color: #64748b;
+  background: #fff;
+  border-radius: 2px;
+  pointer-events: none;
+}
 .list-item.on .list-icon {
   color: var(--teal);
 }
-.list-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
+.list-item.on .list-mode-badge {
+  color: var(--teal);
+  background: #eff6ff;
+}
+.list-title-wrap {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  height: 1.3em;
+  line-height: 1.3;
+}
+.list-title {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  min-width: 0;
+  line-height: 1.3;
+}
+.list-title.marquee {
+  display: inline-block;
+  vertical-align: top;
+  animation: conv-title-marquee 5s linear infinite alternate;
+}
+@keyframes conv-title-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(var(--scroll-offset, 0));
+  }
+}
+.list-rename-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--teal);
+  border-radius: 6px;
+  padding: 0.1rem 0.35rem;
+  font: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: #fff;
+  outline: none;
 }
 .list-time {
   flex-shrink: 0;
   color: var(--muted);
   font-size: 0.65rem;
-  margin-left: auto;
+  margin-left: 0.15rem;
+}
+.list-more-btn {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--muted);
+  margin-right: 0.15rem;
+}
+.list-more-btn:hover {
+  background: #f1f5f9;
+  color: var(--text);
+}
+.list-more-btn :deep(.ico) {
+  width: 14px;
+  height: 14px;
+}
+.list-menu {
+  position: absolute;
+  right: 0.25rem;
+  top: calc(100% - 0.15rem);
+  z-index: 20;
+  min-width: 5.5rem;
+  padding: 0.25rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.list-menu button {
+  border: none;
+  background: none;
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.list-menu button:hover {
+  background: #f1f5f9;
+}
+.list-menu button.danger {
+  color: var(--danger);
 }
 .list-empty {
   padding: 0.5rem;
@@ -1218,6 +1540,11 @@ function pickDoc(id: string) {
 .msg.assistant .bubble-wrap {
   grid-column: 2;
   grid-row: 1;
+}
+.msg.has-plan .plan-thread-block {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
 }
 .msg-meta {
   margin-bottom: 0.25rem;
@@ -1672,10 +1999,11 @@ pre {
 .mode-switch button {
   border: none;
   background: #fff;
-  padding: 0.35rem 0.75rem;
+  padding: 0.35rem 0.55rem;
   cursor: pointer;
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: 0.7rem;
+  white-space: nowrap;
   border-right: 1px solid var(--line);
 }
 .mode-switch button:last-child {
@@ -1703,6 +2031,9 @@ pre {
 }
 @media (prefers-reduced-motion: reduce) {
   .spin {
+    animation: none;
+  }
+  .list-title.marquee {
     animation: none;
   }
 }

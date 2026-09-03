@@ -12,6 +12,20 @@ export type FlightTicketView = {
   meta: string[];
 };
 
+const PRICE_KEYS = [
+  "adultPrice",
+  "adultTaxPrice",
+  "price",
+  "lowestPrice",
+  "minPrice",
+  "lowestAdultPrice",
+  "ticketPrice",
+  "totalPrice",
+  "showPrice",
+  "salePrice",
+  "childPrice",
+] as const;
+
 function pick(obj: Record<string, unknown> | undefined, ...keys: string[]): string {
   if (!obj) return "";
   for (const k of keys) {
@@ -68,7 +82,45 @@ function legs(item: Record<string, unknown>): Record<string, unknown>[] {
 
 function plainPrice(value: unknown): string {
   if (value === undefined || value === null || value === "") return "";
-  return String(value).replace(/¥/g, "").replace(/,/g, "").trim();
+  const text = String(value).replace(/¥/g, "").replace(/,/g, "").trim();
+  if (!text || text === "—" || text === "-") return "";
+  const n = Number(text);
+  if (!Number.isNaN(n) && n <= 0) return "";
+  return text;
+}
+
+export function extractPrice(obj: Record<string, unknown>): string {
+  for (const key of PRICE_KEYS) {
+    const v = plainPrice(obj[key]);
+    if (v) return v;
+  }
+  const nested = obj.price;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const rec = nested as Record<string, unknown>;
+    for (const key of PRICE_KEYS) {
+      const v = plainPrice(rec[key]);
+      if (v) return v;
+    }
+  } else {
+    const v = plainPrice(nested);
+    if (v) return v;
+  }
+  const journeys = obj.journeys;
+  if (Array.isArray(journeys)) {
+    const parts: number[] = [];
+    for (const j of journeys) {
+      const jr = asRecord(j);
+      if (!jr) continue;
+      const p = extractPrice(jr);
+      if (p) {
+        const n = Number(p);
+        if (!Number.isNaN(n)) parts.push(n);
+      }
+    }
+    if (parts.length === 1) return String(parts[0]);
+    if (parts.length > 1) return String(parts.reduce((a, b) => a + b, 0));
+  }
+  return "";
 }
 
 export function flattenFlight(item: FlyaiFlightItem | Record<string, unknown>): {
@@ -85,9 +137,7 @@ export function flattenFlight(item: FlyaiFlightItem | Record<string, unknown>): 
   const segs = legs(rec);
   const first = segs[0] || rec;
   const last = segs[segs.length - 1] || rec;
-  const price = plainPrice(
-    rec.price ?? rec.lowestPrice ?? rec.minPrice ?? rec.adultPrice ?? rec.total_price ?? first.price,
-  );
+  const price = extractPrice(rec) || extractPrice(first);
   return {
     airline: pick(first, "marketingTransportName", "airlineName", "airline") || pick(rec, "airlineName", "airline"),
     flightNo:
@@ -134,6 +184,23 @@ export function segmentSummary(seg: Record<string, unknown> | string): string {
   ].filter(Boolean);
   if (bits.length) return bits.join(" ");
   return seg.type ? String(seg.type) : "行程";
+}
+
+export function flightSignature(item: FlyaiFlightItem): string {
+  const f = flattenFlight(item);
+  return `${f.flightNo}|${f.depTime}|${f.depPlace}|${f.arrPlace}`;
+}
+
+export function dedupeFlights(items: FlyaiFlightItem[]): FlyaiFlightItem[] {
+  const seen = new Set<string>();
+  const out: FlyaiFlightItem[] = [];
+  for (const item of items) {
+    const sig = flightSignature(item);
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    out.push(item);
+  }
+  return out;
 }
 
 export function toFlightTicket(item: FlyaiFlightItem, index: number): FlightTicketView {

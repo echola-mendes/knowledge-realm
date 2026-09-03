@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { toFlightTicket } from "../utils/flightDisplay";
+import { dedupeFlights, toFlightTicket } from "../utils/flightDisplay";
 import type { FlyaiFlightItem, TravelError } from "../types/travel";
 
 const props = defineProps<{ flights: FlyaiFlightItem[]; error?: TravelError | null }>();
 
-const rows = computed(() => props.flights.slice(0, 6).map(toFlightTicket));
+const rows = computed(() => dedupeFlights(props.flights).slice(0, 6).map(toFlightTicket));
 </script>
 
 <template>

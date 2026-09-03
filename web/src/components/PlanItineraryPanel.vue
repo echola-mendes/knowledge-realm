@@ -17,13 +17,22 @@ function dims(): PlanComparison[] {
 }
 
 const compareOptionIds = computed(() => {
+  const opts = props.plan.options || [];
   const first = props.plan.comparison?.[0];
-  if (first?.rows?.length) return first.rows.map((r) => r.option_id);
-  return (props.plan.options || []).map((o) => o.id);
+  if (first?.rows?.length === opts.length) {
+    const ids = first.rows.map((r) => r.option_id);
+    const matched = ids.filter((id) => opts.some((o) => o.id === id)).length;
+    if (matched >= Math.max(1, opts.length / 2)) return ids;
+  }
+  return opts.map((o) => o.id);
 });
 
-function optionLabel(id: string): string {
-  return props.plan.options.find((o) => o.id === id)?.label || id;
+function optionLabel(id: string, index?: number): string {
+  const found = props.plan.options.find((o) => o.id === id);
+  if (found) return found.label;
+  const opts = props.plan.options || [];
+  if (typeof index === "number" && opts[index]) return opts[index].label;
+  return id;
 }
 
 function dimValue(dim: PlanComparison, id: string): string {
@@ -53,7 +62,7 @@ function dimValue(dim: PlanComparison, id: string): string {
       <thead>
         <tr>
           <th>维度</th>
-          <th v-for="id in compareOptionIds" :key="id">{{ optionLabel(id) }}</th>
+          <th v-for="(id, i) in compareOptionIds" :key="id">{{ optionLabel(id, i) }}</th>
         </tr>
       </thead>
       <tbody>
