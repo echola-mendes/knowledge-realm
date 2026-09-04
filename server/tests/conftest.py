@@ -61,7 +61,7 @@ def isolate_from_user_database(tmp_path_factory):
         conn.execute(
             text(
                 "TRUNCATE TABLE plan_record, booking_record, message, conversation, document_tag, favorite, "
-                "document_chunk, entity_link, retrieval_label, rag_eval_case, user_memory, user_chunk_setting, document, entity, tag, knowledge_base, users CASCADE"
+                "document_chunk, entity_link, retrieval_label, rag_eval_case, user_memory, user_chunk_setting, document, entity, tag, knowledge_base, users, task_execution, scheduled_task CASCADE"
             )
         )
         for table in ("checkpoint_writes", "checkpoint_blobs", "checkpoints", "checkpoint_migrations"):

@@ -775,3 +775,85 @@ export type PlanRecordItem = {
 export function listPlans() {
   return api<PlanRecordItem[]>("/api/plans");
 }
+
+export type ScheduledTaskItem = {
+  id: number;
+  name: string;
+  task_type: string;
+  schedule_type: "INTERVAL" | "CRON";
+  schedule_config: Record<string, unknown>;
+  enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type TaskTypeItem = {
+  task_type: string;
+  label: string;
+};
+
+export type TaskExecutionItem = {
+  id: number;
+  task_id: number;
+  run_id: string;
+  started_at: string | null;
+  finished_at: string | null;
+  status: string;
+  result: Record<string, unknown> | null;
+  error_message: string | null;
+  created_at?: string | null;
+};
+
+export type TaskWrite = {
+  name: string;
+  task_type: string;
+  schedule_type: "INTERVAL" | "CRON";
+  schedule_config: Record<string, unknown>;
+  enabled?: boolean;
+};
+
+export function listTasks() {
+  return api<ScheduledTaskItem[]>("/api/tasks");
+}
+
+export function listTaskTypes() {
+  return api<TaskTypeItem[]>("/api/tasks/types");
+}
+
+export function createTask(body: TaskWrite) {
+  return api<ScheduledTaskItem>("/api/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateTask(id: number, body: Partial<Omit<TaskWrite, "task_type">>) {
+  return api<ScheduledTaskItem>(`/api/tasks/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteTask(id: number) {
+  return api<{ ok: boolean }>(`/api/tasks/${id}`, { method: "DELETE" });
+}
+
+export function enableTask(id: number) {
+  return api<ScheduledTaskItem>(`/api/tasks/${id}/enable`, { method: "POST" });
+}
+
+export function disableTask(id: number) {
+  return api<ScheduledTaskItem>(`/api/tasks/${id}/disable`, { method: "POST" });
+}
+
+export function runTask(id: number) {
+  return api<{ execution_id: number; run_id: string }>(`/api/tasks/${id}/run`, { method: "POST" });
+}
+
+export function listTaskExecutions(id: number) {
+  return api<TaskExecutionItem[]>(`/api/tasks/${id}/executions`);
+}

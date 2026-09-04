@@ -19,6 +19,7 @@ import MyTripsView from "./views/MyTripsView.vue";
 import ToolPlaceholderView from "./views/ToolPlaceholderView.vue";
 import BasicsLayout from "./views/BasicsLayout.vue";
 import MenuManageView from "./views/MenuManageView.vue";
+import JobsManageView from "./views/JobsManageView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -90,6 +91,7 @@ export const router = createRouter({
       children: [
         { path: "", redirect: { name: "basics-menus" } },
         { path: "menus", name: "basics-menus", component: MenuManageView },
+        { path: "jobs", name: "basics-jobs", component: JobsManageView },
       ],
     },
     { path: "/challenge", name: "challenge", component: ChallengeView },

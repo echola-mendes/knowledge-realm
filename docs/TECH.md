@@ -18,7 +18,7 @@
 | 网页正文 | httpx + trafilatura | 公开文章抽正文，失败即导入失败 | Playwright（过重） |
 | 存储 | 本机 PostgreSQL + pgvector | 已安装；元数据与向量一体 | Milvus、Docker Postgres |
 | ORM / 迁移 | SQLAlchemy 2 + Alembic | 表演进可重复 | 纯手写 SQL |
-| 任务 | FastAPI BackgroundTasks | 设计允许进程内；个人单机 | Celery、Redis |
+| 任务 | 短任务 FastAPI BackgroundTasks；定时任务 APScheduler + Redis + arq | 解析入库仍进程内；调度与执行分离 | Celery、Kafka |
 | LLM / Embedding | Python 包 `openai`（仅作 HTTP 客户端）打 **DashScope 兼容模式** | 你不需要 OpenAI 账号；用阿里云 DashScope Key。协议碰巧和 OpenAI 一样 | 直连各家五花八门 SDK；Ollama |
 | 认证 | FastAPI Session Cookie + Argon2 | 最小多用户隔离；身份只来自 Session | JWT / OAuth / RBAC |
 | 部署 | 本机 `server/.venv` + npm；无 Docker | 设计明确 | conda 新建环境；K8s |
@@ -58,6 +58,7 @@
 - **不需要** OpenAI 官网账号或 `sk-` OpenAI 密钥。  
 - URL：`httpx` 超时 20s；`trafilatura` 抽正文  
 - 哈希：SHA-256  
+- 定时任务：APScheduler 挂 FastAPI lifespan，只入队；独立进程 `python -m app.worker.worker` 消费 Redis 队列 `zhiyu:tasks`。单 uvicorn 实例，勿开多 worker。`NEWS_REFRESH` handler 现为 stub。  
 
 目录：`server/`
 
@@ -77,6 +78,7 @@
 
 - HttpOnly Session；表 `users`；监听 `127.0.0.1`  
 - 不使用 Docker  
+- 定时任务需本机 Redis，并另开 Worker：`cd server && python -m app.worker.worker`  
 
 ---
 
@@ -104,6 +106,7 @@
 | `FLYAI_CLI` / `FLYAI_API_KEY` / `FLYAI_TIMEOUT` | 飞猪 flyai skill CLI（免 Key trial 可用）；CLI 子命令 `search-flight`/`search-hotel`，stdout 单行 JSON |
 | `HOTEL_SOURCE` | 酒店源：留空=占位提示（不伪造房型）；`flyai`=启用 flyai search-hotel |
 | `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` / `MINIO_BUCKET` / `MINIO_SECURE` | MinIO 软依赖：方案页 `plans/{conversation_id}/` 与知识报告 `reports/{conversation_id}/` 回看；未配置仅实时展示 |
+| `REDIS_URL` | 定时任务队列，默认 `redis://127.0.0.1:6379/0`（须 `redis://` 或 `rediss://`） |
 
 `.env` gitignore；提供无密钥的 `.env.example`。
 
@@ -111,7 +114,7 @@
 
 ## 明确拒绝
 
-MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、Meilisearch、浏览器自动化抓登录页。P2 关键词检索用 Elasticsearch BM25，不用 Postgres `pg_trgm` 充当 BM25。
+MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearch、浏览器自动化抓登录页。Redis **仅**用于定时任务队列（arq），不作 Checkpoint / 通用缓存。P2 关键词检索用 Elasticsearch BM25，不用 Postgres `pg_trgm` 充当 BM25。
 
 ### LangGraph 使用边界
 
@@ -150,7 +153,10 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Redis、Kubernetes、Meilisearc
 | `server/.venv` | Python 3.12 虚拟环境（不用 conda） |
 | `server/requirements.txt` | 后端依赖 |
 | `server/app/config.py` | 环境变量与 Settings |
-| `server/app/main.py` | FastAPI 入口、`/health`、Session、启动时确保用户与默认库 |
+| `server/app/main.py` | FastAPI 入口、`/health`、Session、启动时确保用户与默认库、APScheduler lifespan |
+| `server/app/routers/task.py` | `/api/tasks` CRUD / enable / disable / run / executions / types |
+| `server/app/scheduler/` | APScheduler 加载 enabled 任务；`executor.enqueue_task` 与 `/run` 共用 |
+| `server/app/worker/` | arq Worker：`process_task`、Redis 锁防重、handler 3 次重试 |
 | `server/app/user.py` | `users` 表引导用户（环境变量密码哈希） |
 | `server/app/passwords.py` | Argon2 |
 | `server/app/deps.py` | Session 当前用户 |

@@ -509,3 +509,51 @@ class PlanRecordOut(BaseModel):
     minio_key: str | None = None
     created_at: datetime | None = None
 
+class TaskCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    task_type: str = Field(min_length=1, max_length=64)
+    schedule_type: Literal["INTERVAL", "CRON"]
+    schedule_config: dict[str, Any]
+    enabled: bool = True
+
+
+class TaskUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    schedule_type: Literal["INTERVAL", "CRON"] | None = None
+    schedule_config: dict[str, Any] | None = None
+    enabled: bool | None = None
+
+
+class TaskOut(BaseModel):
+    id: int
+    name: str
+    task_type: str
+    schedule_type: str
+    schedule_config: dict[str, Any]
+    enabled: bool
+    last_run_at: datetime | None = None
+    next_run_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class ExecutionOut(BaseModel):
+    id: int
+    task_id: int
+    run_id: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    status: str
+    result: dict[str, Any] | None = None
+    error_message: str | None = None
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class TaskTypeOut(BaseModel):
+    task_type: str
+    label: str
+

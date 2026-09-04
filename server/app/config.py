@@ -48,6 +48,7 @@ class Settings:
     minio_secret_key: str
     minio_bucket: str
     minio_secure: bool
+    redis_url: str
     host: str = HOST
     port: int = PORT
 
@@ -125,6 +126,7 @@ def load_settings(environ: dict[str, str] | None = None, *, load_file: bool = Fa
         minio_secret_key=(env.get("MINIO_SECRET_KEY") or "").strip(),
         minio_bucket=(env.get("MINIO_BUCKET") or "zhiyu").strip(),
         minio_secure=(env.get("MINIO_SECURE") or "").strip().lower() in ("1", "true", "yes"),
+        redis_url=(env.get("REDIS_URL") or "redis://127.0.0.1:6379/0").strip(),
         host=HOST,
         port=PORT,
     )

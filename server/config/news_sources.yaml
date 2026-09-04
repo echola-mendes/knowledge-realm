@@ -1,0 +1,80 @@
+# AI 资讯默认数据源（可编辑；勿把 URL 硬编码进业务代码）
+# 覆盖路径：在 .env 设置 NEWS_SOURCES_PATH=相对仓库根或绝对路径
+#
+# category: technology | ai | finance
+# type: rss | atom | api
+# weight: 0～100，参与 heat_score
+
+sources:
+  - id: tech-36kr
+    name: 36氪综合
+    url: https://36kr.com/feed
+    type: rss
+    category: technology
+    weight: 80
+    enabled: true
+
+  - id: tech-solidot
+    name: Solidot
+    url: https://www.solidot.org/index.rss
+    type: rss
+    category: technology
+    weight: 70
+    enabled: true
+
+  - id: tech-sspai
+    name: 少数派
+    url: https://sspai.com/feed
+    type: rss
+    category: technology
+    weight: 65
+    enabled: true
+
+  - id: ai-jiqizhixin
+    name: 机器之心
+    url: https://www.jiqizhixin.com/rss
+    type: rss
+    category: ai
+    weight: 85
+    enabled: true
+
+  - id: ai-openai
+    name: OpenAI News
+    url: https://openai.com/news/rss.xml
+    type: rss
+    category: ai
+    weight: 90
+    enabled: true
+
+  - id: ai-deepmind
+    name: Google DeepMind
+    url: https://deepmind.google/blog/rss.xml
+    type: rss
+    category: ai
+    weight: 85
+    enabled: true
+
+  - id: ai-huggingface
+    name: Hugging Face Blog
+    url: https://huggingface.co/blog/feed.xml
+    type: rss
+    category: ai
+    weight: 75
+    enabled: true
+
+  - id: fin-bbc
+    name: BBC Business
+    url: https://feeds.bbci.co.uk/news/business/rss.xml
+    type: rss
+    category: finance
+    weight: 75
+    enabled: true
+
+  # 备选（默认关闭）
+  - id: fin-reuters-biz
+    name: Reuters Business
+    url: https://www.reutersagency.com/feed/?taxonomy=best-topics&post_type=best
+    type: rss
+    category: finance
+    weight: 70
+    enabled: false

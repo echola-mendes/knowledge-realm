@@ -11,7 +11,7 @@
 - LLM / Embedding：DashScope 兼容接口。PyPI 包 `openai` / `langchain-openai` 只是客户端，**不需要 OpenAI 账号**；Key 用
   DashScope。
 - 解析：pymupdf、python-docx、trafilatura（公开 URL）。无 OCR。
-- 任务：BackgroundTasks。无 Redis/Celery。应用本身无 Docker；**P2 允许本机 Elasticsearch（或仅跑 ES 的 Docker）做 BM25**。
+- 任务：短任务用 BackgroundTasks；定时任务用 APScheduler + Redis + arq Worker（独立进程 `python -m app.worker.worker`）。禁止 Celery。应用本身无 Docker；**P2 允许本机 Elasticsearch（或仅跑 ES 的 Docker）做 BM25**。
 - 绑定本机 `127.0.0.1`。基础 Session 登录；身份只来自 Session，禁止用请求参数指定 `user_id`。不做 RBAC/OAuth/JWT。
 
 ## 范围

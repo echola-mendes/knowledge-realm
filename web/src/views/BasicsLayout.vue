@@ -5,6 +5,7 @@ import Icon from "../components/Icon.vue";
 
 const route = useRoute();
 const onMenus = computed(() => route.path.startsWith("/basics/menus"));
+const onJobs = computed(() => route.path.startsWith("/basics/jobs"));
 </script>
 
 <template>
@@ -22,6 +23,14 @@ const onMenus = computed(() => route.path.startsWith("/basics/menus"));
         >
           <Icon name="list" />
           <span>菜单管理</span>
+        </RouterLink>
+        <RouterLink
+          to="/basics/jobs"
+          class="nav-parent nav-parent-link"
+          :class="{ on: onJobs }"
+        >
+          <Icon name="refresh" />
+          <span>定时任务</span>
         </RouterLink>
       </div>
     </aside>
@@ -80,6 +89,9 @@ const onMenus = computed(() => route.path.startsWith("/basics/menus"));
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 0.75rem 0.55rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
 }
 .nav-parent {
   width: 100%;

@@ -689,7 +689,7 @@ watch(selectedNodeId, (id) => {
                 @click="selectNode(rel.from_id === selectedNode.id ? rel.to_id : rel.from_id)"
               >
                 {{ rel.from_id === selectedNode.id ? "→" : "←" }}
-                {{ graph.entities.find((e) => e.id === (rel.from_id === selectedNode.id ? rel.to_id : rel.from_id))?.name }}
+                {{ graph.entities.find((e) => e.id === (rel.from_id === selectedNode?.id ? rel.to_id : rel.from_id))?.name }}
                 <span class="rel-tag">{{ rel.rel }}</span>
               </li>
             </ul>
@@ -721,7 +721,7 @@ watch(selectedNodeId, (id) => {
             </select>
             <label>最大跳数</label>
             <div class="hop-btns">
-              <button v-for="h in [1,2,3]" :key="h" :class="{ active: pathMaxHops === h }" @click="pathMaxHops = h">{{ h }} 跳</button>
+              <button v-for="h in ([1, 2, 3] as const)" :key="h" :class="{ active: pathMaxHops === h }" @click="pathMaxHops = h">{{ h }} 跳</button>
             </div>
             <label>关系过滤</label>
             <select v-model="pathRel">
@@ -779,7 +779,7 @@ watch(selectedNodeId, (id) => {
             <input v-model="assistQuery" type="text" placeholder="输入问题，例如：员工请假需要什么？" />
             <label>检索深度</label>
             <div class="hop-btns">
-              <button v-for="h in [1,2,3]" :key="h" :class="{ active: assistDepth === h }" @click="assistDepth = h">{{ h }} 跳</button>
+              <button v-for="h in ([1, 2, 3] as const)" :key="h" :class="{ active: assistDepth === h }" @click="assistDepth = h">{{ h }} 跳</button>
             </div>
             <label>关系过滤</label>
             <select v-model="assistRel">
