@@ -1,18 +1,16 @@
 # server/app 包结构评估与拆分路线图
 
-**状态**：暂缓执行 — P4 功能稳定前不搬迁代码。  
-**依据**：2026-09-01 架构评审；P4 将原 `app/p1/` 上移至 `app/` 根目录（见 `docs/TECH.md`、`artifacts/architecture.md`）。
+**状态**：批 1–3 已于 2026-09-05 执行完毕（`agent/` → `ingest/` → `rag/`，三次独立提交，全量回归通过）；此后新域代码直接落目标子包（审计落 `app/audit/`）。  
+**依据**：2026-09-01 架构评审；2026-09-05 复核边界（checkpoint / chains / search+chat）。  
+**相关**：`docs/TECH.md`、`docs/PRD-DECISIONS.md`、`docs/PRD-OPERATIONS.md`。
 
 ---
 
 ## 结论
 
-**直觉对一半：**
-
-- **不合理**：`app/` 根目录 **36 个平铺 `.py`**，P0 文档管线、RAG、Agent、洞察等混在同一层，导航成本高。
-- **合理**：保留 **`server/app` 作为 Python 包根** — FastAPI 常见约定；`pytest.ini` 的 `pythonpath = .`、测试 `from app.main import create_app`、Alembic `from app.models import Base` 均依赖此路径。
-
-**当前决策**：暂不搬迁。P4 刚完成稳定化，此刻大规模改 import 收益 < 风险（全量替换 + 50+ 测试回归）。
+- **不合理**：`app/` 根目录大量平铺 `.py`，文档入库 / RAG / Agent / 洞察混层，导航成本高。
+- **合理**：保留 **`server/app` 作为唯一 Python 包根** — `uvicorn app.main:app`、pytest `from app.*`、Alembic `from app.models` 均依赖此路径。
+- **不建议**上移到 `server/kb/`、`server/rag/` 等多顶层包。
 
 ---
 
@@ -21,87 +19,117 @@
 ```
 server/
   alembic/
-  tests/          # 43 个 test_*.py，全部 from app.*
+  tests/          # 全部 from app.*
   app/
     main.py
-    config.py db.py models.py schemas.py deps.py …   # 横切 + 36 平铺模块
-    routers/      # HTTP 层（11 个路由）
-    travel/       # 差旅供应商（flyai / minio / rate_limit / tools）
+    config.py db.py models.py schemas.py deps.py …   # 横切 + 大量平铺模块
+    routers/      # HTTP 薄层
+    travel/       # 差旅供应商
+    news/         # AI 资讯
+    jobs/ scheduler/ worker/ services/
 ```
 
-| 指标 | 数值 |
+| 指标 | 数值（约） |
 |---|---|
-| `app/` 根目录 `.py` | 36 个，合计 ~6160 行 |
-| 子包 | 仅 `routers/`、`travel/` |
-| 高频 import | `app.config` 45 次、`app.db` 39 次、`app.main` 29 次 |
+| `app/` 根目录 `.py` | ~36 个 |
+| 已有子包 | `routers/` `travel/` `news/` `jobs/` `scheduler/` `worker/` `services/` |
 
-### 逻辑分组（物理路径暂扁平）
+### 逻辑分组（物理路径暂扁平处）
 
 | 域 | 模块 |
 |---|---|
-| 横切 | `config` `db` `models` `schemas` `deps` `user` `passwords` |
+| 横切 | `config` `db` `models` `schemas` `deps` `user` `passwords` `llm` |
 | 文档入库 | `parse` `chunk` `index` `storage` `url_import` `chunk_settings` `chunk_label` |
-| RAG / Chat | `search` `rerank` `es_bm25` `chat` `llm` |
-| Agent | `graph` `master` `intent` `tools` `chains` `checkpoint` `ltm` `conversation_summary` `plan_agent` `booking_agent` |
-| 其他服务 | `insights` `recommendations` `quality` `rag_eval` `kb` |
-| 差旅 | `travel/*` |
+| RAG / Chat | `search` `rerank` `es_bm25` `chat` `conversation_summary` |
+| Agent | `graph` `master` `intent` `tools` `checkpoint` `ltm` `plan_agent` `booking_agent` |
+| 混合 / 暂留根 | `chains`（被 index/insights 与对话摘要共用） |
+| 其他服务 | `insights` `recommendations` `quality` `rag_eval` `kb` `message_ui` `news_service` |
+| 差旅 / 资讯 / 任务 | `travel/*` `news/*` `jobs/` `scheduler/` `worker/` |
 
 ---
 
 ## 什么算合理
 
-1. **`app` 作应用包名** — `uvicorn app.main:app`，无需改启动命令。
+1. **`app` 作应用包名** — 无需改启动命令。
 2. **`routers/` 独立** — HTTP 与业务分离。
-3. **`travel/` 子包** — 供应商边界清晰，是正确先例。
-4. **横切模块放根目录** — `config` / `db` / `models` / `schemas` / `deps` 被全项目引用，暂留根目录可接受。
+3. **域子包先例** — `travel/`、`news/` 边界清晰，新域照此办。
+4. **横切留根** — `config` / `db` / `models` / `schemas` / `deps` / `llm` 被全项目引用，暂留根可接受。
 
 ## 已成痛点
 
-1. **认知负担**：打开 `app/` 无法一眼区分文档入库 / 检索 / Agent。
-2. **命名歧义**：`app/search.py`（检索逻辑）vs `app/routers/search.py`（HTTP 路由）。
-3. **Agent 域膨胀**：10+ 文件与 `parse.py`、`index.py` 同级。
-4. **测试耦合**：任何包路径变更 = 全仓机械改 import。
+1. 打开 `app/` 无法一眼区分入库 / 检索 / Agent。
+2. `app/search.py` vs `app/routers/search.py` 命名歧义。
+3. Agent 域膨胀后与 `parse`/`index` 同级。
+4. 任意路径变更 = 全仓改 import + 测试回归。
+5. 决策/操作审计若先写在根目录，拆包后还要再迁一遍。
 
 ---
 
 ## 何时值得拆（触发条件）
 
-满足 **任意 2 条** 再动手：
+满足 **任意 2 条** 再动手搬迁既有文件：
 
-- 新增第 3 个子 Agent 或新垂直域（如财务 Agent）
+- 新增第 3 个子 Agent 或新垂直域
 - `app/` 根目录模块数 > 40，或单文件持续 > 500 行需拆分
 - 新人反复问「这个文件该放哪」
 - 出现循环 import，需靠延迟 import 兜底
+- **即将落地 `audit` P0**（避免 recorder 先落根再搬）
 
 ---
 
-## 目标结构（未来）
+## 目标结构
 
-**原则**：`app` 仍是唯一 Python 包；只在其内部按领域分子包；`routers/` 保持薄层。
+**原则**：`app` 仍是唯一包；内部按领域分子包；`routers/` 保持薄层；包名单数域名（与 `travel/` / `news/` 一致）。
 
 ```
 server/app/
   main.py
-  config.py db.py models.py schemas.py deps.py   # 横切，最后动
-  routers/                                         # 不变
-  ingest/        # parse chunk index storage url_import chunk_settings
-  rag/           # search rerank es_bm25 chat llm
-  agent/         # graph master intent tools chains checkpoint ltm
-                 # conversation_summary plan_agent booking_agent
-  travel/        # 已存在，保持
-  services/      # insights recommendations quality rag_eval（可选）
+  config.py db.py models.py schemas.py deps.py
+  user.py passwords.py llm.py          # 横切 / 广引用，暂留根
+  chains.py                            # 暂留根（或多批后再进 rag/）
+  kb.py insights.py recommendations.py quality.py rag_eval.py
+  message_ui.py news_service.py        # 后续可并入 agent/travel 或 news/
+
+  routers/                             # 不变
+  travel/                              # 已存在
+  news/                                # 已存在
+  jobs/ scheduler/ worker/ services/   # 已存在
+
+  agent/       # 批 1
+  ingest/      # 批 2
+  rag/         # 批 3（search + chat 同批，避免 import 改两遍）
+  audit/       # 新代码直接落此（decision / operations），不先写根目录
 ```
 
-**不建议**把业务上移到 `server/kb/`、`server/rag/` 等多顶层包 — Alembic / pytest / 启动命令全要改，与项目惯用布局冲突。
+### 迁入明细（已定）
 
-### 推荐拆分顺序
+| 批次 | 新子包 | 迁入模块 | 理由 / 边界 |
+| --- | --- | --- | --- |
+| 1 | `app/agent/` | `graph` `master` `intent` `tools` `plan_agent` `booking_agent` **`checkpoint`** （可选 `ltm`） | P4 最胀；`checkpoint` 只被 graph/master 用，**不进 chat** |
+| 2 | `app/ingest/` | `parse` `chunk` `index` `storage` `url_import` `chunk_settings` `chunk_label` | P0 文档管线，边界最干净 |
+| 3 | `app/rag/` | `search` `rerank` `es_bm25` `chat` （可选 `conversation_summary`） | **search 与 chat 同批**；禁止拆成 `search/` + `chat/` 两包两批 |
+| 不动 | 根目录 | `main` `config` `db` `models` `schemas` `deps` `user` `passwords` `llm` `kb` `insights` `recommendations` `quality` `rag_eval` `news_service` `message_ui`；**`chains` 暂留根** | `chains` 被 index/insights 与对话共用，勿塞进 chat；`llm` 被 news/agent/rag 共用 |
+| 后续 | `app/audit/` | 决策审计 / 操作审计的 recorder 与薄封装 | PRD-DECISIONS / PRD-OPERATIONS 新代码一次到位 |
+| 末 | （可选） | `models` / `schemas` 按域拆 | 一动全仓抖，最后再考虑 |
+
+### 明确否决的分法
+
+| 否决 | 原因 |
+|---|---|
+| `checkpoint` → `chat/` | 实为 LangGraph 持久化，调用方是 agent |
+| `chains` → `chat/` | 文档富化 / 打标签也在用，不全是对话 |
+| 单独 `app/search/` + 单独 `app/chat/` 分两批 | `chat` 依赖 `search`，import 改两遍 |
+| 包名 `app/agents/`（复数） | 与现有 `travel/` `news/` 单数域名不一致 → 用 **`app/agent/`** |
+
+### 推荐拆分顺序与操作
 
 | 批次 | 内容 | 理由 |
 |---|---|---|
-| 1 | `app/agent/` | P4 膨胀最明显；`travel/` 保持独立（agent 调用 travel，不并入） |
-| 2 | `app/ingest/` | P0 文档管线，边界清晰、变更频率低 |
-| 3 | `app/rag/` | 检索与 chat 链 |
-| 末 | `models` / `schemas` | 一动全仓抖，最后搬 |
+| 1 | `app/agent/` | 膨胀最明显；`travel/` 保持独立（agent 调用 travel，不并入） |
+| 2 | `app/ingest/` | 边界清晰、变更频率相对低 |
+| 3 | `app/rag/` | 检索 + chat 一次迁完 |
+| 新功能 | `app/audit/` | 不搬旧代码；P0 审计直接新建 |
+| 末 | `models` / `schemas` | 最后搬 |
 
 每批：`git mv` + 机械替换 `from app.xxx` → `from app.<pkg>.xxx` + 跑受影响测试子集。
 
@@ -109,9 +137,10 @@ server/app/
 
 ## 零成本改进（现在可做）
 
-1. **新文件遵守约定**：Agent / 差旅新增代码不进 `app/` 根目录，直接进子包（未来 `app/agent/` 或现有 `app/travel/`）。
-2. **避免根目录新增 `*_agent.py`**。
-3. 本文件即逻辑分组文档；`docs/TECH.md` 文件说明表可按需引用此处。
+1. **新文件遵守约定**：Agent 进 `app/agent/`（若批 1 未建，先建空包再写）；差旅进 `travel/`；资讯进 `news/`；审计进 `audit/`。
+2. **避免根目录新增 `*_agent.py`、`*_recorder.py`。**
+3. 监控/文档占位页不依赖包结构，可继续迭代。
+4. 本文件为逻辑分组与搬迁契约；`docs/TECH.md` 引用此处。
 
 ---
 
@@ -119,10 +148,11 @@ server/app/
 
 | 风险 | 缓解 |
 |---|---|
-| 50+ 文件 import 遗漏 | `grep -r "from app\."` + pytest 全绿 |
-| `search.py` 模块 vs 路由同名 | 拆 `app/rag/search.py` 时 router 可保持 `routers/search.py` |
-| Alembic 引 `app.models` | `models` 暂留根目录直到最后一批 |
-| Git blame 断裂 | `git mv` 保留历史；按批提交 |
+| 全仓 import 遗漏 | `rg "from app\."` + pytest 全绿 |
+| `search` 模块 vs 路由同名 | 逻辑进 `app/rag/search.py`；HTTP 仍 `routers/search.py` |
+| Alembic 引 `app.models` | `models` 暂留根直到最后一批 |
+| Git blame 断裂 | `git mv`；按批提交 |
+| 审计埋点路径改两遍 | 先定本路线，再写 `audit/`；PRD-DECISIONS 按 `app.audit.*` 写 import |
 
 ---
 
@@ -130,35 +160,6 @@ server/app/
 
 | 日期 | 决策 |
 |---|---|
-| 2026-09-01 | 认同分批拆分路线；P4 稳定前不执行搬迁；本文档归档判断与路线图 |
-
-
-
-建议：
-这个思路对。现在 server/app/ 根目录有三十多个模块（graph.py、master.py、chat.py、parse.py、index.py…），子包 mainly 只有 routers/、services/、travel/、worker/ 等，扁平 + 局部子包 混着用，后面加决策审计、操作审计会不知道该往哪挂。
-
-先迁移再开 P0，能避免：
-
-DecisionRecorder 写进 app/decision_recorder.py，迁完又要挪到 app/audit/ 或 app/decisions/
-graph / master / plan_agent 路径一变，埋点 import 全要改两遍
-Alembic 模型若和 models.py 拆包不同步，迁移期更难排错
-迁移时可以和 PRD 对齐的分包方向（供你参考，不必一次做完）：
-
-子包	可迁入的现有模块
-app/agents/
-graph.py、master.py、plan_agent.py、booking_agent.py、intent.py
-app/chat/ 或 app/rag/
-chat.py、chains.py、conversation_summary.py、ltm.py
-app/ingest/
-parse.py、index.py、chunk.py、url_import.py
-app/search/
-search.py、rerank.py、es_bm25.py
-app/audit/（迁完再加）
-decision/ + operations/ 的 recorder、models 薄封装
-models.py / schemas.py 可以暂时留在根上，或按域拆成 app/models/ —— 这和审计表何时加有关，表结构可以等包稳定后再迁 Alembic。
-
-和当前 PRD 的关系：
-
-文档、监控占位页已经写好，不依赖包结构，可以留着。
-P0 实现时，按 PRD 直接落在 app/audit/decision/（或你定的子包名）即可，一次到位。
-你先把后端归到子包里；迁完如果愿意，可以把目标目录结构发我，我可以帮你对一下 PRD-DECISIONS 里的埋点路径该怎么写 import。
+| 2026-09-01 | 认同分批拆分；P4 稳定前不急于搬迁；归档判断与路线图 |
+| 2026-09-05 | 定稿目标包：`agent/` + `ingest/` + `rag/`；`checkpoint` 归 agent；`chains` 暂留根；否决 search/chat 分拆两批；审计新代码落 `app/audit/` |
+| 2026-09-05 | 批 1–3 执行完毕（提交 `45e74b7` / `3698b40` / `ff04603`）：`git mv` 保留历史，全仓 import 机械替换（含 `from app import x` 与 monkeypatch 字符串两种次要风格），受影响测试逐批通过；全量回归与搬迁前对照，失败集均为预存的顺序相关波动，零新增回归 |
