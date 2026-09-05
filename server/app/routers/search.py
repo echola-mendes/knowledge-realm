@@ -10,7 +10,7 @@ from app.kb import KnowledgeBaseAccessError
 from app.models import Document, DocumentTag, KnowledgeBase, Tag, User
 from app.routers.documents import get_db
 from app.schemas import SearchHitOut, SearchRequest
-from app.search import SearchHit, search_chunks
+from app.rag.search import SearchHit, search_chunks
 
 router = APIRouter(prefix="/api", tags=["search"])
 

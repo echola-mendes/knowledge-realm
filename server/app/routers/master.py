@@ -17,11 +17,11 @@ from app.llm import llm_keys_ready
 from app.models import Conversation, Document, Entity, EntityLink, KnowledgeBase, Message, User
 from app.chains import compare_documents, gather_document_text
 from app.agent.ltm import load_ltm_hits
-from app.conversation_summary import refresh_conversation_summary
+from app.rag.conversation_summary import refresh_conversation_summary
 from app.message_ui import mark_prior_hitl_resolved, pack_assistant_citations
 from app.agent.graph import build_graph, initial_state
 from app.agent.master import build_master_graph, master_initial_state
-from app.chat import _history
+from app.rag.chat import _history
 from app.agent.tools import search_graph, search_graph_details, search_knowledge, web_search
 from app.travel.rate_limit import RateLimitedError
 from app.schemas import (

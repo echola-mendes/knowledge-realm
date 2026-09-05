@@ -9,11 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.es_bm25 import require_elasticsearch_url, search_chunk_ids, search_chunk_scores
+from app.rag.es_bm25 import require_elasticsearch_url, search_chunk_ids, search_chunk_scores
 from app.ingest.index import STATUS_READY, embed_texts
 from app.kb import search_kb_ids
 from app.models import Document, DocumentChunk, DocumentTag, KnowledgeBase, RetrievalLabel
-from app.rerank import RERANK_CANDIDATE_MAX, rerank_keys_ready, score_documents
+from app.rag.rerank import RERANK_CANDIDATE_MAX, rerank_keys_ready, score_documents
 from app.schemas import (
     RetrievalDebugResponse,
     RetrievalDebugRow,

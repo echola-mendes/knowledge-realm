@@ -12,7 +12,7 @@ from app.ingest.chunk_settings import get_user_chunk_settings
 from app.ingest.chunk_label import allocate_chunk_labels
 from app.config import get_settings
 from app.db import session_scope
-from app.es_bm25 import EsNotConfiguredError, delete_document_chunks, upsert_chunks
+from app.rag.es_bm25 import EsNotConfiguredError, delete_document_chunks, upsert_chunks
 from app.models import Document, DocumentChunk, KnowledgeBase
 from app.ingest.parse import DOCX_KIND, PDF_KIND, TEXT_KINDS, URL_KIND, parse_docx_document, parse_pdf_document, parse_text_document
 from app.ingest.url_import import process_url_document

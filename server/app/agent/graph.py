@@ -8,7 +8,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
 from app.agent.tools import search_graph, search_knowledge, web_search
-from app.search import SearchHit
+from app.rag.search import SearchHit
 
 MAX_LOOPS = 3
 MAX_SUBTASKS = 3

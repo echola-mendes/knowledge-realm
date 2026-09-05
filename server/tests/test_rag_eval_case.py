@@ -10,7 +10,7 @@ from app.db import session_scope
 from app.main import create_app, reset_app_state
 from app.models import KnowledgeBase, RagEvalCase, User
 from app.passwords import hash_password
-from app.search import normalize_query
+from app.rag.search import normalize_query
 from tests.http_client import TEST_PASSWORD, api_client
 
 

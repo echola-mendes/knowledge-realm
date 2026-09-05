@@ -9,7 +9,7 @@ from app.ingest.index import STATUS_READY
 from app.kb import owned_document, resolve_knowledge_base_id
 from app import llm as llm_mod
 from app.models import Conversation, Message
-from app.search import SearchHit, search_chunks
+from app.rag.search import SearchHit, search_chunks
 
 HISTORY_LIMIT = 6
 

@@ -7,7 +7,7 @@ from app.db import session_scope
 from app.models import Conversation, Message
 from app.agent import graph as graph_mod
 from app.agent.graph import build_graph
-from app.search import SearchHit
+from app.rag.search import SearchHit
 from tests.http_client import api_client
 
 

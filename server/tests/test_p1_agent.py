@@ -8,8 +8,8 @@ from app.config import get_settings
 from app.main import create_app, reset_app_state
 from app.agent import graph as graph_mod
 from app.agent import master as master_mod
-from app.search import SearchHit
-import app.chat as chat_mod
+from app.rag.search import SearchHit
+import app.rag.chat as chat_mod
 import app.chains as chains_mod
 import app.routers.master as master_router
 
@@ -80,7 +80,7 @@ def test_agent_post_uses_graph_not_chat(monkeypatch):
     def boom(*args, **kwargs):
         raise AssertionError("must not use chat.run_chat")
 
-    monkeypatch.setattr("app.chat.run_chat", boom)
+    monkeypatch.setattr("app.rag.chat.run_chat", boom)
 
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"Agent-{uuid.uuid4().hex[:8]}"}).json()
@@ -116,7 +116,7 @@ def test_chat_contract_unchanged(monkeypatch):
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.llm.chat", lambda question, context, history=None: "假LLM答案")
     dim = get_settings().embedding_dim
-    monkeypatch.setattr("app.search.embed_texts", lambda texts: [[0.0] * dim for _ in texts])
+    monkeypatch.setattr("app.rag.search.embed_texts", lambda texts: [[0.0] * dim for _ in texts])
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"Chat-{uuid.uuid4().hex[:8]}"}).json()
         chat = client.post("/api/chat", json={"query": "你好", "knowledge_base_id": kb["id"]})
@@ -161,7 +161,7 @@ def test_agent_stream_matches_nonstream_fields(monkeypatch):
     def boom(*args, **kwargs):
         raise AssertionError("must not use chat stream")
 
-    monkeypatch.setattr("app.chat.run_chat", boom)
+    monkeypatch.setattr("app.rag.chat.run_chat", boom)
     monkeypatch.setattr("app.routers.chat.chat_stream", boom)
 
     with _client() as client:
@@ -318,7 +318,7 @@ def test_agent_summary_when_over_six_messages(monkeypatch):
         assert old_secret in dialogue
         return summary_text
 
-    monkeypatch.setattr("app.conversation_summary.summarize_conversation_turns", fake_summarize)
+    monkeypatch.setattr("app.rag.conversation_summary.summarize_conversation_turns", fake_summarize)
     chat_calls: list[dict] = []
 
     def fake_chat(question, context, history=None, *, summary=None, ltm=None):

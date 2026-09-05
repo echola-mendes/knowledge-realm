@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.ingest.index import STATUS_READY
 from app.models import Conversation, Document, Favorite, KnowledgeBase, Message
-from app.search import search_chunks
+from app.rag.search import search_chunks
 
 MAX_RECENT_MESSAGES = 30
 SEED_DAYS = 30

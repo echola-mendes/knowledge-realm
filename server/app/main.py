@@ -6,7 +6,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import get_settings, reset_settings
 from app.db import reset_engine, session_scope
-from app.es_bm25 import EsNotConfiguredError
+from app.rag.es_bm25 import EsNotConfiguredError
 from app.kb import ensure_default_knowledge_base
 from app.routers.auth import router as auth_router
 from app.routers.chat import router as chat_router

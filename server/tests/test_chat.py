@@ -35,7 +35,7 @@ def _directional_embed(texts: list[str]) -> list[list[float]]:
 
 def test_chat_hit_miss_pending_and_kb_isolation(monkeypatch):
     monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.search.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.rag.search.embed_texts", _directional_embed)
     monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.llm.chat", lambda question, context, history=None: "假LLM答案")

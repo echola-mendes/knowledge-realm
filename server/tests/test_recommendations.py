@@ -47,10 +47,10 @@ def test_recommendations_empty_for_new_user(monkeypatch):
 def test_recommendations_from_favorites_and_citations(monkeypatch):
     """收藏与 citation 文档作为种子，相似文档被推荐；种子与已收藏被排除。"""
     monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.search.embed_texts", lambda texts: [[0.9] * 1024 for _ in texts])
-    monkeypatch.setattr("app.search.require_elasticsearch_url", lambda: None)
+    monkeypatch.setattr("app.rag.search.embed_texts", lambda texts: [[0.9] * 1024 for _ in texts])
+    monkeypatch.setattr("app.rag.search.require_elasticsearch_url", lambda: None)
 
-    from app.search import SearchHit
+    from app.rag.search import SearchHit
 
     similar_id = uuid.UUID("11111111-1111-1111-1111-111111111111")
     user_name = f"reco-fav-{uuid.uuid4().hex[:8]}"
@@ -115,11 +115,11 @@ def test_recommendations_from_favorites_and_citations(monkeypatch):
 
 def test_recommendations_cross_user_isolation(monkeypatch):
     monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.search.embed_texts", lambda texts: [[0.9] * 1024 for _ in texts])
-    monkeypatch.setattr("app.search.require_elasticsearch_url", lambda: None)
+    monkeypatch.setattr("app.rag.search.embed_texts", lambda texts: [[0.9] * 1024 for _ in texts])
+    monkeypatch.setattr("app.rag.search.require_elasticsearch_url", lambda: None)
     owner_name = f"reco-owner-{uuid.uuid4().hex[:8]}"
 
-    from app.search import SearchHit
+    from app.rag.search import SearchHit
 
     def fake_search_chunks(session, query, *, user_id, knowledge_base_id=None, **kw):
         return [
@@ -178,11 +178,11 @@ def test_recommendations_cross_user_isolation(monkeypatch):
 def test_recommendations_limit_five(monkeypatch):
     """即使种子很多，返回不超过 5 条。"""
     monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.search.embed_texts", lambda texts: [[0.9] * 1024 for _ in texts])
-    monkeypatch.setattr("app.search.require_elasticsearch_url", lambda: None)
+    monkeypatch.setattr("app.rag.search.embed_texts", lambda texts: [[0.9] * 1024 for _ in texts])
+    monkeypatch.setattr("app.rag.search.require_elasticsearch_url", lambda: None)
     limit_user = f"reco-limit-{uuid.uuid4().hex[:8]}"
 
-    from app.search import SearchHit
+    from app.rag.search import SearchHit
 
     similar_uuids = [uuid.UUID(f"0000000{i}-0000-0000-0000-000000000000") for i in range(1, 6)]
 

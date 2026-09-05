@@ -31,7 +31,7 @@ def _directional_embed(texts: list[str]) -> list[list[float]]:
 
 def test_retrieval_debug_uses_agent_search_query(monkeypatch):
     monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.search.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.rag.search.embed_texts", _directional_embed)
     monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
 
@@ -64,7 +64,7 @@ def test_retrieval_debug_uses_agent_search_query(monkeypatch):
 
 def test_retrieval_debug_stages_and_eval(monkeypatch):
     monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.search.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.rag.search.embed_texts", _directional_embed)
     monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.llm.chat", lambda question, context, history=None: "假LLM答案")

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.models import Document, DocumentChunk, Entity, EntityLink, KnowledgeBase
-from app.search import SearchHit, search_chunks
+from app.rag.search import SearchHit, search_chunks
 
 
 def search_knowledge(

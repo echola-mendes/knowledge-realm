@@ -29,7 +29,7 @@ from app.schemas import (
 )
 from app.quality import judge_answer, judge_keys_ready
 from app.rag_eval import compute_rag_metrics, keys_ready as rag_eval_keys_ready
-from app.search import normalize_query, search_debug
+from app.rag.search import normalize_query, search_debug
 
 router = APIRouter(prefix="/api", tags=["retrieval-debug"])
 

@@ -42,7 +42,7 @@ def test_related_excludes_self_and_finds_same_kb(monkeypatch):
     assert "/api/search" not in src
     assert "langgraph" not in src
     monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.search.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.rag.search.embed_texts", _directional_embed)
     monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     llm_mod.CHAT_CALLS = 0
     with _client() as client:

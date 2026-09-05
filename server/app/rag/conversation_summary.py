@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.chat import HISTORY_LIMIT
+from app.rag.chat import HISTORY_LIMIT
 from app.models import Conversation, Message
 from app.chains import summarize_conversation_turns
 

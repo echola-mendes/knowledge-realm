@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db import session_scope
 from app.deps import current_user
-from app.es_bm25 import EsNotConfiguredError, delete_knowledge_base_chunks
+from app.rag.es_bm25 import EsNotConfiguredError, delete_knowledge_base_chunks
 from app.models import Document, DocumentVersion, KnowledgeBase, User
 from app.schemas import KnowledgeBaseCreate, KnowledgeBaseOut, KnowledgeBaseUpdate
 from app.ingest.storage import remove_knowledge_base_files

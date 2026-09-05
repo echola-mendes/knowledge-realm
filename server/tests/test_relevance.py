@@ -42,10 +42,10 @@ def test_low_rerank_drops_hits_high_keeps(monkeypatch):
         dim = get_settings().embedding_dim
         return [[0.01] * dim for _ in texts]
 
-    monkeypatch.setattr("app.search.embed_texts", fake_embed)
+    monkeypatch.setattr("app.rag.search.embed_texts", fake_embed)
     monkeypatch.setattr("app.ingest.index.embed_texts", fake_embed)
     monkeypatch.setattr(
-        "app.search.score_documents",
+        "app.rag.search.score_documents",
         lambda query, documents: [scores[0]] * len(documents),
     )
     with _client() as client:

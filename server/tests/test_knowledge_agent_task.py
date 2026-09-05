@@ -8,7 +8,7 @@ from app.agent import graph as graph_mod
 from app.agent import master as master_mod
 from app.config import get_settings
 from app.main import reset_app_state
-from app.search import SearchHit
+from app.rag.search import SearchHit
 
 
 def _client():

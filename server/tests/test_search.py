@@ -45,7 +45,7 @@ def _make_text_pdf(text: str) -> bytes:
 
 def test_search_isolates_kb_tag_kind_and_skips_chat(monkeypatch):
     monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.search.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.rag.search.embed_texts", _directional_embed)
     monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     llm_mod.CHAT_CALLS = 0
     with _client() as client:
@@ -123,7 +123,7 @@ def test_search_isolates_kb_tag_kind_and_skips_chat(monkeypatch):
 
 def test_search_time_window_excludes_old_docs(monkeypatch):
     monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.search.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.rag.search.embed_texts", _directional_embed)
     monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     from datetime import datetime, timedelta, timezone
 

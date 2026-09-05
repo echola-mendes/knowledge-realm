@@ -3,8 +3,8 @@ import uuid
 
 from app.agent import graph as graph_mod
 from app.agent.graph import build_graph, initial_state
-from app.search import SearchHit
-import app.chat as chat_mod
+from app.rag.search import SearchHit
+import app.rag.chat as chat_mod
 import app.chains as chains_mod
 
 

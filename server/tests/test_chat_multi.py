@@ -38,7 +38,7 @@ def test_second_turn_sends_history_stream_matches_and_delete(monkeypatch):
         return "假LLM答案"
 
     monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.search.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.rag.search.embed_texts", _directional_embed)
     monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.llm.chat", fake_chat)

@@ -7,7 +7,7 @@ from app.config import get_settings
 from app.ingest.index import index_document
 from app.main import create_app, reset_app_state
 from app.ingest.parse import parse_text_document
-import app.search as search_mod
+import app.rag.search as search_mod
 
 
 def _client() -> TestClient:
@@ -34,7 +34,7 @@ def _directional_embed(texts: list[str]) -> list[list[float]]:
 
 def test_keyword_hit_enters_rrf_and_kb_isolation(monkeypatch):
     monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.search.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.rag.search.embed_texts", _directional_embed)
     monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     with _client() as client:
         kb_a = client.post("/api/knowledge-bases", json={"name": f"库A-{uuid.uuid4().hex[:8]}"}).json()

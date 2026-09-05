@@ -86,10 +86,10 @@ def fake_embeddings(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def fake_elasticsearch(monkeypatch):
-    from app.es_bm25 import MemoryChunkIndex
+    from app.rag.es_bm25 import MemoryChunkIndex
 
-    monkeypatch.setattr("app.es_bm25._override", MemoryChunkIndex())
-    monkeypatch.setattr("app.es_bm25._elastic", None)
+    monkeypatch.setattr("app.rag.es_bm25._override", MemoryChunkIndex())
+    monkeypatch.setattr("app.rag.es_bm25._elastic", None)
 
 
 @pytest.fixture(autouse=True)
@@ -99,4 +99,4 @@ def skip_post_index_enrich(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def skip_rerank(monkeypatch):
-    monkeypatch.setattr("app.search.score_documents", lambda query, documents: None)
+    monkeypatch.setattr("app.rag.search.score_documents", lambda query, documents: None)

@@ -42,8 +42,8 @@ from app.ingest.chunk import DEFAULT_CHUNK_SIZE, chunk_meta, quality_labels, spl
 from app.ingest.chunk_settings import get_user_chunk_settings
 from app.ingest import index as index_mod
 from app.ingest.index import STATUS_INDEXING
-from app.es_bm25 import EsNotConfiguredError, delete_document_chunks
-from app.search import search_chunks
+from app.rag.es_bm25 import EsNotConfiguredError, delete_document_chunks
+from app.rag.search import search_chunks
 from app.ingest.storage import original_path, parsed_dir, remove_document_files, write_original
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
