@@ -1,7 +1,7 @@
 """plan agent: empty flyai results should not re-search or fabricate empty plan pages."""
 from __future__ import annotations
 
-from app import plan_agent as plan_mod
+from app.agent import plan_agent as plan_mod
 
 
 def test_plan_agent_does_not_research_flights_after_empty_result(monkeypatch):

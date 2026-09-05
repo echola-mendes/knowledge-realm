@@ -12,7 +12,7 @@ from app import llm as llm_mod
 from app.deps import current_user, get_db
 from app.kb import KnowledgeBaseAccessError
 from app.models import Document, DocumentChunk, KnowledgeBase, RagEvalCase, RetrievalLabel, User
-from app.graph import plan_agent_search
+from app.agent.graph import plan_agent_search
 from app.schemas import (
     AnswerQualityOut,
     AnswerQualityRequest,

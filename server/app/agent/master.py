@@ -6,9 +6,9 @@ from typing import Any, Literal, TypedDict
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
-from app.booking_agent import booking_initial_state
-from app.graph import build_graph, initial_state
-from app.intent import IntentLabel, classify_intent
+from app.agent.booking_agent import booking_initial_state
+from app.agent.graph import build_graph, initial_state
+from app.agent.intent import IntentLabel, classify_intent
 
 _compiled = None
 
@@ -173,7 +173,7 @@ def node_chat(state: MasterState) -> dict[str, Any]:
 
 
 def node_plan(state: MasterState, config: RunnableConfig) -> dict[str, Any]:
-    from app.plan_agent import build_plan_graph, plan_initial_state
+    from app.agent.plan_agent import build_plan_graph, plan_initial_state
 
     inner_configurable = config.get("configurable") or {}
     out = build_plan_graph().invoke(
@@ -203,7 +203,7 @@ def node_plan(state: MasterState, config: RunnableConfig) -> dict[str, Any]:
 
 
 def node_booking(state: MasterState, config: RunnableConfig) -> dict[str, Any]:
-    from app.booking_agent import build_booking_graph
+    from app.agent.booking_agent import build_booking_graph
 
     inner_configurable = config.get("configurable") or {}
     out = build_booking_graph().invoke(
@@ -244,7 +244,7 @@ def build_master_graph():
     global _compiled
     if _compiled is not None:
         return _compiled
-    from app.checkpoint import get_checkpointer
+    from app.agent.checkpoint import get_checkpointer
 
     graph = StateGraph(MasterState)
     graph.add_node("intent", node_intent)
@@ -274,6 +274,6 @@ def build_master_graph():
 def reset_master_graph() -> None:
     global _compiled
     _compiled = None
-    from app.booking_agent import reset_booking_graph
+    from app.agent.booking_agent import reset_booking_graph
 
     reset_booking_graph()

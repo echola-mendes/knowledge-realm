@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import uuid
 
-from app import plan_agent as plan_mod
+from app.agent import plan_agent as plan_mod
 from app.travel import tools as travel_tools
 
 FLIGHTS = {

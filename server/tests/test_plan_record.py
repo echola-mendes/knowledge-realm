@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db import session_scope
 from app.models import PlanRecord, User
-from app.plan_agent import persist_plan_record
+from app.agent.plan_agent import persist_plan_record
 from app.user import ensure_default_user
 from http_client import api_client
 

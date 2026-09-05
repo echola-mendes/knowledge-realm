@@ -104,8 +104,8 @@ app = create_app()
 
 
 def reset_app_state() -> None:
-    from app.graph import reset_graph
-    from app.master import reset_master_graph
+    from app.agent.graph import reset_graph
+    from app.agent.master import reset_master_graph
 
     reset_settings()
     reset_engine()

@@ -7,16 +7,16 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.db import session_scope
-from app.intent import classify_intent
-import app.intent as intent_mod
-from app.booking_agent import (
+from app.agent.intent import classify_intent
+import app.agent.intent as intent_mod
+from app.agent.booking_agent import (
     book_flight_tool,
     build_booking_graph,
     booking_initial_state,
     reset_booking_graph,
 )
 from app.models import BookingRecord, PlanRecord, User
-from app.plan_agent import persist_plan_record
+from app.agent.plan_agent import persist_plan_record
 from app.travel.plan_confirm import (
     booking_params_from_option,
     is_confirm_plan_query,
@@ -212,7 +212,7 @@ def test_booking_agent_confirm_plan_hitl(monkeypatch, session: Session):
         plan=_sample_plan(),
         plan_html={},
     )
-    monkeypatch.setattr("app.booking_agent._reason_llm", lambda state: None)
+    monkeypatch.setattr("app.agent.booking_agent._reason_llm", lambda state: None)
     reset_booking_graph()
     out = build_booking_graph().invoke(
         booking_initial_state("确认方案1", user_id=str(user.id)),

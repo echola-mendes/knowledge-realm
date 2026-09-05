@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from app import graph as graph_mod
+from app.agent import graph as graph_mod
 from tests.http_client import api_client
 
 

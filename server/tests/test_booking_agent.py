@@ -7,8 +7,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import master as master_mod
-from app.booking_agent import (
+from app.agent import master as master_mod
+from app.agent.booking_agent import (
     booking_initial_state,
     book_flight_tool,
     book_hotel_tool,
@@ -180,7 +180,7 @@ def _config(session: Session, user_id: uuid.UUID, emit=None):
 
 def test_booking_agent_asks_for_confirmation(monkeypatch, session: Session):
     monkeypatch.setattr(
-        "app.booking_agent._reason_llm",
+        "app.agent.booking_agent._reason_llm",
         lambda state: {"action": "book_flight", "params": {"flight_no": "MU5101"}},
     )
     user = _user(session)
@@ -199,7 +199,7 @@ def test_booking_agent_asks_for_confirmation(monkeypatch, session: Session):
 
 def test_booking_agent_confirms_then_books(monkeypatch, session: Session):
     monkeypatch.setattr(
-        "app.booking_agent._reason_llm",
+        "app.agent.booking_agent._reason_llm",
         lambda state: {"action": "book_flight", "params": {"flight_no": "MU5101"}},
     )
     user = _user(session)
@@ -229,7 +229,7 @@ def test_booking_agent_confirms_then_books(monkeypatch, session: Session):
 
 
 def test_booking_agent_list_query(monkeypatch, session: Session):
-    monkeypatch.setattr("app.booking_agent._reason_llm", lambda state: {"action": "list"})
+    monkeypatch.setattr("app.agent.booking_agent._reason_llm", lambda state: {"action": "list"})
     user = _user(session)
     record = BookingRecord(user_id=user.id, kind="flight", vendor="flyai", status="pending")
     session.add(record)
@@ -246,7 +246,7 @@ def test_booking_agent_list_query(monkeypatch, session: Session):
 
 
 def test_master_booking_routes_to_booking_agent(monkeypatch):
-    import app.booking_agent as booking_mod
+    import app.agent.booking_agent as booking_mod
 
     seen: dict = {}
 
@@ -260,7 +260,7 @@ def test_master_booking_routes_to_booking_agent(monkeypatch):
         return lambda query, *, task="agent", history_tail=None: label
 
     monkeypatch.setattr(master_mod, "classify_intent", lambda *a, **k: "booking")
-    monkeypatch.setattr("app.booking_agent.build_booking_graph", lambda: FakeBookingGraph())
+    monkeypatch.setattr("app.agent.booking_agent.build_booking_graph", lambda: FakeBookingGraph())
     out = master_mod.build_master_graph().invoke(
         master_mod.master_initial_state("帮我订机票"),
         config={
@@ -283,7 +283,7 @@ def test_agent_router_booking_not_500(monkeypatch):
 
     monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
     monkeypatch.setattr(master_mod, "classify_intent", lambda *a, **k: "booking")
-    monkeypatch.setattr("app.booking_agent.build_booking_graph", lambda: FakeBookingGraph())
+    monkeypatch.setattr("app.agent.booking_agent.build_booking_graph", lambda: FakeBookingGraph())
     from app.main import reset_app_state
     from http_client import api_client
 
@@ -304,7 +304,7 @@ def test_agent_router_booking_not_500(monkeypatch):
 
 
 def test_list_bookings_emits_booking_data(monkeypatch, session):
-    monkeypatch.setattr("app.booking_agent._reason_llm", lambda state: {"action": "list"})
+    monkeypatch.setattr("app.agent.booking_agent._reason_llm", lambda state: {"action": "list"})
     user = _user(session)
     record = BookingRecord(user_id=user.id, kind="flight", vendor="flyai", status="pending")
     session.add(record)
@@ -326,7 +326,7 @@ def test_agent_router_rate_limit_429(monkeypatch):
     monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
     monkeypatch.setattr(master_mod, "classify_intent", lambda *a, **k: "booking")
     monkeypatch.setattr(
-        "app.booking_agent._reason_llm",
+        "app.agent.booking_agent._reason_llm",
         lambda state: {"action": "book_flight", "params": {"flight_no": "MU5101", "depart_date": "2026-09-10"}},
     )
     monkeypatch.setattr("app.routers.master.refresh_conversation_summary", lambda *a, **k: None)

@@ -7,7 +7,7 @@ from typing import Any, Literal, TypedDict
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
-from app.tools import search_graph, search_knowledge, web_search
+from app.agent.tools import search_graph, search_knowledge, web_search
 from app.search import SearchHit
 
 MAX_LOOPS = 3
@@ -306,7 +306,7 @@ def build_graph():
     global _compiled
     if _compiled is not None:
         return _compiled
-    from app.checkpoint import get_checkpointer
+    from app.agent.checkpoint import get_checkpointer
 
     graph = StateGraph(AgentState)
     graph.add_node("reason", node_reason)
@@ -323,7 +323,7 @@ def build_graph():
 def reset_graph() -> None:
     global _compiled
     _compiled = None
-    from app.checkpoint import reset_checkpointer
+    from app.agent.checkpoint import reset_checkpointer
 
     reset_checkpointer()
 

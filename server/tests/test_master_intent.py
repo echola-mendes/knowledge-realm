@@ -6,11 +6,11 @@ from fastapi.testclient import TestClient
 
 from app.config import get_settings
 from app.main import create_app, reset_app_state
-from app import graph as graph_mod
-from app import master as master_mod
-from app.intent import classify_intent
-import app.intent as intent_mod
-from app.master import (
+from app.agent import graph as graph_mod
+from app.agent import master as master_mod
+from app.agent.intent import classify_intent
+import app.agent.intent as intent_mod
+from app.agent.master import (
     build_master_graph,
     master_initial_state,
 )
@@ -132,7 +132,7 @@ def test_master_chat_replies_without_knowledge_subgraph(monkeypatch):
 
 
 def test_master_plan_routes_to_plan_agent(monkeypatch):
-    import app.plan_agent as plan_mod
+    import app.agent.plan_agent as plan_mod
 
     seen: dict = {}
 
@@ -148,7 +148,7 @@ def test_master_plan_routes_to_plan_agent(monkeypatch):
             }
 
     monkeypatch.setattr(master_mod, "classify_intent", _intent_of("plan"))
-    monkeypatch.setattr("app.plan_agent.build_plan_graph", lambda: FakePlanGraph())
+    monkeypatch.setattr("app.agent.plan_agent.build_plan_graph", lambda: FakePlanGraph())
     monkeypatch.setattr(master_mod, "build_graph", lambda *a, **k: (_ for _ in ()).throw(AssertionError("plan 不应走 knowledge")))
     out = build_master_graph().invoke(
         master_initial_state("帮我规划行程", conversation_id=uuid.uuid4()),
@@ -162,7 +162,7 @@ def test_master_plan_routes_to_plan_agent(monkeypatch):
 
 
 def test_master_booking_routes_to_booking_agent(monkeypatch):
-    import app.booking_agent as booking_mod
+    import app.agent.booking_agent as booking_mod
 
     seen: dict = {}
 
@@ -172,7 +172,7 @@ def test_master_booking_routes_to_booking_agent(monkeypatch):
             return {"answer": "预订助手已收到", "pending_action": None}
 
     monkeypatch.setattr(master_mod, "classify_intent", _intent_of("booking"))
-    monkeypatch.setattr("app.booking_agent.build_booking_graph", lambda: FakeBookingGraph())
+    monkeypatch.setattr("app.agent.booking_agent.build_booking_graph", lambda: FakeBookingGraph())
     out = build_master_graph().invoke(
         master_initial_state("帮我订机票"), config=_master_config()
     )
@@ -230,7 +230,7 @@ def test_agent_router_plan_not_500(monkeypatch):
 
     monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
     monkeypatch.setattr(master_mod, "classify_intent", _intent_of("plan"))
-    monkeypatch.setattr("app.plan_agent.build_plan_graph", lambda: FakePlanGraph())
+    monkeypatch.setattr("app.agent.plan_agent.build_plan_graph", lambda: FakePlanGraph())
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"Plan-{uuid.uuid4().hex[:8]}"}).json()
         res = client.post("/api/agent", json={"task": "agent", "query": "规划上海行程", "knowledge_base_id": kb["id"]})
@@ -243,7 +243,7 @@ def test_agent_router_plan_not_500(monkeypatch):
 
 
 def test_agent_router_booking_not_500(monkeypatch):
-    import app.booking_agent as booking_mod
+    import app.agent.booking_agent as booking_mod
 
     class FakeBookingGraph:
         def invoke(self, state, config=None):
@@ -251,7 +251,7 @@ def test_agent_router_booking_not_500(monkeypatch):
 
     monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
     monkeypatch.setattr(master_mod, "classify_intent", _intent_of("booking"))
-    monkeypatch.setattr("app.booking_agent.build_booking_graph", lambda: FakeBookingGraph())
+    monkeypatch.setattr("app.agent.booking_agent.build_booking_graph", lambda: FakeBookingGraph())
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"Book-{uuid.uuid4().hex[:8]}"}).json()
         res = client.post("/api/agent", json={"task": "agent", "query": "帮我订机票", "knowledge_base_id": kb["id"]})
@@ -282,7 +282,7 @@ def test_agent_router_stream_plan_events(monkeypatch):
 
     monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
     monkeypatch.setattr(master_mod, "classify_intent", _intent_of("plan"))
-    monkeypatch.setattr("app.plan_agent.build_plan_graph", lambda: FakePlanGraph())
+    monkeypatch.setattr("app.agent.plan_agent.build_plan_graph", lambda: FakePlanGraph())
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"PlanS-{uuid.uuid4().hex[:8]}"}).json()
         streamed = client.post(
@@ -323,7 +323,7 @@ def test_agent_router_stream_booking_events(monkeypatch):
 
     monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
     monkeypatch.setattr(master_mod, "classify_intent", _intent_of("booking"))
-    monkeypatch.setattr("app.booking_agent.build_booking_graph", lambda: FakeBookingGraph())
+    monkeypatch.setattr("app.agent.booking_agent.build_booking_graph", lambda: FakeBookingGraph())
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"BookS-{uuid.uuid4().hex[:8]}"}).json()
         streamed = client.post(

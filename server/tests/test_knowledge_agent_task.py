@@ -4,8 +4,8 @@ from __future__ import annotations
 import json
 import uuid
 
-from app import graph as graph_mod
-from app import master as master_mod
+from app.agent import graph as graph_mod
+from app.agent import master as master_mod
 from app.config import get_settings
 from app.main import reset_app_state
 from app.search import SearchHit
