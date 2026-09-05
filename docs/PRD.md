@@ -199,10 +199,10 @@
 - 提供检索调试页，展示检索过程与中间结果。
 - 展示 Agent 执行轨迹与推理步骤（旁路实验；生产决策链见 [`PRD-DECISIONS.md`](PRD-DECISIONS.md)）。
 
-#### 3.7.2 监控与审计（规划中）
+#### 3.7.2 监控与审计
 
-- **决策审计**：[`PRD-DECISIONS.md`](PRD-DECISIONS.md) — 监控 → 决策审计。
-- **操作审计**：[`PRD-OPERATIONS.md`](PRD-OPERATIONS.md) — 监控 → 操作审计。
+- **决策审计（极简，已上线）**：[`PRD-DECISIONS.md`](PRD-DECISIONS.md) / [`Trace.md`](Trace.md) — Chat 与知识 Agent 每轮 assistant 回答落 `decision_run` + 线性 `decision_span`（route / retrieve / generate + 证据与指标），绑 `message_id`；`app/audit/recorder.py` 统一埋点；API：`/api/decisions`、`/api/decisions/{id}`、`/api/messages/{id}/decision`；监控 → 决策审计列表 + 详情。
+- **操作审计**：[`PRD-OPERATIONS.md`](PRD-OPERATIONS.md) — 监控 → 操作审计（占位页）。
 
 #### 3.7.3 回答质量评估
 
@@ -255,7 +255,7 @@
 ### 3.10 侧边栏菜单管理
 
 - 侧边栏默认顺序调整为：首页、对话、搜索、知识库、文档、图谱（原知识图谱）、检测（原知识洞察）、工具、监控（占位）、基础、设置；调试项仍随调试开关显示，开启时位于设置之前。
-- 监控含二级菜单：**决策审计**（[`PRD-DECISIONS.md`](PRD-DECISIONS.md)）、**操作审计**（[`PRD-OPERATIONS.md`](PRD-OPERATIONS.md)）；当前为占位页，决策审计优先实现。
+- 监控含二级菜单：**决策审计**（极简，已上线）、**操作审计**（[`PRD-OPERATIONS.md`](PRD-OPERATIONS.md)，占位页）。
 - 新增"基础"页面，内含"菜单管理"二级菜单，支持菜单显示名编辑与上下拖拽排序（附上移/下移按钮兜底），并可一键恢复默认。
 - 工具 / 基础 / 监控与工具页一致：侧栏只保留一级入口，二级菜单仅在页内；菜单管理不可再往这三项下挂侧栏子菜单。
 - 菜单配置保存在本机浏览器 localStorage，仅影响当前浏览器。
@@ -304,10 +304,11 @@
 
 ### 4.4 可观测与评估增强
 
-- **决策审计**（[`PRD-DECISIONS.md`](PRD-DECISIONS.md)）：可扩展 DecisionRecorder、结构化决策链、三受众解释与校验、按 message/biz_id 追溯；监控 → 决策审计。
-- **操作审计**（[`PRD-OPERATIONS.md`](PRD-OPERATIONS.md)）：文档流水线、登录/敏感变更、与 `task_execution` 聚合；监控 → 操作审计（排在决策审计 P0 之后）。
-- Agent 执行效果评估；RAG 检索与回答质量的系统级评估。
-- Token、延迟等监控指标与异常告警。
+- **决策审计（极简，已上线）**（[`Trace.md`](Trace.md) / [`PRD-DECISIONS.md`](PRD-DECISIONS.md)）：每轮 assistant 落库决策链（route / retrieve / generate + 证据），绑 `message_id`；监控列表与详情。本期不做 LangSmith、自建 Trace 平台、Explain/Judge。Master / plan / booking 全路径埋点下一期接入。
+- **链路追踪下一版**（[`Trace_LangSmith.md`](Trace_LangSmith.md)）：V1.1 之后接 LangSmith 基础 Trace；技术 IO/Token/延迟交给 LangSmith，Decision 仍负责业务审计与 message 绑定。
+- **操作审计**（[`PRD-OPERATIONS.md`](PRD-OPERATIONS.md)）：文档流水线、登录/敏感变更、与 `task_execution` 聚合；监控 → 操作审计（排在决策审计之后）。
+- Agent 执行效果评估；RAG 检索与回答质量的系统级评估（调试页已有部分能力）。
+- Token / 延迟：写入 span `metrics` 即可；不做独立监控看板。
 
 ---
 

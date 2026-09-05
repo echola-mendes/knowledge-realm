@@ -1,9 +1,8 @@
-# Execution Plan：AI 资讯（PRD-NEWS）
+# Execution Plan：AI 决策审计（Trace.md V1.1）
 
 > 依据：`artifacts/prd-sub.md`。从顶部取第一个未全 ✅ 的 Step 执行。  
-> 栈：FastAPI / Vue3；复用 APScheduler+Redis+arq；禁止 Celery。  
-> 依赖新增（实现时写入 requirements）：`PyYAML`、`feedparser`（RSS/Atom）。  
-> **执行约定：** 每个 Step 验收全部 `[✅]` 后暂停，等用户确认再开始下一 Step。
+> 栈：FastAPI / Vue3；模型入 `models.py`，审计代码落 `app/audit/`；禁止 LangSmith。  
+> **执行约定：** 用户已确认连续执行——每 Step 验收全 `[✅]` 后直接进入下一 Step，全量回归放末步。
 
 ---
 
@@ -11,163 +10,132 @@
 
 ### 目标
 
-落地 `news` / `news_daily_rank` / `news_settings` 表，并种子默认启用三板块。
+落地 `decision_run` / `decision_span` 两表。
 
 ### 方案
 
-1. `server/app/models.py`：三模型；`news.url`、`news.content_hash` 唯一；`news_daily_rank` 含 `rank_date` + `category`（含 `all`）+ `rank`
-2. Alembic 迁移；upgrade 末尾若不存在则插入 `news_settings`（`enabled_categories` 三开）
-3. 不改 `scheduled_task` 表结构
+1. `models.py`：`DecisionRun`（id/message_id 可空/conversation_id/user_id/mode/query/status/created_at，索引 `(user_id, created_at)`、`message_id`、`conversation_id`）；`DecisionSpan`（id/run_id FK/seq/node_type/decision JSONB/rationale/evidence_refs JSONB/metrics JSONB/created_at，索引 `(run_id, seq)`）
+2. Alembic 迁移（延续 `20260904_0023_news` 序号）
 
 ### 验收
 
 - [✅] 迁移可 upgrade / downgrade
-- [✅] 三表存在；`news_settings` 有默认一行
-- [✅] `url` / `content_hash` 唯一约束生效
+- [✅] 两表与索引存在；`message_id` 可空、其余关键列 NOT NULL
 
 ---
 
-## Step 2：配置与源加载
+## Step 2：DecisionRecorder
 
 ### 目标
 
-可读 `news_sources.yaml`，并接入 `NEWS_*` 标量配置。
+`app/audit/recorder.py` 提供故障隔离的埋点组件。
 
 ### 方案
 
-1. `config.py` / `.env.example`：`NEWS_SOURCES_PATH`（默认 `server/config/news_sources.yaml`）、`NEWS_TOP_K=20`、`NEWS_MAX_ITEMS`、`NEWS_HTTP_TIMEOUT`、`NEWS_LLM_TIMEOUT`
-2. `app/news/sources.py`（或等价）：加载 yaml → 校验 schema → 按 `enabled` + category 过滤
-3. 路径相对仓库根解析
+1. `DecisionRecorder(session_factory)`：`start_run(user_id, conversation_id, mode, query) -> run_id`（独立 session 立即落 `running` 行）；`add_span(node_type, decision, rationale, evidence_refs, metrics)`（内存缓冲，seq 自增）；`finish_run(status, message_id=None)`（独立事务写 spans + 更新 run；message_id 可空）
+2. 所有公开方法内部 try/except 吞异常（记 `logger.warning`），绝不向调用方抛错
+3. `app/audit/__init__.py` 导出
 
 ### 验收
 
-- [✅] 默认路径能加载出至少 8 条 `enabled: true` 源
-- [✅] 非法 category / 缺 url 时明确报错（启动或首次 refresh 即可）
-- [✅] `NEWS_SOURCES_PATH` 可覆盖默认路径
+- [✅] 单测：start→add→finish 后 run+spans 落库且 seq 有序
+- [✅] 单测：DB 故障（如坏 run_id/会话关闭）时 recorder 不抛异常
 
 ---
 
-## Step 3：采集、解析、去重
+## Step 3：Chat 埋点接入
 
 ### 目标
 
-无 LLM 情况下，能从启用源拉 RSS 并去重入库候选。
+`/api/chat` 与 `/api/chat/stream` 每轮落一条链（retrieve + generate）。
 
 ### 方案
 
-1. `collector.py`：httpx 拉 feed；单源失败记录错误并继续
-2. `parser.py`：feedparser → 统一字段（title/url/content/published_at/source/category/weight）
-3. `dedup.py`：URL 已存在 → 可更新时间/热度相关、不进 LLM 队列；标题 Hash 冲突 → skip
-4. 单测覆盖：标题标准化 Hash、URL 冲突行为（mock DB 或临时 session）
+1. `run_chat` 增加可选 `recorder` 参数：检索后 add_span(`retrieve`：tool=`search_knowledge`、query、chunk 证据)；generate 后 add_span(`generate`：答案摘要 + elapsed)；落库 assistant Message 后 `finish_run("success", message_id=…)`；Key 缺失/异常路径 `finish_run("failed")` 后原样抛错；recorder 为 None 时零开销
+2. `routers/chat.py` `_http_chat` 创建 recorder 并传入（mode=`chat`）
+3. span 全程 try/except 由 recorder 兜底，不影响回答
 
 ### 验收
 
-- [✅] 针对 fixture RSS/XML，parser 产出稳定字段
-- [✅] 去重单测：同 URL / 同标题 Hash 行为符合 prd-sub
-- [✅] 正文可为空，无网页抓取逻辑
+- [✅] Chat 测试轮后 DB 有 run(status=success, 绑 assistant message_id) + 2 spans
+- [✅] 模拟 recorder 抛错，主回答仍 200（单测）
+- [✅] 既有 chat 测试全绿（recorder 缺省路径不变）
 
 ---
 
-## Step 4：摘要、热度与排行榜编排
+## Step 4：知识 Agent 埋点接入
 
 ### 目标
 
-对新条目做 LLM 摘要/重要性，算 heat_score，写当日 `news_daily_rank`。
+`task=knowledge` 每轮落一条链（route/retrieve/generate，多圈多组）。
 
 ### 方案
 
-1. `summarizer.py`：DashScope 兼容客户端；摘要 50～120 字；重要性 1～10；失败 importance=5、summary 可 null；金融 prompt 禁投资建议；**不**改分类
-2. `scorer.py`：公式 45/25/30 + §15 新鲜度档；时区 Asia/Shanghai
-3. `service.py`：`refresh(categories)` 全流程；截断 `NEWS_MAX_ITEMS`；重写当日相关 category + `all` 的 rank 快照；返回 result 计数 dict
-4. 可保留/迁移根级 `news_service.py` 为薄封装，避免双实现
+1. `graph.py`：`node_reason` / `node_generate` 增加可选 `config: RunnableConfig` 参数，与 `node_run_tool` 一样从 `configurable.get("decision_recorder")` 取；reason → `route` span（action=search/web/generate/graph + rationale，无则「未给出理由」+ usage）；run_tool → `retrieve` span（tool 名、query、citations/web_hits 证据截断）；generate → `generate` span（答案摘要 + tokens）
+2. `routers/master.py`：`_invoke_knowledge_graph` 的 configurable 注入 recorder(mode=`knowledge`)；`_agent_persist` 捕获 assistant Message id 回传（内部 key，不进 schema）；成功后 `finish_run("success", message_id)`，异常路径 failed
+3. 不动 master/plan/booking 路径与 `/api/agent/trace`
 
 ### 验收
 
-- [✅] scorer 单测：给定 importance/weight/新鲜度档，heat 在预期区间
-- [✅] 不足 20 条不跨分类补榜
-- [✅] 综合榜逻辑为合并后 TopK，非三榜拼接
+- [✅] knowledge 测试轮后 run + route/retrieve/generate spans 按序落库
+- [✅] 多圈场景 span seq 单调递增（单测）
+- [✅] 既有 agent 测试全绿
 
 ---
 
-## Step 5：接通 NEWS_REFRESH Handler
+## Step 5：查询 API
 
 ### 目标
 
-Worker 执行真实管道，不再返回 `news_pipeline_pending` stub。
+3 个只读接口，Session 鉴权、本人数据。
 
 ### 方案
 
-1. `news_handler.py`：读 DB `news_settings.enabled_categories` → `NewsService.refresh(...)`
-2. 写 `task_execution.result`：`categories/fetched/saved/summarized/failed/skipped_dup`
-3. 不改 Scheduler/队列核心；任务页不加分类多选
+1. `schemas.py`：DecisionRunOut / DecisionSpanOut / DecisionRunDetail
+2. `routers/decisions.py`：`GET /api/decisions`（limit/offset + mode/status/conversation_id/start/end 过滤）、`GET /api/decisions/{run_id}`（run+有序 spans）、`GET /api/messages/{id}/decision`（按 assistant 消息反查）；均按 `user_id` 过滤，他人资源 404；`main.py` include
 
 ### 验收
 
-- [✅] 手动 enqueue / `/run` 后 execution 为 SUCCESS（源与 LLM 可用时）或 FAILED（整源级灾难且无任何产出的约定以实现为准，需在 result/error 可观测）
-- [✅] result 含计数字段，不再仅有 `news_pipeline_pending`
-- [✅] 仅启用 `ai` 时不采集 technology/finance 源
+- [✅] 契约测试：未登录 401；他人 run/消息 404；列表过滤与分页生效；详情 spans 有序
+- [✅] message 反查返回 run + spans
 
 ---
 
-## Step 6：News API
+## Step 6：前端决策审计页
 
 ### 目标
 
-对外提供热榜、详情、设置 API。
+`/monitoring/decisions` 从占位页替换为列表 + 详情。
 
 ### 方案
 
-1. `schemas.py`：HotOut / NewsDetail / SettingsIn/Out
-2. `routers/news.py` + `main.py` include；Session 鉴权
-3. `GET /api/news/hot` 读快照；非法 category → 400；默认今天（上海）
-4. `GET/PUT /api/news/settings`
+1. `web/src/api.ts`：listDecisions / getDecision / getMessageDecision 客户端
+2. `web/src/views/DecisionAuditView.vue`：列表（时间/模式/问题摘要/状态）+ 过滤 + 行点击进详情（路由 `/monitoring/decisions/:id`）；详情自上而下线性节点卡片，展开 decision/rationale/evidence/metrics
+3. `router.ts` 替换占位组件；样式对齐 `web/style.md` 与现有 Operate 页
 
 ### 验收
 
-- [✅] 未登录 401；非法 category 400
-- [✅] hot 返回结构含 date/category/items（≤20）
-- [✅] PUT settings 后 GET 一致；至少保留一个分类
-
----
-
-## Step 7：前端 AI资讯页
-
-### 目标
-
-工具菜单可打开列表与详情；可改启用板块。
-
-### 方案
-
-1. `web/src/api.ts` 客户端
-2. `NewsListView.vue` / `NewsDetailView.vue`；路由 `/tools/news`、`/tools/news/:id`
-3. 工具 Layout 导航增加「AI资讯」
-4. 样式遵循 `web/style.md`；无立即更新按钮
-
-### 验收
-
-- [✅] 路由可进入；默认「全部」频道
-- [✅] 启用板块勾选会调 settings API
+- [✅] 路由可进入列表与详情（路径验证）
 - [✅] `npm run typecheck` 通过
-- [✅] 详情可打开；正文空时仍可看摘要与原文链接
 
 ---
 
-## Step 8：回归与文档同步准备
+## Step 7：回归与文档同步
 
 ### 目标
 
-关键路径可回归；文档变更列入本步完成（TECH/PRD 同步，非改 PRD-NEWS）。
+全量回归绿；文档同步。
 
 ### 方案
 
-1. 补充/收紧 `server/tests`（settings、dedup、scorer、hot API 契约按需）
-2. 更新 `docs/TECH.md`、`docs/PRD.md` 中资讯条目
-3. 确认 AGENTS 无需改栈（已有定时任务约束）
+1. 全量 pytest（对照预存 flaky 失败集）
+2. `docs/TECH.md`（新表/模块/API 条目）、`docs/PRD.md` §3.7/§4.4 状态同步；AGENTS 栈未变不动
+3. memory/architecture 按 Phase 4 归档
 
 ### 验收
 
-- [✅] 相关单测通过
-- [✅] TECH.md / PRD.md 已提及 AI资讯与 `news_sources.yaml`
-- [✅] 全 execution-plan 步骤验收均可勾选（本步为收尾）
+- [✅] 全量 pytest 无新增失败（对照基线：275 通过，2 个失败为预存 flaky，与搬迁前基线一致）
+- [✅] TECH.md / PRD.md 已更新
+- [✅] execution-plan 全部 [✅]
 
 ---

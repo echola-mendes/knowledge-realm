@@ -233,6 +233,14 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearc
 | `server/app/news/` | 资讯管道：sources/collector/parser/dedup/summarizer/scorer/service |
 | `server/app/routers/news.py` | `/api/news/hot`、`/api/news/{id}`、`/api/news/settings` |
 | `server/config/news_sources.yaml` | 默认知讯源（8 启用 + Reuters 备选关闭） |
+| `server/app/audit/` | 决策审计（Trace.md V1.1）：`DecisionRecorder`（start_run/add_span/finish_run；run 行经主会话 savepoint 随主事务提交，spans 与终态走独立会话；公开方法吞异常，审计故障不影响主回答）；`recorder_from_config` 供 LangGraph 节点取 `configurable.decision_recorder` |
+| `server/app/routers/decisions.py` | `/api/decisions`（mode/status/conversation_id/时间过滤 + limit/offset）、`/api/decisions/{run_id}`（run+有序 spans）、`/api/messages/{id}/decision`（按 assistant 消息反查）；Session 鉴权仅本人数据 |
+| `server/app/models.py` + Alembic `20260906_0024` | `decision_run`（mode=chat/knowledge，status=running/success/failed，绑 message_id ON DELETE SET NULL）/ `decision_span`（seq 线性，node_type=route/retrieve/generate，decision/rationale/evidence_refs/metrics） |
+| `server/app/rag/chat.py` | `run_chat` 可选 `recorder`：检索后 retrieve span、生成后 generate span，落库后 finish_run(success, message_id)；`_http_chat` 失败路径 finish_run(failed) |
+| `server/app/agent/graph.py` | knowledge 路径埋点：reason/run_tool/generate 节点经 config 埋 route/retrieve/generate span（LangGraph 注入要求注解严格为 `RunnableConfig`，可带默认值）；`reason_decide` 模型 JSON 支持可选 `why` 理由字段，缺省写「未给出理由」 |
+| `server/app/routers/master.py` | `_invoke_knowledge_graph` 创建 recorder 注入 configurable，经 out 内部 key 传 `_agent_persist` 的 assistant message id，persist 后 finish_run |
+| `web/src/views/DecisionAuditView.vue` | 监控 → 决策审计：列表（模式/状态/会话 ID/时间过滤）+ 详情线性节点卡（决策/理由/证据/指标展开） |
+| `web/src/router.ts` | `/monitoring/decisions` 列表、`/monitoring/decisions/:id` 详情 |
 | `web/src/views/MyTripsView.vue` | 工具 → 我的行程单：接 `GET /api/plans` 列表；空态引导 Multi Agent |
 | `server/app/message_ui.py` | 助手消息 UI 载荷：`plan_html`/`travel_data` 随 `message.citations` envelope 落库；`GET .../messages` 解包回放，旧消息可从 `plan_record` 补 url |
 | `web/src/views/ToolPlaceholderView.vue` | 工具占位页：读 `route.meta.title/sub`，展示「即将推出」 |

@@ -1,100 +1,90 @@
-# 当前子需求：AI 资讯（PRD-NEWS V1.1）
+# 当前子需求：AI 决策审计极简版（Trace.md V1.1）
 
-> 需求来源：`docs/PRD-NEWS.md`  
-> 前置：PRD-Job 已完成；`NEWS_REFRESH` handler 仍为 stub  
-> 默认源：`server/config/news_sources.yaml`（8 启用 + Reuters 备选关闭）
+> 需求来源：`docs/Trace.md`（用户需求文档，只读）  
+> 前置：包拆分已完成（`app/agent/` `app/ingest/` `app/rag/`）；监控侧栏与 `/monitoring/decisions` 占位页已接入  
+> 包路径约定：审计代码落 `app/audit/`（见 `docs/split.md`）
 
 ## 1. 目标
 
-在「工具 → AI资讯」实现资讯聚合、摘要、热度与 Top20 展示；通过现有 `NEWS_REFRESH` 定时任务异步更新，不重做调度基建。
+每条 assistant 回复落一条业务决策链（`DecisionRun` + 线性 `DecisionSpan`），在「监控 → 决策审计」页可按列表打开详情，复盘该轮路由与证据。本期覆盖 Chat 与知识 Agent 两条路径。
 
 ## 2. 背景
 
-通用定时任务（APScheduler → Redis → arq）已就绪。本子需求落地资讯业务管道与前端，并把 stub handler 接到真实 `NewsService.refresh`。
+现有 `/api/agent/trace` + 调试页是旁路实验：不落库、不绑 `message_id`。生产对话只能看到答案与引用，无法事后复盘「为什么选 RAG / Web / Graph、查了什么」。粒度：**每轮 assistant 消息一条链**，非整会话一条。
 
 ## 3. 功能范围
 
 ### 后端
 
-- 表：`news`、`news_daily_rank`、`news_settings`（Alembic）
-- 模块：`app/news/`（collector / parser / dedup / summarizer / scorer / service）、`routers/news.py`
-- 读 `server/config/news_sources.yaml`（或 `NEWS_SOURCES_PATH`）；URL 不硬编码
-- 管道：按启用板块过滤源 → RSS 采集 → 解析 → URL/标题 Hash 去重 → 摘要 + 重要性 → 热度 → 写当日排行榜快照
-- 正文仅用 RSS/API 字段，可空；不抓网页全文
-- API（Session）：
-  - `GET /api/news/hot?category=&date=`
-  - `GET /api/news/{id}`
-  - `GET/PUT /api/news/settings`（`enabled_categories`）
-- Worker：`news_handler` 读 `news_settings.enabled_categories` 后调用 refresh；任务页不配分类
-- `task_execution.result` 含 fetched/saved/summarized/failed/skipped_dup 等计数
+- 表：`decision_run`、`decision_span`（Alembic 迁移；模型入 `models.py`）
+- 埋点：`app/audit/recorder.py` 提供 `DecisionRecorder`（start_run / add_span / finish_run），经 LangGraph `RunnableConfig.configurable` 与函数参数注入
+- 接入点：
+  - Chat：`/api/chat` 与 `/api/chat/stream`（共用 `_http_chat` → `run_chat`）→ `retrieve` + `generate` 两个 span
+  - 知识 Agent：`task=knowledge` → `_invoke_knowledge_graph` → `graph.py` 的 reason / run_tool / generate → `route` + `retrieve` + `generate` span（多圈多组）
+- API（Session 鉴权，仅本人数据，新 `routers/decisions.py`）：
+  - `GET /api/decisions`（列表：conversation_id / mode / status / 时间过滤）
+  - `GET /api/decisions/{run_id}`（run + 有序 spans）
+  - `GET /api/messages/{id}/decision`（按 assistant 消息反查，对话页预留）
 
 ### 前端
 
-- 路由：`/tools/news`、`/tools/news/:id`；入口在工具菜单
-- 列表：启用板块勾选 + 频道（全部/科技/AI/金融）+ 当日 Top20
-- 详情：标题/来源/时间/分类/摘要/正文（可空）/查看原文
-- 样式遵循 `docs/style.md`（或项目 `style.md`）
-- 无「立即更新」按钮；无源管理 UI；历史日 API 就绪，UI 第一版只展示当天
+- `/monitoring/decisions` 占位页替换为 `DecisionAuditView.vue`
+- 列表：时间、模式、问题摘要、状态；筛 conversation_id / 时间
+- 详情：自上而下线性节点（route → retrieve → generate），展开看 decision / rationale / evidence / metrics
+- 样式对齐 `web/style.md` Operate 工具页；不做 DAG / 多 Tab
 
 ### 文档
 
-- 完成后同步 `docs/TECH.md`、`docs/PRD.md`（Skill Phase 4）；不改用户需求文档 `PRD-NEWS.md`
+- Phase 4 同步 `docs/TECH.md`、`docs/PRD.md`；不改 `docs/Trace.md`
 
 ## 4. 非目标
 
-- 重做 APScheduler / Redis / Worker / 通用任务管理
-- 语义去重、Embedding 聚类、多源出现加分
-- LLM 改分类；trafilatura 抓全文
-- 源管理 UI；资讯页立即执行
-- 无限滚动 / 全库浏览器
-- Celery / Kafka
+- LangSmith / 自建 Trace 平台 / 新增 Docker 可观测栈
+- 三受众 Explain / Validator / Judge；独立 Token 看板、告警熔断
+- CoT 原文展示（只记结构化摘要）
+- 操作审计（PRD-OPERATIONS 另期）
+- Master / plan / booking 全路径埋点（下一期）
+- `/api/agent/trace` 强制合并、`/debug` 改造（继续旁路）
+- 对话页「查看决策链」入口（可选增强，不做验收项）
 
 ## 5. 业务规则
 
 | 规则 | 内容 |
 | --- | --- |
-| 分类 | 仅来源默认 `technology` / `ai` / `finance` |
-| 启用板块 | 资讯页设置；默认三开；任务执行时读取 |
-| 热度 | `0.45*importance_norm + 0.25*source_weight + 0.30*freshness`，clamp 0～100 |
-| 重要性失败 | `importance_score = 5` |
-| 时区 | `Asia/Shanghai`；无 published_at 用 collected_at；超 24h 不入当日榜 |
-| 去重 | URL 唯一；同 URL 不重 LLM；标题 Hash 冲突 skip |
-| 排行榜 | 写 `news_daily_rank`（含 `all`）；API 读快照；支持 `?date=` |
-| 综合榜 | 三分类合并后按 heat Top20（非三榜拼接） |
-| 金融 | Prompt 禁止投资建议 |
-| 任务类型 | `NEWS_REFRESH` / 展示名「AI资讯更新」 |
-| 失败 | 单条失败继续；整源不可用记错误 |
+| 粒度 | 每轮 assistant 消息一条 `decision_run`；`mode` ∈ `chat` / `knowledge` |
+| run 状态 | `running` → `success` / `failed`；开始即落库（独立 session），正常轮绑 `message_id`，失败轮可空 |
+| span 结构 | `seq` 线性递增；`node_type` ∈ `route` / `retrieve` / `generate`；无 `parent_span_id` 树 |
+| route/reason | `decision={"action":...}` + 短 `rationale`（模型未给理由写「未给出理由」） |
+| retrieve | 工具名、query、候选/入选 chunk id（excerpt 截断）；web 命中记 `type:"web"` |
+| generate | 一句结论摘要（答案全文已在 message）+ 可选 `elapsed_ms` / `tokens` |
+| 隔离 | Recorder 全程 try/except 包裹；任何故障不影响主回答（不落库或 status=failed） |
+| 鉴权 | 列表/详情/反查均按 Session 用户过滤；他人 run 返回 404 |
 
 ## 6. 输入与输出
 
-- 输入：yaml 源、启用板块、定时/手动触发的 Worker 任务
-- 输出：`news` 行、当日（及历史）`news_daily_rank`、热榜/详情/设置 API、资讯前端页
+- 输入：Chat 请求、knowledge Agent 请求（现有 `/api/chat*`、`/api/agent*`）
+- 输出：`decision_run` / `decision_span` 行；3 个查询 API；决策审计前端页
 
 ## 7. 涉及模块
 
-- 新：`server/app/news/*`、`routers/news.py`、迁移、`web` 资讯视图与路由
-- 改：`news_handler.py`、`news_service.py`（或迁入 `news/service.py`）、`models.py`、`schemas.py`、`main.py`、`config.py`、工具菜单导航
-- 配置：`server/config/news_sources.yaml`、`.env` 可选 `NEWS_*`
+- 新：`app/audit/__init__.py`、`app/audit/recorder.py`、`routers/decisions.py`、迁移、`web/src/views/DecisionAuditView.vue`
+- 改：`models.py`、`schemas.py`、`main.py`（include router）、`app/rag/chat.py`（返回 assistant message id + 埋点）、`routers/chat.py`（注入 recorder）、`routers/master.py`（knowledge 路径埋点 + persist 回传 message id）、`app/agent/graph.py`（三节点从 configurable 取 recorder）、`web/src/router.ts`、`web/src/api.ts`
+- 不动：`master.py` 埋点、plan/booking 子图、`/api/agent/trace`、`/debug`
 
 ## 8. 验收标准
 
 | ID | 标准 |
 | --- | --- |
-| AC-01 | 工具 → AI资讯可打开 |
-| AC-02 | 默认「全部」 |
-| AC-03 | 四个浏览频道 |
-| AC-04/05 | 全部与各分类最多 20 条 |
-| AC-06 | 列表含标题/摘要/来源/时间/分类/热度 |
-| AC-07/08 | URL 与标题 Hash 去重 |
-| AC-09/10 | AI 摘要与热度 |
-| AC-11 | 金融无投资建议 |
-| AC-12 | 定时 `NEWS_REFRESH` 可更新 |
-| AC-13/14 | 资讯页启停板块；取消后下次任务不更新该分类 |
-| AC-15 | 定时任务页立即执行可更新 |
-| AC-16 | 单条失败不拖垮整任务 |
-| AC-17 | 热榜读快照；`?date=` 可读历史 |
-| AC-18 | 无正文可打开详情，不抓网页 |
+| AC-01 | Chat 问一轮 → DB 有 `decision_run`(mode=chat, status=success, 绑 message_id) + retrieve/generate spans |
+| AC-02 | knowledge Agent 问一轮 → run + route/retrieve/generate spans，多圈时 span 按序递增 |
+| AC-03 | `GET /api/messages/{assistant_msg_id}/decision` 反查到该 run |
+| AC-04 | 监控页列表可打开详情，能看到路由 action 与证据 chunk id |
+| AC-05 | Recorder 抛异常时主回答不受影响（单测模拟 recorder 故障） |
+| AC-06 | 未登录 401；他人 run/消息 404 |
+| AC-07 | 前端路由可进入列表与详情；typecheck 通过 |
 
 ## 9. 待确认问题
 
-无阻塞项（V1.1 已拍板；默认源已写入 yaml）。若确认①无异议 → Phase 2。
+1. Chat 非流式 `/api/chat` 与流式 `/api/chat/stream` 共用实现，计划一并落链（Trace 表只列了 stream）——默认两者都接，可接受？
+2. run 起始即落库（status=running，独立 DB session），完成后更新状态并写 spans——比「完成后一次性写」多一次写入但可观测失败轮，默认按此实现？
+3. 列表分页默认 `limit=50&offset=0` + `mode/status/conversation_id/start/end` 过滤——够用？

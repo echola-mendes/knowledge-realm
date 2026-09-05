@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit import DecisionRecorder
 from app.db import session_scope
 from app.deps import current_user
 from app.kb import KnowledgeBaseAccessError, owned_document, resolve_knowledge_base_id
@@ -122,6 +123,8 @@ def _invoke_knowledge_graph(
 ) -> dict[str, Any]:
     """旧版单知识库 Agent：直连 graph.py，不经 Master 意图路由。"""
     graph_task = "report" if body.task == "report" else "agent"
+    recorder = DecisionRecorder(session=session)
+    recorder.start_run(user_id=user_id, conversation_id=convo.id, mode="knowledge", query=body.query)
     state = initial_state(
         body.query,
         knowledge_base_id=kb_id,
@@ -131,23 +134,30 @@ def _invoke_knowledge_graph(
         ltm_hits=ltm_hits,
         allow_web=bool(body.allow_web),
     )
-    out = build_graph().invoke(
-        state,
-        config={
-            "configurable": {
-                "thread_id": str(convo.id),
-                "session": session,
-                "user_id": user_id,
-            }
-        },
-    )
-    return {
+    try:
+        out = build_graph().invoke(
+            state,
+            config={
+                "configurable": {
+                    "thread_id": str(convo.id),
+                    "session": session,
+                    "user_id": user_id,
+                    "decision_recorder": recorder,
+                }
+            },
+        )
+    except Exception:
+        recorder.finish_run("failed")
+        raise
+    final = {
         "answer": out.get("answer") or "",
         "citations": list(out.get("citations") or []),
         "loop_count": int(out.get("loop_count") or 0),
         "usage": out.get("usage"),
         "intent": "knowledge",
     }
+    final["_decision_recorder"] = recorder
+    return final
 
 
 def _agent_persist(
@@ -176,18 +186,18 @@ def _agent_persist(
         bookings=bookings or None,
     )
     session.add(Message(conversation_id=convo.id, role="user", content=body.query, citations=None))
-    session.add(
-        Message(
-            conversation_id=convo.id,
-            role="assistant",
-            content=answer,
-            citations=assistant_citations,
-        )
+    assistant_msg = Message(
+        conversation_id=convo.id,
+        role="assistant",
+        content=answer,
+        citations=assistant_citations,
     )
+    session.add(assistant_msg)
     convo.mode = task
     refresh_conversation_summary(session, convo.id)
     session.commit()
     session.refresh(convo)
+    out["_assistant_message_id"] = assistant_msg.id
     return AgentOut(
         task=task,
         knowledge_base_id=kb_id,
@@ -245,7 +255,16 @@ def _agent_out(body: AgentRequest, session: Session, user_id: uuid.UUID) -> Agen
         out = _invoke_knowledge_graph(
             body, session, user_id, kb_id, convo, history_msgs, summary_text, ltm_hits
         )
-        return _agent_persist(session, task, kb_id, convo, body, out)
+        recorder = out.pop("_decision_recorder", None)
+        try:
+            result = _agent_persist(session, task, kb_id, convo, body, out)
+        except Exception:
+            if recorder:
+                recorder.finish_run("failed")
+            raise
+        if recorder:
+            recorder.finish_run("success", message_id=out.get("_assistant_message_id"))
+        return result
     master_task = "report" if task == "report" else "agent"
     state, configurable = _master_state_config(body, master_task, convo, history_msgs, summary_text, ltm_hits)
     configurable["session"] = session
@@ -306,6 +325,10 @@ def agent_stream(
                 if node == "intent" and updates.get("intent"):
                     emit({"type": "intent", "intent": updates["intent"]})
     result = _agent_persist(session, task, kb_id, convo, body, final)
+    if task == "knowledge":
+        recorder = final.get("_decision_recorder")
+        if recorder:
+            recorder.finish_run("success", message_id=final.get("_assistant_message_id"))
     # 兜底：save 已写入 final.plan_html 但 emit 漏发时，仍推送方案页给前端
     final_plan_html = final.get("plan_html") if isinstance(final.get("plan_html"), dict) else None
 

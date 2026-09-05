@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import time
 import uuid
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.recorder import DecisionRecorder
 from app.ingest.index import STATUS_READY
 from app.kb import owned_document, resolve_knowledge_base_id
 from app import llm as llm_mod
@@ -45,6 +47,7 @@ def run_chat(
     document_id: uuid.UUID | None = None,
     conversation_id: uuid.UUID | None = None,
     k: int = 5,
+    recorder: DecisionRecorder | None = None,
 ) -> tuple[Conversation, str, list[dict]]:
     kb_id = resolve_knowledge_base_id(session, knowledge_base_id, user_id)
     if document_id is not None:
@@ -55,6 +58,7 @@ def run_chat(
             raise ValueError("文档未完成")
         if knowledge_base_id is not None and doc.knowledge_base_id != kb_id:
             raise ValueError("文档不属于该知识库")
+    retrieve_started = time.monotonic()
     hits = search_chunks(
         session,
         query,
@@ -63,6 +67,23 @@ def run_chat(
         document_id=document_id,
         k=k,
     )
+    if recorder is not None:
+        recorder.add_span(
+            "retrieve",
+            decision={"tool": "search_knowledge", "query": query, "k": k},
+            evidence_refs=[
+                {
+                    "type": "chunk",
+                    "id": str(hit.chunk_id),
+                    "document_id": str(hit.document_id),
+                    "document_name": hit.document_name,
+                    "score": hit.score,
+                    "excerpt": hit.content[:80],
+                }
+                for hit in hits
+            ],
+            metrics={"elapsed_ms": int((time.monotonic() - retrieve_started) * 1000), "hits": len(hits)},
+        )
     if conversation_id is None:
         convo = Conversation(user_id=user_id, knowledge_base_id=kb_id, title=query[:40], mode="chat")
         session.add(convo)
@@ -74,8 +95,11 @@ def run_chat(
             raise LookupError("会话不存在")
         convo.mode = "chat"
         history = _history(session, convo.id)
+    if recorder is not None:
+        recorder.start_run(user_id=user_id, conversation_id=convo.id, mode="chat", query=query)
     if not llm_mod.llm_keys_ready():
         raise PermissionError("未配置 LLM API Key")
+    generate_started = time.monotonic()
     if hits:
         context = "\n\n".join(f"[{hit.document_name}]\n{hit.content}" for hit in hits)
         answer = llm_mod.chat(query, context, history)
@@ -83,8 +107,19 @@ def run_chat(
     else:
         answer = llm_mod.chat(query, "", history)
         cites = []
+    if recorder is not None:
+        recorder.add_span(
+            "generate",
+            decision={"summary": answer[:120]},
+            metrics={"elapsed_ms": int((time.monotonic() - generate_started) * 1000)},
+        )
     session.add(Message(conversation_id=convo.id, role="user", content=query, citations=None))
-    session.add(Message(conversation_id=convo.id, role="assistant", content=answer, citations=cites or None))
+    assistant = Message(
+        conversation_id=convo.id, role="assistant", content=answer, citations=cites or None
+    )
+    session.add(assistant)
     session.commit()
     session.refresh(convo)
+    if recorder is not None:
+        recorder.finish_run("success", message_id=assistant.id)
     return convo, answer, cites

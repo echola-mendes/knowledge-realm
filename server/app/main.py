@@ -11,6 +11,7 @@ from app.kb import ensure_default_knowledge_base
 from app.routers.auth import router as auth_router
 from app.routers.chat import router as chat_router
 from app.routers.chunk_settings import router as chunk_settings_router
+from app.routers.decisions import router as decisions_router
 from app.routers.documents import router as documents_router
 from app.routers.knowledge_bases import router as kb_router
 from app.routers.master import router as master_router
@@ -71,6 +72,7 @@ def create_app(*, load_file: bool = True, ensure_default: bool = True) -> FastAP
     app.include_router(chunk_settings_router)
     app.include_router(chat_router)
     app.include_router(master_router)
+    app.include_router(decisions_router)
     app.include_router(insights_router)
     app.include_router(recommendations_router)
     app.include_router(plans_router)

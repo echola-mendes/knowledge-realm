@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.audit import DecisionRecorder
 from app.ingest import index as index_mod
 from app.rag.chat import run_chat
 from app.deps import current_user
@@ -23,6 +24,7 @@ router = APIRouter(prefix="/api", tags=["chat"])
 def _http_chat(body: ChatRequest, session: Session, user_id: uuid.UUID) -> ChatResponse:
     if not index_mod.embedding_keys_ready():
         raise HTTPException(status_code=503, detail="未配置 Embedding API Key")
+    recorder = DecisionRecorder(session=session)
     try:
         convo, answer, cites = run_chat(
             session,
@@ -32,15 +34,23 @@ def _http_chat(body: ChatRequest, session: Session, user_id: uuid.UUID) -> ChatR
             document_id=body.document_id,
             conversation_id=body.conversation_id,
             k=body.k,
+            recorder=recorder,
         )
     except KnowledgeBaseAccessError as exc:
+        recorder.finish_run("failed")
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
+        recorder.finish_run("failed")
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LookupError as exc:
+        recorder.finish_run("failed")
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PermissionError as exc:
+        recorder.finish_run("failed")
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception:
+        recorder.finish_run("failed")
+        raise
     return ChatResponse(
         conversation_id=convo.id,
         answer=answer,

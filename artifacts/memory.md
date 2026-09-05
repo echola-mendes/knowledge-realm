@@ -6,6 +6,7 @@
 |---|---|---|---|
 | 通用定时任务（PRD-Job） | 2026-09-04 | APScheduler+Redis+arq+任务页；NEWS_REFRESH handler 仍 stub | 全 ✅ |
 | AI资讯（PRD-NEWS） | 2026-09-04 | news 表/管道/API/前端热榜；NEWS_REFRESH 接真实 refresh；源 yaml | 全 ✅ |
+| AI决策审计（Trace.md V1.1） | 2026-09-06 | decision_run/span 表 + DecisionRecorder(app/audit/) + chat/knowledge 埋点 + 3 查询 API + 决策审计前端页 | 全 ✅ |
 
 ## 经验
 
@@ -109,3 +110,19 @@
 - `NEWS_REFRESH` handler 仍为 stub（`news_pipeline_pending`）；资讯管道见 PRF-NEWS
 - `KnowledgeGraphView.vue` 三处模板类型已修，`npm run typecheck` 通过
 - `REDIS_URL` 必须是 `redis://`（不要写成 `http://`）
+
+### LangGraph config 注入要求注解严格为 RunnableConfig
+
+日期：2026-09-06　来源：AI决策审计
+
+问题：节点参数写成 `config: RunnableConfig | None = None` 后 LangGraph 不再注入 config（spans 全丢）。
+
+解法：注解必须是 `RunnableConfig` 本体；需要测试直接调用时可加默认值 `= None`。
+
+### 审计 run 行须随主事务落库（savepoint）
+
+日期：2026-09-06　来源：AI决策审计
+
+问题：Recorder 用独立 session 在主事务提交前写 `decision_run`，引用未提交 conversation 触发 FK 违反（被吞异常后静默丢链）。
+
+解法：`start_run` 用 `session.begin_nested()`（savepoint）在主会话落 run 行，随主事务一起提交；spans 与终态仍走独立会话。

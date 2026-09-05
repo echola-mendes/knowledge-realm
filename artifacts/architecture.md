@@ -73,3 +73,9 @@
 - 身份只来自 Session；`user_id` 禁止来自请求体。
 - 搜索/出方案：只读，无 HITL。
 - `book_*` / `cancel_*`：须经 `pending_action` HITL；Step 3 写操作限流 30/min/用户。
+
+## 8. 决策审计埋点（Trace.md V1.1）
+
+- 新增 Agent 路径时**必须**接入 `app/audit/recorder.py` 的 `DecisionRecorder`：经 `RunnableConfig.configurable["decision_recorder"]` 注入子图节点（注解须严格为 `RunnableConfig`）。
+- run 行经主流程会话 savepoint 落库（随主事务提交）；spans 与终态由 Recorder 用独立会话写。
+- Recorder 公开方法吞异常——**任何审计故障不得影响主回答**。

@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -429,3 +430,46 @@ class NewsSettings(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class DecisionRun(Base):
+    __tablename__ = "decision_run"
+    __table_args__ = (Index("ix_decision_run_user_created", "user_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("message.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversation.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    spans: Mapped[list["DecisionSpan"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan", order_by="DecisionSpan.seq"
+    )
+
+
+class DecisionSpan(Base):
+    __tablename__ = "decision_span"
+    __table_args__ = (Index("ix_decision_span_run_seq", "run_id", "seq"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("decision_run.id", ondelete="CASCADE"), nullable=False
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    node_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    decision: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence_refs: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    metrics: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    run: Mapped[DecisionRun] = relationship(back_populates="spans")

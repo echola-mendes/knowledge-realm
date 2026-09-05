@@ -597,3 +597,32 @@ class NewsSettingsOut(BaseModel):
 
 class NewsSettingsIn(BaseModel):
     enabled_categories: list[str]
+
+
+class DecisionSpanOut(BaseModel):
+    id: uuid.UUID
+    seq: int
+    node_type: str
+    decision: dict[str, Any] | None = None
+    rationale: str | None = None
+    evidence_refs: list[dict[str, Any]] | None = None
+    metrics: dict[str, Any] | None = None
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class DecisionRunOut(BaseModel):
+    id: uuid.UUID
+    message_id: uuid.UUID | None = None
+    conversation_id: uuid.UUID
+    mode: str
+    query: str
+    status: str
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class DecisionRunDetail(DecisionRunOut):
+    spans: list[DecisionSpanOut] = []

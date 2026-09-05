@@ -23,6 +23,7 @@ import BasicsLayout from "./views/BasicsLayout.vue";
 import MenuManageView from "./views/MenuManageView.vue";
 import JobsManageView from "./views/JobsManageView.vue";
 import MonitoringLayout from "./views/MonitoringLayout.vue";
+import DecisionAuditView from "./views/DecisionAuditView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -87,11 +88,14 @@ export const router = createRouter({
         {
           path: "decisions",
           name: "monitoring-decisions",
-          component: ToolPlaceholderView,
-          meta: {
-            title: "决策审计",
-            sub: "记录 AI 问答与 Agent 的结构化决策链、依据与解释。需求见 docs/PRD-DECISIONS.md，能力后续接入。",
-          },
+          component: DecisionAuditView,
+          meta: { title: "决策审计", sub: "每轮 AI 回答的决策链审计。" },
+        },
+        {
+          path: "decisions/:id",
+          name: "monitoring-decision-detail",
+          component: DecisionAuditView,
+          meta: { title: "决策审计", sub: "决策链详情。" },
         },
         {
           path: "operations",

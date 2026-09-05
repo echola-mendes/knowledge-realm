@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from typing import Any, Literal, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
+from app.audit.recorder import recorder_from_config
 from app.agent.tools import search_graph, search_knowledge, web_search
 from app.rag.search import SearchHit
 
@@ -29,6 +31,7 @@ class AgentState(TypedDict, total=False):
     max_loops: int
     next_action: Literal["search", "web", "generate"]
     search_query: str
+    rationale: str
     answer: str
     subtasks: list[str]
     subtask_index: int
@@ -147,6 +150,7 @@ def reason_decide(state: AgentState) -> dict[str, Any]:
                     else "禁止检索互联网，不得输出 action=web。"
                 )
                 + '复杂问题仅当尚无子任务时，可加 {{"subtasks":["步骤1","步骤2"]}}（最多3条）。'
+                "每个 JSON 可加 {{\"why\":\"一句话理由\"}}。"
                 "之后每圈只选 action，禁止再写 subtasks。"
                 "不要编造检索结果。禁止因为知识库无结果就自动改为联网。",
             ),
@@ -169,9 +173,10 @@ def reason_decide(state: AgentState) -> dict[str, Any]:
         end = raw.rfind("}")
         parsed = json.loads(raw[start : end + 1] if start >= 0 and end >= start else raw)
     except json.JSONDecodeError:
-        return {"next_action": "generate", **_usage_extra(usage)}
+        return {"next_action": "generate", "rationale": "未给出理由", **_usage_extra(usage)}
     if not isinstance(parsed, dict):
-        return {"next_action": "generate", **_usage_extra(usage)}
+        return {"next_action": "generate", "rationale": "未给出理由", **_usage_extra(usage)}
+    rationale = str(parsed.get("why") or "").strip() or "未给出理由"
     extra: dict[str, Any] = {}
     can_write_plan = int(state.get("loop_count") or 0) == 0 and not clip_subtasks(state.get("subtasks") or [])
     if can_write_plan:
@@ -181,22 +186,41 @@ def reason_decide(state: AgentState) -> dict[str, Any]:
     action = str(parsed.get("action") or "")
     query = str(parsed.get("query") or "").strip() or _current_subtask(state, extra.get("subtasks"))
     if action in ("rag", "search") and query:
-        return {"next_action": "search", "search_query": query, **extra, **_usage_extra(usage)}
+        return {"next_action": "search", "search_query": query, "rationale": rationale, **extra, **_usage_extra(usage)}
     if action == "graph" and query and state.get("knowledge_base_id"):
-        return {"next_action": "graph", "search_query": query, **extra, **_usage_extra(usage)}
+        return {"next_action": "graph", "search_query": query, "rationale": rationale, **extra, **_usage_extra(usage)}
     if action == "web" and query and state.get("allow_web"):
-        return {"next_action": "web", "search_query": query, **extra, **_usage_extra(usage)}
-    return {"next_action": "generate", **extra, **_usage_extra(usage)}
+        return {"next_action": "web", "search_query": query, "rationale": rationale, **extra, **_usage_extra(usage)}
+    return {"next_action": "generate", "rationale": rationale, **extra, **_usage_extra(usage)}
 
 
-def node_reason(state: AgentState) -> dict[str, Any]:
+def node_reason(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]:
+    recorder = recorder_from_config(config)
     if int(state.get("loop_count") or 0) >= int(state.get("max_loops") or MAX_LOOPS):
+        if recorder:
+            recorder.add_span(
+                "route", decision={"action": "generate"}, rationale="已达循环上限，直接生成"
+            )
         return {"next_action": "generate"}
     existing = clip_subtasks(state.get("subtasks") or [])
     idx = int(state.get("subtask_index") or 0)
     if existing and idx >= len(existing):
+        if recorder:
+            recorder.add_span(
+                "route", decision={"action": "generate"}, rationale="子任务已完成，直接生成"
+            )
         return {"next_action": "generate"}
     updates = reason_decide(state)
+    if recorder:
+        recorder.add_span(
+            "route",
+            decision={
+                "action": str(updates.get("next_action") or ""),
+                "query": str(updates.get("search_query") or ""),
+            },
+            rationale=str(updates.get("rationale") or "未给出理由"),
+            metrics=_usage_extra(updates.get("usage")).get("usage"),
+        )
     if existing or int(state.get("loop_count") or 0) != 0:
         updates.pop("subtasks", None)
         return updates
@@ -222,15 +246,58 @@ def node_run_tool(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     if state.get("next_action") == "web":
         if not state.get("allow_web"):
             return {"loop_count": loop_count, "subtask_index": idx}
+        web_started = time.monotonic()
         web_hits = list(state.get("web_hits") or [])
         web_hits.extend(web_search(query))
         if len(web_hits) > MAX_CITATIONS:
             web_hits = web_hits[-MAX_CITATIONS:]
+        recorder = recorder_from_config(config)
+        if recorder:
+            recorder.add_span(
+                "retrieve",
+                decision={"tool": "web_search", "query": query},
+                evidence_refs=[
+                    {
+                        "type": "web",
+                        "id": str(h.get("url") or ""),
+                        "title": str(h.get("title") or ""),
+                    }
+                    for h in web_hits
+                ],
+                metrics={
+                    "elapsed_ms": int((time.monotonic() - web_started) * 1000),
+                    "hits": len(web_hits),
+                },
+            )
         return {"web_hits": web_hits, "loop_count": loop_count, "subtask_index": idx}
+    tool_started = time.monotonic()
     if state.get("next_action") == "graph" and kb_id:
         hits = search_graph(session, query, user_id=user_id, knowledge_base_id=kb_id)
+        tool_name = "search_graph"
     else:
         hits = search_knowledge(session, query, user_id=user_id, knowledge_base_id=kb_id)
+        tool_name = "search_knowledge"
+    recorder = recorder_from_config(config)
+    if recorder:
+        recorder.add_span(
+            "retrieve",
+            decision={"tool": tool_name, "query": query},
+            evidence_refs=[
+                {
+                    "type": "chunk",
+                    "id": str(hit.chunk_id),
+                    "document_id": str(hit.document_id),
+                    "document_name": hit.document_name,
+                    "score": hit.score,
+                    "excerpt": hit.content[:80],
+                }
+                for hit in hits
+            ],
+            metrics={
+                "elapsed_ms": int((time.monotonic() - tool_started) * 1000),
+                "hits": len(hits),
+            },
+        )
     cites = list(state.get("citations") or [])
     cites.extend(_hit_to_citation(hit) for hit in hits)
     if len(cites) > MAX_CITATIONS:
@@ -280,9 +347,16 @@ def generate_answer(state: AgentState) -> tuple[str, dict[str, int] | None]:
     return answer, getattr(llm_mod, "LAST_USAGE", None)
 
 
-def node_generate(state: AgentState) -> dict[str, Any]:
+def node_generate(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]:
+    generate_started = time.monotonic()
     result = generate_answer(state)
     answer, usage = result if isinstance(result, tuple) else (result, None)
+    recorder = recorder_from_config(config)
+    if recorder:
+        metrics: dict[str, Any] = {"elapsed_ms": int((time.monotonic() - generate_started) * 1000)}
+        if usage:
+            metrics["tokens"] = usage
+        recorder.add_span("generate", decision={"summary": answer[:120]}, metrics=metrics)
     messages = list(state.get("messages") or [])
     messages.append({"role": "assistant", "content": answer})
     updates: dict[str, Any] = {"answer": answer, "messages": messages}

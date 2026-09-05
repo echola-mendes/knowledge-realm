@@ -916,3 +916,53 @@ export function putNewsSettings(enabled_categories: string[]) {
     body: JSON.stringify({ enabled_categories }),
   });
 }
+
+export type DecisionSpanItem = {
+  id: string;
+  seq: number;
+  node_type: string;
+  decision: Record<string, unknown> | null;
+  rationale: string | null;
+  evidence_refs: Array<Record<string, unknown>> | null;
+  metrics: Record<string, unknown> | null;
+  created_at?: string | null;
+};
+
+export type DecisionRunItem = {
+  id: string;
+  message_id: string | null;
+  conversation_id: string;
+  mode: string;
+  query: string;
+  status: string;
+  created_at?: string | null;
+};
+
+export type DecisionRunDetailItem = DecisionRunItem & { spans: DecisionSpanItem[] };
+
+export type DecisionListQuery = {
+  conversation_id?: string;
+  mode?: string;
+  status?: string;
+  start?: string;
+  end?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export function listDecisions(query: DecisionListQuery = {}) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== "") params.set(key, String(value));
+  }
+  const qs = params.toString();
+  return api<DecisionRunItem[]>(`/api/decisions${qs ? `?${qs}` : ""}`);
+}
+
+export function getDecision(runId: string) {
+  return api<DecisionRunDetailItem>(`/api/decisions/${runId}`);
+}
+
+export function getMessageDecision(messageId: string) {
+  return api<DecisionRunDetailItem>(`/api/messages/${messageId}/decision`);
+}
