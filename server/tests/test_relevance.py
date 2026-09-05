@@ -5,9 +5,9 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.config import get_settings, load_settings
-from app.index import index_document
+from app.ingest.index import index_document
 from app.main import create_app, reset_app_state
-from app.parse import parse_text_document
+from app.ingest.parse import parse_text_document
 import app.llm as llm_mod
 
 
@@ -32,7 +32,7 @@ def skip_rerank():
 
 
 def test_low_rerank_drops_hits_high_keeps(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.llm.chat", lambda question, context, history=None: "闲聊")
     llm_mod.CHAT_CALLS = 0
@@ -43,7 +43,7 @@ def test_low_rerank_drops_hits_high_keeps(monkeypatch):
         return [[0.01] * dim for _ in texts]
 
     monkeypatch.setattr("app.search.embed_texts", fake_embed)
-    monkeypatch.setattr("app.index.embed_texts", fake_embed)
+    monkeypatch.setattr("app.ingest.index.embed_texts", fake_embed)
     monkeypatch.setattr(
         "app.search.score_documents",
         lambda query, documents: [scores[0]] * len(documents),

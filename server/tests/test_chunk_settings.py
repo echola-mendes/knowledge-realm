@@ -4,10 +4,10 @@ import uuid
 
 from sqlalchemy import func, select
 
-from app.chunk import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, split_markdown
-from app.chunk_settings import get_user_chunk_settings, upsert_user_chunk_settings
+from app.ingest.chunk import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, split_markdown
+from app.ingest.chunk_settings import get_user_chunk_settings, upsert_user_chunk_settings
 from app.db import session_scope
-from app.index import process_document
+from app.ingest.index import process_document
 from app.models import Document, DocumentChunk, KnowledgeBase, User, UserChunkSetting
 from app.passwords import hash_password
 from http_client import api_client
@@ -112,7 +112,7 @@ def test_change_settings_does_not_rewrite_existing_chunks():
 
 
 def test_reindex_updates_document_chunk_params():
-    from app.index import reindex_document
+    from app.ingest.index import reindex_document
 
     with api_client() as client:
         note = client.post(

@@ -3,10 +3,10 @@ import uuid
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
-from app.index import index_document
+from app.ingest.index import index_document
 from app.llm import CHAT_CALLS
 from app.main import create_app, reset_app_state
-from app.parse import parse_pdf_document, parse_text_document
+from app.ingest.parse import parse_pdf_document, parse_text_document
 import app.llm as llm_mod
 
 
@@ -44,9 +44,9 @@ def _make_text_pdf(text: str) -> bytes:
 
 
 def test_search_isolates_kb_tag_kind_and_skips_chat(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.search.embed_texts", _directional_embed)
-    monkeypatch.setattr("app.index.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     llm_mod.CHAT_CALLS = 0
     with _client() as client:
         kb_a = client.post("/api/knowledge-bases", json={"name": f"库A-{uuid.uuid4().hex[:8]}"}).json()
@@ -122,9 +122,9 @@ def test_search_isolates_kb_tag_kind_and_skips_chat(monkeypatch):
 
 
 def test_search_time_window_excludes_old_docs(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.search.embed_texts", _directional_embed)
-    monkeypatch.setattr("app.index.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     from datetime import datetime, timedelta, timezone
 
     from app.db import session_scope

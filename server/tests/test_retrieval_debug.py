@@ -1,9 +1,9 @@
 import uuid
 
 from app.config import get_settings
-from app.index import index_document
+from app.ingest.index import index_document
 from app.main import reset_app_state
-from app.parse import parse_text_document
+from app.ingest.parse import parse_text_document
 
 
 def _client():
@@ -30,9 +30,9 @@ def _directional_embed(texts: list[str]) -> list[list[float]]:
 
 
 def test_retrieval_debug_uses_agent_search_query(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.search.embed_texts", _directional_embed)
-    monkeypatch.setattr("app.index.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
 
     def fake_plan(question: str, *, citations=None):
@@ -63,9 +63,9 @@ def test_retrieval_debug_uses_agent_search_query(monkeypatch):
 
 
 def test_retrieval_debug_stages_and_eval(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.search.embed_texts", _directional_embed)
-    monkeypatch.setattr("app.index.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.llm.chat", lambda question, context, history=None: "假LLM答案")
     monkeypatch.setattr(

@@ -8,7 +8,7 @@ from app.user import ensure_default_user
 from app.main import create_app, reset_app_state
 from app.models import Document
 from app.routers import documents as documents_mod
-from app.storage import original_path
+from app.ingest.storage import original_path
 from sqlalchemy import func, select
 
 

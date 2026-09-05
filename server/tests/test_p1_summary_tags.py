@@ -5,10 +5,10 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.db import session_scope
-from app.index import index_document
+from app.ingest.index import index_document
 from app.main import create_app, reset_app_state
 from app.models import Document, DocumentTag, Tag
-from app.parse import parse_text_document
+from app.ingest.parse import parse_text_document
 
 
 def _client() -> TestClient:
@@ -19,8 +19,8 @@ def _client() -> TestClient:
 
 
 def test_summarize_and_auto_tags_keep_existing(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.index.embed_texts", lambda texts: [[0.01] * get_settings().embedding_dim for _ in texts])
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embed_texts", lambda texts: [[0.01] * get_settings().embedding_dim for _ in texts])
     monkeypatch.setattr("app.routers.documents.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.routers.documents.summarize_document", lambda text: "假摘要")
     monkeypatch.setattr("app.routers.documents.suggest_tag_names", lambda text: ["AI生成", "保留测"])
@@ -81,13 +81,13 @@ def test_summarize_and_auto_tags_keep_existing(monkeypatch):
 
 
 def test_index_writes_overview_and_tags(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.chains.summarize_document", lambda text: "上传概述")
     monkeypatch.setattr("app.chains.suggest_tag_names", lambda text: ["自动标"])
     from app.chains import enrich_document_after_ready
 
-    monkeypatch.setattr("app.index._enrich_after_index", enrich_document_after_ready)
+    monkeypatch.setattr("app.ingest.index._enrich_after_index", enrich_document_after_ready)
     with _client() as client:
         created = client.post("/api/documents/notes", json={"content": "用于上传概述的正文", "filename": "overview.md"})
         assert created.status_code == 200

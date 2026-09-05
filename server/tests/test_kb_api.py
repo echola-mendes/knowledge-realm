@@ -8,7 +8,7 @@ from app.db import session_scope
 from app.kb import DEFAULT_KB_NAME
 from app.main import create_app, reset_app_state
 from app.models import Document, KnowledgeBase
-from app.storage import files_dir, parsed_dir
+from app.ingest.storage import files_dir, parsed_dir
 
 
 def _client() -> TestClient:

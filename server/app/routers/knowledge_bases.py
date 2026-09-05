@@ -12,7 +12,7 @@ from app.deps import current_user
 from app.es_bm25 import EsNotConfiguredError, delete_knowledge_base_chunks
 from app.models import Document, DocumentVersion, KnowledgeBase, User
 from app.schemas import KnowledgeBaseCreate, KnowledgeBaseOut, KnowledgeBaseUpdate
-from app.storage import remove_knowledge_base_files
+from app.ingest.storage import remove_knowledge_base_files
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["knowledge-bases"])
 
@@ -155,11 +155,11 @@ def _refresh_url_task(document_id: uuid.UUID) -> None:
     """BackgroundTasks 里的单文档刷新：抓取→版本→增量索引。"""
     import hashlib
 
-    from app import index as index_mod
+    from app.ingest import index as index_mod
     from app.db import session_scope
     from app.models import Document
-    from app.storage import parsed_dir
-    from app.url_import import fetch_url_document
+    from app.ingest.storage import parsed_dir
+    from app.ingest.url_import import fetch_url_document
 
     result = fetch_url_document(document_id)
     if result != "changed":

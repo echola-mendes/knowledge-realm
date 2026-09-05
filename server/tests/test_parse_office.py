@@ -8,8 +8,8 @@ from app.config import get_settings
 from app.db import session_scope
 from app.main import create_app, reset_app_state
 from app.models import Document
-from app.parse import parse_docx_document, parse_pdf_document
-from app.storage import parsed_dir
+from app.ingest.parse import parse_docx_document, parse_pdf_document
+from app.ingest.storage import parsed_dir
 
 
 def _client() -> TestClient:

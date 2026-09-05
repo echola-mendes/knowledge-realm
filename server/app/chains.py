@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Document, DocumentChunk, DocumentTag, KnowledgeBase, Tag
-from app.storage import parsed_dir
+from app.ingest.storage import parsed_dir
 
 TEXT_LIMIT = 12000
 

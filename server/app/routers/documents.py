@@ -38,13 +38,13 @@ from app.schemas import (
     RelatedDocumentOut,
     UrlCreate,
 )
-from app.chunk import DEFAULT_CHUNK_SIZE, chunk_meta, quality_labels, split_markdown
-from app.chunk_settings import get_user_chunk_settings
-from app import index as index_mod
-from app.index import STATUS_INDEXING
+from app.ingest.chunk import DEFAULT_CHUNK_SIZE, chunk_meta, quality_labels, split_markdown
+from app.ingest.chunk_settings import get_user_chunk_settings
+from app.ingest import index as index_mod
+from app.ingest.index import STATUS_INDEXING
 from app.es_bm25 import EsNotConfiguredError, delete_document_chunks
 from app.search import search_chunks
-from app.storage import original_path, parsed_dir, remove_document_files, write_original
+from app.ingest.storage import original_path, parsed_dir, remove_document_files, write_original
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -658,8 +658,8 @@ def refresh_url_document_http(
     """重新抓取 url 文档：内容变更走增量索引 + 版本+1；未变更保持 ready。"""
     import hashlib
 
-    from app.storage import parsed_dir
-    from app.url_import import fetch_url_document
+    from app.ingest.storage import parsed_dir
+    from app.ingest.url_import import fetch_url_document
 
     doc = _owned_doc(session, document_id, user.id)
     if doc.kind != "url":

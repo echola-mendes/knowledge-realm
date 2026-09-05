@@ -1,4 +1,4 @@
-from app.chunk import CHUNK_OVERLAP, CHUNK_SIZE, split_markdown
+from app.ingest.chunk import CHUNK_OVERLAP, CHUNK_SIZE, split_markdown
 
 
 def test_two_headings_over_limit_yields_multiple_chunks():

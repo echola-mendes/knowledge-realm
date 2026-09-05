@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
-from app.chunk import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
+from app.ingest.chunk import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
 from app.models import UserChunkSetting
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.chunk_settings import ChunkSettingsError, get_user_chunk_settings, upsert_user_chunk_settings
+from app.ingest.chunk_settings import ChunkSettingsError, get_user_chunk_settings, upsert_user_chunk_settings
 from app.deps import current_user, get_db
 from app.models import User
 from app.schemas import ChunkSettingsOut, ChunkSettingsPut

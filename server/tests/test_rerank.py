@@ -3,9 +3,9 @@ import uuid
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
-from app.index import index_document
+from app.ingest.index import index_document
 from app.main import create_app, reset_app_state
-from app.parse import parse_text_document
+from app.ingest.parse import parse_text_document
 from app.search import SearchHit, _rerank
 
 
@@ -50,7 +50,7 @@ def test_search_without_rerank_or_llm_key_not_500(monkeypatch):
     monkeypatch.setenv("LLM_API_KEY", "")
     monkeypatch.setenv("RERANK_API_KEY", "")
     reset_app_state()
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.search.score_documents", lambda query, documents: None)
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"库-{uuid.uuid4().hex[:8]}"}).json()

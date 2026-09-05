@@ -7,16 +7,16 @@ from typing import Any
 
 from sqlalchemy import delete, select
 
-from app.chunk import split_markdown
-from app.chunk_settings import get_user_chunk_settings
-from app.chunk_label import allocate_chunk_labels
+from app.ingest.chunk import split_markdown
+from app.ingest.chunk_settings import get_user_chunk_settings
+from app.ingest.chunk_label import allocate_chunk_labels
 from app.config import get_settings
 from app.db import session_scope
 from app.es_bm25 import EsNotConfiguredError, delete_document_chunks, upsert_chunks
 from app.models import Document, DocumentChunk, KnowledgeBase
-from app.parse import DOCX_KIND, PDF_KIND, TEXT_KINDS, URL_KIND, parse_docx_document, parse_pdf_document, parse_text_document
-from app.url_import import process_url_document
-from app.storage import parsed_dir
+from app.ingest.parse import DOCX_KIND, PDF_KIND, TEXT_KINDS, URL_KIND, parse_docx_document, parse_pdf_document, parse_text_document
+from app.ingest.url_import import process_url_document
+from app.ingest.storage import parsed_dir
 
 STATUS_PARSED = "parsed"
 STATUS_PARSE_FAILED = "parse_failed"

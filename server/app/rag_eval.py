@@ -5,7 +5,7 @@ import math
 from typing import Any, Callable
 
 from app.config import get_settings
-from app.index import embed_texts, embedding_keys_ready
+from app.ingest.index import embed_texts, embedding_keys_ready
 from app.llm import llm_keys_ready
 
 RELEVANCE_QUESTION_COUNT = 3

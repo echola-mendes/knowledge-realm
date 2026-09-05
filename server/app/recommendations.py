@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.index import STATUS_READY
+from app.ingest.index import STATUS_READY
 from app.models import Conversation, Document, Favorite, KnowledgeBase, Message
 from app.search import search_chunks
 

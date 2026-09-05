@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app import index as index_mod
+from app.ingest import index as index_mod
 from app.chat import run_chat
 from app.deps import current_user
 from app.kb import KnowledgeBaseAccessError

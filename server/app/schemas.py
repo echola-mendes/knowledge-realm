@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from typing import Any, Literal
 
-from app.chunk import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
+from app.ingest.chunk import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
 from pydantic import BaseModel, Field, model_validator
 
 

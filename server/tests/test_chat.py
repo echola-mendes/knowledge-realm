@@ -4,10 +4,10 @@ from fastapi.testclient import TestClient
 
 from app.config import get_settings
 from app.db import session_scope
-from app.index import index_document
+from app.ingest.index import index_document
 from app.main import create_app, reset_app_state
 from app.models import Document
-from app.parse import parse_text_document
+from app.ingest.parse import parse_text_document
 import app.llm as llm_mod
 
 
@@ -34,9 +34,9 @@ def _directional_embed(texts: list[str]) -> list[list[float]]:
 
 
 def test_chat_hit_miss_pending_and_kb_isolation(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.search.embed_texts", _directional_embed)
-    monkeypatch.setattr("app.index.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.llm.chat", lambda question, context, history=None: "假LLM答案")
     llm_mod.CHAT_CALLS = 0
@@ -104,7 +104,7 @@ def test_chat_hit_miss_pending_and_kb_isolation(monkeypatch):
 
 
 def test_chat_without_embed_key_returns_503(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: False)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: False)
     with _client() as client:
         res = client.post("/api/chat", json={"query": "你好"})
         assert res.status_code == 503

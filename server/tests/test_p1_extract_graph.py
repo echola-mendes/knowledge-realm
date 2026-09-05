@@ -5,10 +5,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.config import get_settings
-from app.index import index_document
+from app.ingest.index import index_document
 from app.main import create_app, reset_app_state
 from app.models import Document, EntityLink
-from app.parse import parse_text_document
+from app.ingest.parse import parse_text_document
 from app import chains as chains_mod
 from app.db import session_scope
 
@@ -22,9 +22,9 @@ def _client() -> TestClient:
 
 def test_extract_graph_replaces_links_not_stacks(monkeypatch):
     assert "langgraph" not in inspect.getsource(chains_mod)
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr(
-        "app.index.embed_texts",
+        "app.ingest.index.embed_texts",
         lambda texts: [[0.01] * get_settings().embedding_dim for _ in texts],
     )
     monkeypatch.setattr("app.routers.documents.llm_keys_ready", lambda: True)

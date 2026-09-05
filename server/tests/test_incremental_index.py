@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from app import index as index_mod
+from app.ingest import index as index_mod
 from app.db import session_scope
 from app.models import Document, DocumentChunk
 from sqlalchemy import select
@@ -27,7 +27,7 @@ def _make_ready_doc(client, md_text: str) -> str:
     ).json()
     with session_scope() as session:
         doc_orm = session.get(Document, uuid.UUID(doc["id"]))
-        from app.storage import parsed_dir
+        from app.ingest.storage import parsed_dir
 
         parsed_dir(doc_orm.id).mkdir(parents=True, exist_ok=True)
         parsed_dir(doc_orm.id).joinpath("document.md").write_text(md_text, encoding="utf-8")
@@ -55,7 +55,7 @@ def test_incremental_reuses_unchanged_embeddings(monkeypatch):
     before = _chunks_of(doc_id)
     assert len(before) >= 2
 
-    from app.storage import parsed_dir
+    from app.ingest.storage import parsed_dir
 
     parsed_dir(uuid.UUID(doc_id)).joinpath("document.md").write_text(
         "# 甲\n第一段内容保持不变\n\n# 乙\n第二段内容已更新", encoding="utf-8"
@@ -93,7 +93,7 @@ def test_incremental_unchanged_when_content_identical(monkeypatch):
 def test_incremental_only_embeds_new_chunks(monkeypatch):
     with _client() as client:
         doc_id = _make_ready_doc(client, "# A\n旧内容不动")
-    from app.storage import parsed_dir
+    from app.ingest.storage import parsed_dir
 
     parsed_dir(uuid.UUID(doc_id)).joinpath("document.md").write_text(
         "# A\n旧内容不动\n\n# B\n全新追加的段落", encoding="utf-8"

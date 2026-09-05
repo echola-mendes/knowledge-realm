@@ -5,11 +5,11 @@ from fastapi.testclient import TestClient
 
 from app.config import get_settings
 from app.db import session_scope
-from app.index import index_document
+from app.ingest.index import index_document
 from app.llm import CHAT_CALLS
 from app.main import create_app, reset_app_state
 from app.models import Document
-from app.parse import parse_text_document
+from app.ingest.parse import parse_text_document
 from app.routers import documents as documents_mod
 import app.llm as llm_mod
 
@@ -41,9 +41,9 @@ def test_related_excludes_self_and_finds_same_kb(monkeypatch):
     assert "search_chunks" in src
     assert "/api/search" not in src
     assert "langgraph" not in src
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.search.embed_texts", _directional_embed)
-    monkeypatch.setattr("app.index.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     llm_mod.CHAT_CALLS = 0
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"关联-{uuid.uuid4().hex[:8]}"}).json()

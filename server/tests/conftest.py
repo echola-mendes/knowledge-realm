@@ -81,7 +81,7 @@ def fake_embeddings(monkeypatch):
         dim = get_settings().embedding_dim
         return [[0.01] * dim for _ in texts]
 
-    monkeypatch.setattr("app.index.embed_texts", fake)
+    monkeypatch.setattr("app.ingest.index.embed_texts", fake)
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +94,7 @@ def fake_elasticsearch(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def skip_post_index_enrich(monkeypatch):
-    monkeypatch.setattr("app.index._enrich_after_index", lambda _document_id: None)
+    monkeypatch.setattr("app.ingest.index._enrich_after_index", lambda _document_id: None)
 
 
 @pytest.fixture(autouse=True)

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from app import index as index_mod
+from app.ingest import index as index_mod
 from app import llm as llm_mod
 from app.deps import current_user, get_db
 from app.kb import KnowledgeBaseAccessError

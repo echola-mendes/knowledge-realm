@@ -3,9 +3,9 @@ import uuid
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
-from app.index import index_document
+from app.ingest.index import index_document
 from app.main import create_app, reset_app_state
-from app.parse import parse_text_document
+from app.ingest.parse import parse_text_document
 
 
 def _client() -> TestClient:
@@ -26,9 +26,9 @@ def _ready_note(client: TestClient, filename: str, content: str) -> tuple[str, s
 
 
 def test_get_graph_lists_kb_and_filters_by_document(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr(
-        "app.index.embed_texts",
+        "app.ingest.index.embed_texts",
         lambda texts: [[0.01] * get_settings().embedding_dim for _ in texts],
     )
     monkeypatch.setattr("app.routers.documents.llm_keys_ready", lambda: True)

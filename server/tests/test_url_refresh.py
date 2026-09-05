@@ -18,7 +18,7 @@ def _client():
 
 
 def _make_url_doc(client, kb_id: str, url: str):
-    import app.url_import as url_import
+    import app.ingest.url_import as url_import
 
     original_fetch, original_extract = url_import.fetch_html, url_import.html_to_text
     url_import.fetch_html = lambda u: "<html/>"
@@ -31,14 +31,14 @@ def _make_url_doc(client, kb_id: str, url: str):
 
 
 def test_refresh_changed_increments_version_and_reindexes(monkeypatch):
-    import app.url_import as url_import
-    from app import index as index_mod
+    import app.ingest.url_import as url_import
+    from app.ingest import index as index_mod
 
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"Ref-{uuid.uuid4().hex[:8]}"}).json()
         doc = _make_url_doc(client, kb["id"], f"https://example.com/{uuid.uuid4().hex[:8]}")
         # 手工补 parsed + ready 状态，模拟已索引完成
-        from app.storage import parsed_dir
+        from app.ingest.storage import parsed_dir
 
         with session_scope() as s:
             d = s.get(Document, uuid.UUID(doc["id"]))
@@ -72,13 +72,13 @@ def test_refresh_changed_increments_version_and_reindexes(monkeypatch):
 
 
 def test_refresh_unchanged_keeps_version(monkeypatch):
-    import app.url_import as url_import
-    from app import index as index_mod
+    import app.ingest.url_import as url_import
+    from app.ingest import index as index_mod
 
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"Ref-{uuid.uuid4().hex[:8]}"}).json()
         doc = _make_url_doc(client, kb["id"], f"https://example.com/{uuid.uuid4().hex[:8]}")
-        from app.storage import parsed_dir
+        from app.ingest.storage import parsed_dir
 
         with session_scope() as s:
             d = s.get(Document, uuid.UUID(doc["id"]))
@@ -101,7 +101,7 @@ def test_refresh_unchanged_keeps_version(monkeypatch):
 
 
 def test_refresh_rejects_non_url(monkeypatch):
-    from app import index as index_mod
+    from app.ingest import index as index_mod
 
     monkeypatch.setattr(index_mod, "embedding_keys_ready", lambda: True)
     with _client() as client:

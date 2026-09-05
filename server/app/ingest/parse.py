@@ -6,7 +6,7 @@ from time import monotonic
 
 from app.db import session_scope
 from app.models import Document
-from app.storage import original_path, parsed_dir
+from app.ingest.storage import original_path, parsed_dir
 
 PARSE_TIMEOUT_SEC = 60
 STATUS_PARSING = "parsing"

@@ -36,7 +36,7 @@ def _client_as(username: str, password: str = TEST_PASSWORD) -> TestClient:
 
 
 def test_recommendations_empty_for_new_user(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     with _client_as(f"reco-empty-{uuid.uuid4().hex[:8]}") as client:
         res = client.get("/api/recommendations")
         assert res.status_code == 200
@@ -46,7 +46,7 @@ def test_recommendations_empty_for_new_user(monkeypatch):
 
 def test_recommendations_from_favorites_and_citations(monkeypatch):
     """收藏与 citation 文档作为种子，相似文档被推荐；种子与已收藏被排除。"""
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.search.embed_texts", lambda texts: [[0.9] * 1024 for _ in texts])
     monkeypatch.setattr("app.search.require_elasticsearch_url", lambda: None)
 
@@ -114,7 +114,7 @@ def test_recommendations_from_favorites_and_citations(monkeypatch):
 
 
 def test_recommendations_cross_user_isolation(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.search.embed_texts", lambda texts: [[0.9] * 1024 for _ in texts])
     monkeypatch.setattr("app.search.require_elasticsearch_url", lambda: None)
     owner_name = f"reco-owner-{uuid.uuid4().hex[:8]}"
@@ -177,7 +177,7 @@ def test_recommendations_cross_user_isolation(monkeypatch):
 
 def test_recommendations_limit_five(monkeypatch):
     """即使种子很多，返回不超过 5 条。"""
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.search.embed_texts", lambda texts: [[0.9] * 1024 for _ in texts])
     monkeypatch.setattr("app.search.require_elasticsearch_url", lambda: None)
     limit_user = f"reco-limit-{uuid.uuid4().hex[:8]}"

@@ -5,10 +5,10 @@ from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.db import session_scope
-from app.index import QUOTA_HINT, format_embed_error, index_document
+from app.ingest.index import QUOTA_HINT, format_embed_error, index_document
 from app.main import create_app, reset_app_state
 from app.models import DocumentChunk
-from app.parse import parse_text_document
+from app.ingest.parse import parse_text_document
 
 
 def _client() -> TestClient:
@@ -26,8 +26,8 @@ def test_index_fake_embedding_writes_chunks_and_ready(monkeypatch):
         dim = get_settings().embedding_dim
         return [[0.02] * dim for _ in texts]
 
-    monkeypatch.setattr("app.index.embed_texts", counting)
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embed_texts", counting)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     payload = f"index me {uuid.uuid4()} " + ("段" * 20)
     with _client() as client:
         res = client.post(
@@ -51,7 +51,7 @@ def test_index_fake_embedding_writes_chunks_and_ready(monkeypatch):
 
 
 def test_index_without_key_returns_503(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: False)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: False)
     with _client() as client:
         res = client.post(
             "/api/documents/upload",
@@ -71,8 +71,8 @@ def test_second_upload_same_file_does_not_embed(monkeypatch):
         dim = get_settings().embedding_dim
         return [[0.03] * dim for _ in texts]
 
-    monkeypatch.setattr("app.index.embed_texts", counting)
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embed_texts", counting)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     payload = f"same-index-bytes {uuid.uuid4()}".encode()
     with _client() as client:
         first = client.post(

@@ -8,8 +8,8 @@ import trafilatura
 
 from app.db import session_scope
 from app.models import Document
-from app.parse import STATUS_PARSE_FAILED, STATUS_PARSED, STATUS_PARSING, URL_KIND
-from app.storage import parsed_dir
+from app.ingest.parse import STATUS_PARSE_FAILED, STATUS_PARSED, STATUS_PARSING, URL_KIND
+from app.ingest.storage import parsed_dir
 
 URL_TIMEOUT_SEC = 20.0
 
@@ -110,7 +110,7 @@ def fetch_url_document(document_id: uuid.UUID) -> str:
             encoding="utf-8",
         )
         # 未变更：恢复抓取前状态（通常 ready），避免检索不可见
-        from app.index import STATUS_READY
+        from app.ingest.index import STATUS_READY
 
         doc.status = STATUS_PARSED if changed else (STATUS_READY if prev_status == STATUS_READY else prev_status)
         doc.error_message = None

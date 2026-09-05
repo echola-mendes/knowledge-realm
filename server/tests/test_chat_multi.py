@@ -4,9 +4,9 @@ import uuid
 from fastapi.testclient import TestClient
 
 from app.config import get_settings
-from app.index import index_document
+from app.ingest.index import index_document
 from app.main import create_app, reset_app_state
-from app.parse import parse_text_document
+from app.ingest.parse import parse_text_document
 
 
 def _client() -> TestClient:
@@ -37,9 +37,9 @@ def test_second_turn_sends_history_stream_matches_and_delete(monkeypatch):
         captured["question"] = question
         return "假LLM答案"
 
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.search.embed_texts", _directional_embed)
-    monkeypatch.setattr("app.index.embed_texts", _directional_embed)
+    monkeypatch.setattr("app.ingest.index.embed_texts", _directional_embed)
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.llm.chat", fake_chat)
     with _client() as client:

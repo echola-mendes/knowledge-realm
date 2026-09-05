@@ -112,7 +112,7 @@ def test_agent_post_uses_graph_not_chat(monkeypatch):
 
 
 def test_chat_contract_unchanged(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     monkeypatch.setattr("app.llm.llm_keys_ready", lambda: True)
     monkeypatch.setattr("app.llm.chat", lambda question, context, history=None: "假LLM答案")
     dim = get_settings().embedding_dim

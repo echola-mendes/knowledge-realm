@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.index import STATUS_READY
+from app.ingest.index import STATUS_READY
 from app.kb import owned_document, resolve_knowledge_base_id
 from app import llm as llm_mod
 from app.models import Conversation, Message

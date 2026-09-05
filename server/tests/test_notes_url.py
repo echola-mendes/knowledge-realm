@@ -6,11 +6,11 @@ from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.db import session_scope
-from app.index import index_document, process_document
+from app.ingest.index import index_document, process_document
 from app.main import create_app, reset_app_state
 from app.models import Document, DocumentChunk
-from app.parse import parse_text_document
-from app.storage import parsed_dir
+from app.ingest.parse import parse_text_document
+from app.ingest.storage import parsed_dir
 
 
 def _client() -> TestClient:
@@ -32,7 +32,7 @@ SAMPLE_HTML = """
 
 
 def test_create_note_reaches_ready_with_chunks(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     body = f"# 笔记\n\n内容 {uuid.uuid4()}"
     with _client() as client:
         res = client.post("/api/documents/notes", json={"content": body, "filename": "n.md"})
@@ -70,8 +70,8 @@ def test_create_note_filename_from_first_line_when_no_heading():
         assert res.json()["filename"] == "纯文本标题行.md"
 
 def test_url_import_from_mocked_html(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.url_import.fetch_html", lambda url: SAMPLE_HTML)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.url_import.fetch_html", lambda url: SAMPLE_HTML)
     with _client() as client:
         res = client.post("/api/documents/url", json={"url": "https://example.com/article"})
         assert res.status_code == 200
@@ -91,7 +91,7 @@ def test_url_import_from_mocked_html(monkeypatch):
 
 
 def test_url_empty_or_timeout_fails(monkeypatch):
-    monkeypatch.setattr("app.url_import.fetch_html", lambda url: "<html><body></body></html>")
+    monkeypatch.setattr("app.ingest.url_import.fetch_html", lambda url: "<html><body></body></html>")
     with _client() as client:
         empty = client.post("/api/documents/url", json={"url": "https://example.com/empty"})
         doc_id = uuid.UUID(empty.json()["id"])
@@ -108,7 +108,7 @@ def test_url_empty_or_timeout_fails(monkeypatch):
     def boom(url: str) -> str:
         raise httpx.TimeoutException("timeout")
 
-    monkeypatch.setattr("app.url_import.fetch_html", boom)
+    monkeypatch.setattr("app.ingest.url_import.fetch_html", boom)
     with _client() as client:
         timed = client.post("/api/documents/url", json={"url": "https://example.com/slow"})
         doc_id = uuid.UUID(timed.json()["id"])

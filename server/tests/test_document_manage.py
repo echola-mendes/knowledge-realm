@@ -5,11 +5,11 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.db import session_scope
-from app.index import index_document
+from app.ingest.index import index_document
 from app.main import create_app, reset_app_state
 from app.models import DocumentChunk
-from app.parse import parse_text_document
-from app.storage import original_path, parsed_dir
+from app.ingest.parse import parse_text_document
+from app.ingest.storage import original_path, parsed_dir
 
 
 def _client() -> TestClient:
@@ -20,7 +20,7 @@ def _client() -> TestClient:
 
 
 def test_reindex_after_original_change(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     old = f"OLDTOKEN {uuid.uuid4()}"
     new = f"NEWTOKEN {uuid.uuid4()}"
     with _client() as client:
@@ -50,7 +50,7 @@ def test_reindex_after_original_change(monkeypatch):
 
 
 def test_delete_document_removes_row_and_files(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     with _client() as client:
         res = client.post(
             "/api/documents/upload",
@@ -70,9 +70,9 @@ def test_delete_document_removes_row_and_files(monkeypatch):
 
 
 def test_list_document_chunks(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
-    monkeypatch.setattr("app.index.embed_texts", lambda texts: [[0.0] * 1024 for _ in texts])
-    monkeypatch.setattr("app.index.process_document", lambda _document_id: None)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embed_texts", lambda texts: [[0.0] * 1024 for _ in texts])
+    monkeypatch.setattr("app.ingest.index.process_document", lambda _document_id: None)
     with _client() as client:
         res = client.post(
             "/api/documents/upload",
@@ -98,15 +98,15 @@ def test_list_document_chunks(monkeypatch):
 
 
 def test_reindex_single_chunk(monkeypatch):
-    monkeypatch.setattr("app.index.embedding_keys_ready", lambda: True)
+    monkeypatch.setattr("app.ingest.index.embedding_keys_ready", lambda: True)
     calls: list[list[str]] = []
 
     def fake_embed(texts: list[str]) -> list[list[float]]:
         calls.append(list(texts))
         return [[float(len(calls))] + [0.0] * 1023 for _ in texts]
 
-    monkeypatch.setattr("app.index.embed_texts", fake_embed)
-    monkeypatch.setattr("app.index.process_document", lambda _document_id: None)
+    monkeypatch.setattr("app.ingest.index.embed_texts", fake_embed)
+    monkeypatch.setattr("app.ingest.index.process_document", lambda _document_id: None)
     with _client() as client:
         res = client.post(
             "/api/documents/upload",
