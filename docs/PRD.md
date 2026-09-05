@@ -197,14 +197,19 @@
 #### 3.7.1 调试页
 
 - 提供检索调试页，展示检索过程与中间结果。
-- 展示 Agent 执行轨迹与推理步骤。
+- 展示 Agent 执行轨迹与推理步骤（旁路实验；生产决策链见 [`PRD-DECISIONS.md`](PRD-DECISIONS.md)）。
 
-#### 3.7.2 回答质量评估
+#### 3.7.2 监控与审计（规划中）
+
+- **决策审计**：[`PRD-DECISIONS.md`](PRD-DECISIONS.md) — 监控 → 决策审计。
+- **操作审计**：[`PRD-OPERATIONS.md`](PRD-OPERATIONS.md) — 监控 → 操作审计。
+
+#### 3.7.3 回答质量评估
 
 - 支持对 RAG 回答进行质量评估。
 - 评估维度包括忠实度、相关性、完整性等。
 
-#### 3.7.3 Token 与耗时
+#### 3.7.4 Token 与耗时
 
 - 调试页展示 LLM 调用的 Token 用量与 Pipeline 各阶段耗时。
 
@@ -250,8 +255,9 @@
 ### 3.10 侧边栏菜单管理
 
 - 侧边栏默认顺序调整为：首页、对话、搜索、知识库、文档、图谱（原知识图谱）、检测（原知识洞察）、工具、监控（占位）、基础、设置；调试项仍随调试开关显示，开启时位于设置之前。
-- 监控为占位菜单，页面复用通用占位视图，能力后续接入。
+- 监控含二级菜单：**决策审计**（[`PRD-DECISIONS.md`](PRD-DECISIONS.md)）、**操作审计**（[`PRD-OPERATIONS.md`](PRD-OPERATIONS.md)）；当前为占位页，决策审计优先实现。
 - 新增"基础"页面，内含"菜单管理"二级菜单，支持菜单显示名编辑与上下拖拽排序（附上移/下移按钮兜底），并可一键恢复默认。
+- 工具 / 基础 / 监控与工具页一致：侧栏只保留一级入口，二级菜单仅在页内；菜单管理不可再往这三项下挂侧栏子菜单。
 - 菜单配置保存在本机浏览器 localStorage，仅影响当前浏览器。
 
 ---
@@ -271,15 +277,22 @@
 - **预订**：`book_flight` / `book_hotel` / `cancel` 等写操作采用 HITL（Human-in-the-Loop），先返回待确认动作，用户在前端确认后才写入 `booking_record`；展示供应商返回的支付链接（如有）。
 - **本人数据隔离**：`list_bookings` 仅返回当前 Session 用户的预订；`cancel_booking` 校验用户归属。
 - **限流**：预订写操作限流 30 次/分钟，超限提示用户稍后再试。
-- **工具入口（已实现）**：侧栏「工具」→ 页内二级菜单分组（旅程 / AI资讯 / AI生图 / 更多工具）。旅程：「我的行程单」（`GET /api/plans`，含行程类型、无行程状态）、「创建新行程」（占位）；规划仍在 Multi Agent 对话完成。AI资讯：「资讯中心」「历史记录」占位；AI生图：「生图台」「我的作品」占位；更多工具：「工具市场」占位。样式见 `web/style.md` §13–§14。
+- **工具入口（已实现）**：侧栏「工具」→ 页内二级菜单分组（旅程 / AI资讯 / AI生图 / 更多工具）。旅程：「我的行程单」（`GET /api/plans`，含行程类型、无行程状态）、「创建新行程」（占位）；规划仍在 Multi Agent 对话完成。AI资讯：今日热榜（`/tools/news`）与详情（`/tools/news/:id`），启用板块勾选持久化 `news_settings`，浏览频道全部/科技/AI/金融读当日 `news_daily_rank` 快照；需求见 [`PRD-NEWS.md`](PRD-NEWS.md)。AI生图：「生图台」「我的作品」占位；更多工具：「工具市场」占位。样式见 `web/style.md` §13–§14。
 - **对话回放方案页（已实现）**：`plan_html` 随助手消息落库；刷新/重进会话时 `GET /api/conversations/{id}/messages` 带回方案页；旧会话若仅有 `plan_record` 则用其 url 兜底展示。
 
 ### 4.2.1 通用定时任务（已实现）
 
 - 入口：基础 → 定时任务（`/basics/jobs`）。需求见 [`PRD-Job.md`](PRD-Job.md)。
 - APScheduler（FastAPI lifespan）→ Redis 队列 `zhiyu:tasks` → arq Worker（`python -m app.worker.worker`）。
-- 第一种任务类型 `NEWS_REFRESH`（AI资讯更新，handler 仍为 stub）；资讯展示与采集见 [`PRF-NEWS.md`](PRF-NEWS.md)。
+- 第一种任务类型 `NEWS_REFRESH`（AI资讯更新）：handler 读 `news_settings.enabled_categories` 后跑真实管道；任务页不配分类。
 - 同 `task_type` 同时仅一条 RUNNING；失败最多 3 次尝试后标记 FAILED。
+
+### 4.2.2 AI资讯（已实现）
+
+- 需求见 [`PRD-NEWS.md`](PRD-NEWS.md)。源：`server/config/news_sources.yaml`（`NEWS_SOURCES_PATH` 可覆盖）。
+- 表：`news` / `news_daily_rank` / `news_settings`；管道在 `server/app/news/`（RSS 采集→去重→DashScope 摘要/重要性→热度→当日排行榜快照）。
+- API：`GET /api/news/hot`、`GET /api/news/{id}`、`GET|PUT /api/news/settings`（Session；至少启用一个分类）。
+- 前端：工具 → AI资讯 → 今日热榜 / 详情；无「立即更新」按钮（更新走定时任务或任务页立即执行）。
 
 ### 4.3 高级知识智能化
 
@@ -291,10 +304,10 @@
 
 ### 4.4 可观测与评估增强
 
-- Agent 执行效果评估。
-- RAG 检索与回答质量的系统级评估。
-- 执行 Trace 与日志。
-- Token、延迟等监控指标。
+- **决策审计**（[`PRD-DECISIONS.md`](PRD-DECISIONS.md)）：可扩展 DecisionRecorder、结构化决策链、三受众解释与校验、按 message/biz_id 追溯；监控 → 决策审计。
+- **操作审计**（[`PRD-OPERATIONS.md`](PRD-OPERATIONS.md)）：文档流水线、登录/敏感变更、与 `task_execution` 聚合；监控 → 操作审计（排在决策审计 P0 之后）。
+- Agent 执行效果评估；RAG 检索与回答质量的系统级评估。
+- Token、延迟等监控指标与异常告警。
 
 ---
 

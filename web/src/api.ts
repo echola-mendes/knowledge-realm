@@ -857,3 +857,62 @@ export function runTask(id: number) {
 export function listTaskExecutions(id: number) {
   return api<TaskExecutionItem[]>(`/api/tasks/${id}/executions`);
 }
+
+export type NewsHotItem = {
+  id: number;
+  rank: number;
+  title: string;
+  summary: string | null;
+  category: string;
+  source: string;
+  published_at: string | null;
+  heat_score: number | null;
+};
+
+export type NewsHot = {
+  date: string;
+  category: string;
+  items: NewsHotItem[];
+};
+
+export type NewsDetail = {
+  id: number;
+  title: string;
+  summary: string | null;
+  content: string | null;
+  url: string;
+  source: string;
+  category: string;
+  published_at: string | null;
+  collected_at: string | null;
+  heat_score: number | null;
+  importance_score: number | null;
+};
+
+export type NewsSettings = {
+  enabled_categories: string[];
+};
+
+export function getNewsHot(params?: { category?: string; date?: string }) {
+  const q = new URLSearchParams();
+  if (params?.category) q.set("category", params.category);
+  if (params?.date) q.set("date", params.date);
+  const qs = q.toString();
+  return api<NewsHot>(`/api/news/hot${qs ? `?${qs}` : ""}`);
+}
+
+export function getNewsDetail(id: number) {
+  return api<NewsDetail>(`/api/news/${id}`);
+}
+
+export function getNewsSettings() {
+  return api<NewsSettings>("/api/news/settings");
+}
+
+export function putNewsSettings(enabled_categories: string[]) {
+  return api<NewsSettings>("/api/news/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled_categories }),
+  });
+}

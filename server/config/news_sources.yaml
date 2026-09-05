@@ -63,8 +63,8 @@ sources:
     enabled: true
 
   - id: fin-bbc
-    name: BBC Business
-    url: https://feeds.bbci.co.uk/news/business/rss.xml
+    name: 中国新闻网 
+    url: https://www.chinanews.com.cn/rss/finance.xml
     type: rss
     category: finance
     weight: 75

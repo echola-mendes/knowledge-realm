@@ -13,7 +13,7 @@ watch(
   () => route.path,
   (p) => {
     if (p.startsWith("/tools/trips")) tripOpen.value = true;
-    if (p.startsWith("/tools/consult")) consultOpen.value = true;
+    if (p.startsWith("/tools/consult") || p.startsWith("/tools/news")) consultOpen.value = true;
     if (p.startsWith("/tools/image")) imageOpen.value = true;
     if (p.startsWith("/tools/market")) moreOpen.value = true;
   },
@@ -23,9 +23,10 @@ watch(
 const onTripsList = computed(() => route.path === "/tools/trips");
 const onTripsNew = computed(() => route.path.startsWith("/tools/trips/new"));
 const onTrips = computed(() => onTripsList.value || onTripsNew.value);
-const onConsultDesk = computed(() => route.path === "/tools/consult");
+const onNewsList = computed(() => route.path === "/tools/news");
+const onNewsDetail = computed(() => route.name === "tools-news-detail");
 const onConsultHistory = computed(() => route.path.startsWith("/tools/consult/history"));
-const onConsult = computed(() => onConsultDesk.value || onConsultHistory.value);
+const onConsult = computed(() => onNewsList.value || onNewsDetail.value || onConsultHistory.value);
 const onImageDesk = computed(() => route.path === "/tools/image");
 const onImageWorks = computed(() => route.path.startsWith("/tools/image/works"));
 const onImage = computed(() => onImageDesk.value || onImageWorks.value);
@@ -87,13 +88,13 @@ const onMarket = computed(() => route.path.startsWith("/tools/market"));
           </button>
           <div v-show="consultOpen" class="nav-children">
             <RouterLink
-              to="/tools/consult"
+              to="/tools/news"
               class="nav-child"
               active-class=""
               exact-active-class=""
-              :class="{ on: onConsultDesk }"
+              :class="{ on: onNewsList || onNewsDetail }"
             >
-              资讯中心
+              今日热榜
             </RouterLink>
             <RouterLink
               to="/tools/consult/history"

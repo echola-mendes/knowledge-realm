@@ -21,9 +21,9 @@
 
 ### 验收
 
-- [ ] 迁移可 upgrade / downgrade
-- [ ] 三表存在；`news_settings` 有默认一行
-- [ ] `url` / `content_hash` 唯一约束生效
+- [✅] 迁移可 upgrade / downgrade
+- [✅] 三表存在；`news_settings` 有默认一行
+- [✅] `url` / `content_hash` 唯一约束生效
 
 ---
 
@@ -41,9 +41,9 @@
 
 ### 验收
 
-- [ ] 默认路径能加载出至少 8 条 `enabled: true` 源
-- [ ] 非法 category / 缺 url 时明确报错（启动或首次 refresh 即可）
-- [ ] `NEWS_SOURCES_PATH` 可覆盖默认路径
+- [✅] 默认路径能加载出至少 8 条 `enabled: true` 源
+- [✅] 非法 category / 缺 url 时明确报错（启动或首次 refresh 即可）
+- [✅] `NEWS_SOURCES_PATH` 可覆盖默认路径
 
 ---
 
@@ -62,9 +62,9 @@
 
 ### 验收
 
-- [ ] 针对 fixture RSS/XML，parser 产出稳定字段
-- [ ] 去重单测：同 URL / 同标题 Hash 行为符合 prd-sub
-- [ ] 正文可为空，无网页抓取逻辑
+- [✅] 针对 fixture RSS/XML，parser 产出稳定字段
+- [✅] 去重单测：同 URL / 同标题 Hash 行为符合 prd-sub
+- [✅] 正文可为空，无网页抓取逻辑
 
 ---
 
@@ -83,9 +83,9 @@
 
 ### 验收
 
-- [ ] scorer 单测：给定 importance/weight/新鲜度档，heat 在预期区间
-- [ ] 不足 20 条不跨分类补榜
-- [ ] 综合榜逻辑为合并后 TopK，非三榜拼接
+- [✅] scorer 单测：给定 importance/weight/新鲜度档，heat 在预期区间
+- [✅] 不足 20 条不跨分类补榜
+- [✅] 综合榜逻辑为合并后 TopK，非三榜拼接
 
 ---
 
@@ -103,9 +103,9 @@ Worker 执行真实管道，不再返回 `news_pipeline_pending` stub。
 
 ### 验收
 
-- [ ] 手动 enqueue / `/run` 后 execution 为 SUCCESS（源与 LLM 可用时）或 FAILED（整源级灾难且无任何产出的约定以实现为准，需在 result/error 可观测）
-- [ ] result 含计数字段，不再仅有 `news_pipeline_pending`
-- [ ] 仅启用 `ai` 时不采集 technology/finance 源
+- [✅] 手动 enqueue / `/run` 后 execution 为 SUCCESS（源与 LLM 可用时）或 FAILED（整源级灾难且无任何产出的约定以实现为准，需在 result/error 可观测）
+- [✅] result 含计数字段，不再仅有 `news_pipeline_pending`
+- [✅] 仅启用 `ai` 时不采集 technology/finance 源
 
 ---
 
@@ -124,9 +124,9 @@ Worker 执行真实管道，不再返回 `news_pipeline_pending` stub。
 
 ### 验收
 
-- [ ] 未登录 401；非法 category 400
-- [ ] hot 返回结构含 date/category/items（≤20）
-- [ ] PUT settings 后 GET 一致；至少保留一个分类
+- [✅] 未登录 401；非法 category 400
+- [✅] hot 返回结构含 date/category/items（≤20）
+- [✅] PUT settings 后 GET 一致；至少保留一个分类
 
 ---
 
@@ -145,10 +145,10 @@ Worker 执行真实管道，不再返回 `news_pipeline_pending` stub。
 
 ### 验收
 
-- [ ] 路由可进入；默认「全部」频道
-- [ ] 启用板块勾选会调 settings API
-- [ ] `npm run typecheck` 通过
-- [ ] 详情可打开；正文空时仍可看摘要与原文链接
+- [✅] 路由可进入；默认「全部」频道
+- [✅] 启用板块勾选会调 settings API
+- [✅] `npm run typecheck` 通过
+- [✅] 详情可打开；正文空时仍可看摘要与原文链接
 
 ---
 
@@ -166,8 +166,8 @@ Worker 执行真实管道，不再返回 `news_pipeline_pending` stub。
 
 ### 验收
 
-- [ ] 相关单测通过
-- [ ] TECH.md / PRD.md 已提及 AI资讯与 `news_sources.yaml`
-- [ ] 全 execution-plan 步骤验收均可勾选（本步为收尾）
+- [✅] 相关单测通过
+- [✅] TECH.md / PRD.md 已提及 AI资讯与 `news_sources.yaml`
+- [✅] 全 execution-plan 步骤验收均可勾选（本步为收尾）
 
 ---

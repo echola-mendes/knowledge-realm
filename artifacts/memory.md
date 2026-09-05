@@ -5,6 +5,7 @@
 | 子需求 | 日期 | 结果 | 验收 |
 |---|---|---|---|
 | 通用定时任务（PRD-Job） | 2026-09-04 | APScheduler+Redis+arq+任务页；NEWS_REFRESH handler 仍 stub | 全 ✅ |
+| AI资讯（PRD-NEWS） | 2026-09-04 | news 表/管道/API/前端热榜；NEWS_REFRESH 接真实 refresh；源 yaml | 全 ✅ |
 
 ## 经验
 
@@ -23,6 +24,34 @@
 问题：调度基建先于资讯管道落地。
 
 解法：handler stub 返回 `news_pipeline_pending`；资讯管道见 PRD-NEWS，执行时读 `news_settings`，任务页不配分类。
+
+> 后续：PRD-NEWS 已接通真实管道，stub 仅作历史记录。
+
+### NEWS_REFRESH 读 settings 不读任务配置
+
+日期：2026-09-04　来源：PRD-NEWS
+
+问题：分类启停与调度间隔职责分离。
+
+解法：启用板块只存 `news_settings.enabled_categories`；handler 执行时读取；任务页不配分类。源列表在 `server/config/news_sources.yaml`，路径可用 `NEWS_SOURCES_PATH` 覆盖。
+
+### 热榜只读当日快照
+
+日期：2026-09-04　来源：PRD-NEWS
+
+问题：列表若现算 heat 会与任务结果不一致。
+
+解法：`GET /api/news/hot` 只读 `news_daily_rank`；refresh 重写相关 category + `all`；不足 TopK 不跨分类补榜。
+
+---
+
+## 2026-09-04：PRD-NEWS 子需求完成
+
+- 表：`news` / `news_daily_rank` / `news_settings`；迁移 `20260904_0023_news`
+- 管道：`app/news/`（sources→collector→parser→dedup→summarizer→scorer→service）；薄封装 `news_service.py`
+- Worker：`news_handler` 读 enabled_categories → `NewsService.refresh`；result 含 fetched/saved/summarized/failed/skipped_dup
+- API：`/api/news/hot|settings|{id}`；前端 `/tools/news`、`/tools/news/:id`
+- 单测：`test_news_*.py` 14 passed；文档已同步 TECH/PRD；AGENTS 栈未变
 
 ---
 

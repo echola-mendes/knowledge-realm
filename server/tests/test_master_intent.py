@@ -342,3 +342,19 @@ def test_agent_router_stream_booking_events(monkeypatch):
         assert done["intent"] == "booking"
         assert done["pending_action"]["tool"] == "book_flight"
     reset_app_state()
+
+def test_classify_date_revision_with_history_overrides_knowledge(monkeypatch):
+    """「换成下周三出发」+ 上文行程 → plan（即使 LLM=knowledge）。"""
+    monkeypatch.setattr(intent_mod, "_llm_label", lambda query, history_tail=None: "knowledge")
+    history = [
+        {"role": "user", "content": "下周二深圳出发去北京，周四返回，经济舱"},
+        {"role": "assistant", "content": "方案已生成，请查看下方完整方案展示。"},
+    ]
+    assert classify_intent("换成下周三出发", task="agent", history_tail=history) == "plan"
+
+
+def test_classify_date_revision_without_history_stays_non_plan(monkeypatch):
+    """无行程上文时，短改期句不强制 plan（避免误伤）。"""
+    monkeypatch.setattr(intent_mod, "_llm_label", lambda query, history_tail=None: "knowledge")
+    assert classify_intent("换成下周三出发", task="agent", history_tail=[]) == "knowledge"
+

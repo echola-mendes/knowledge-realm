@@ -217,8 +217,10 @@ def _reason_llm(state: PlanState) -> dict[str, Any] | None:
                     "日期格式 YYYY-MM-DD。trip_type：出差会议=business，旅游度假=leisure，学习交流=study，否则 other。"
                     "只写本轮新提及或更正的字段，未提及的字段不要输出（保留旧值由系统合并）。"
                     "动作规则：要素齐全先查机票（flights）；需要酒店且已启用再 hotels；"
-                    "已有搜索结果则 plan 生成方案；方案生成后 save 保存方案页；"
-                    "要素缺失（出发地/目的地/出发日期）选 ask；与出行无关选 direct。",
+                    "已有搜索结果则 plan 生成方案；方案生成后必须 save 保存方案页；"
+                    "用户改日期/舱位/城市时必须重新 flights→plan→save，禁止只口头确认；"
+                    "要素缺失（出发地/目的地/出发日期）选 ask；与出行无关选 direct。"
+                    "本轮尚未 saved 时禁止选 direct。",
                 ),
                 (
                     "human",
@@ -261,6 +263,60 @@ def _heuristic_params(state: PlanState) -> dict[str, Any]:
     return parse_travel_params(_user_question(state))
 
 
+def _params_from_history(state: PlanState) -> dict[str, Any]:
+    """按用户消息时间序合并参数，供「换成下周三」这类短追问沿用城市/返程。"""
+    from app.travel.params_parse import parse_travel_params
+
+    merged: dict[str, Any] = {}
+    for item in state.get("messages") or []:
+        if item.get("role") != "user":
+            continue
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        chunk = parse_travel_params(content)
+        merged.update({k: v for k, v in chunk.items() if v not in (None, "")})
+    return merged
+
+
+def _align_return_after_depart(params: dict[str, Any]) -> dict[str, Any]:
+    """出发日被改晚后，若返程不晚于出发则顺延一天，避免非法区间。"""
+    import datetime as dt
+
+    depart = params.get("depart_date")
+    ret = params.get("return_date")
+    if not depart or not ret:
+        return params
+    try:
+        a = dt.date.fromisoformat(str(depart)[:10])
+        b = dt.date.fromisoformat(str(ret)[:10])
+    except ValueError:
+        return params
+    if b <= a:
+        params = dict(params)
+        params["return_date"] = (a + dt.timedelta(days=1)).isoformat()
+    return params
+
+
+def _pipeline_action(
+    *,
+    flights_searched: bool,
+    has_flight_results: bool,
+    has_plan: bool,
+    has_plan_html: bool,
+) -> str:
+    """本轮强制 flights→plan→save，避免改期被 LLM 误判为 direct。"""
+    if not flights_searched:
+        return "flights"
+    if not has_flight_results:
+        return "direct"
+    if not has_plan:
+        return "plan"
+    if not has_plan_html:
+        return "save"
+    return "direct"
+
+
 def reason_decide(state: PlanState) -> dict[str, Any]:
     """纯决策函数（无副作用），返回 state 更新。"""
     parsed = _reason_llm(state)
@@ -272,12 +328,17 @@ def reason_decide(state: PlanState) -> dict[str, Any]:
         if isinstance(raw_params, dict):
             params_update = {k: v for k, v in raw_params.items() if v not in (None, "")}
     merged = dict(state.get("params") or {})
+    # 历史用户句先铺底，当前句与 LLM 增量覆盖（改日期不丢城市）
+    merged.update(_params_from_history(state))
     merged.update(_heuristic_params(state))
     merged.update(params_update)
+    merged = _align_return_after_depart(merged)
     missing = [f for f in REQUIRED_FIELDS if not merged.get(f)]
     flights_raw = state.get("flights_raw")
     flights_searched = flights_raw is not None
     has_flight_results = bool((flights_raw or {}).get("itemList"))
+    has_plan = bool(state.get("plan"))
+    has_plan_html = bool((state.get("plan_html") or {}).get("html") or (state.get("plan_html") or {}).get("url"))
     # 硬规则：要素缺失必补问，优先于 LLM 动作（已搜过票则不再 ask）
     if missing and not flights_searched:
         return {"params": merged, "need_fields": missing, "next_action": "ask"}
@@ -285,17 +346,12 @@ def reason_decide(state: PlanState) -> dict[str, Any]:
     if not missing and action == "ask":
         action = ""
     if not parsed or not action:
-        # 无 LLM 或无效动作：要素齐则按既定顺序走，避免空转
-        if not flights_searched:
-            action = "flights"
-        elif not has_flight_results:
-            action = "direct"
-        elif not state.get("plan"):
-            action = "plan"
-        elif not state.get("plan_html"):
-            action = "save"
-        else:
-            action = "direct"
+        action = _pipeline_action(
+            flights_searched=flights_searched,
+            has_flight_results=has_flight_results,
+            has_plan=has_plan,
+            has_plan_html=has_plan_html,
+        )
     if action == "flights" and flights_searched:
         action = "plan" if has_flight_results else "direct"
     # 已搜过且无票：禁止继续 plan/save/hotels（否则空方案页）
@@ -305,6 +361,14 @@ def reason_decide(state: PlanState) -> dict[str, Any]:
         action = "flights"
     if action == "save" and not state.get("plan"):
         action = "plan"
+    # 改期/改舱常见误判：LLM 选 direct 却未产出方案页 → 强制走完流水线
+    if action == "direct" and not missing and not has_plan_html:
+        action = _pipeline_action(
+            flights_searched=flights_searched,
+            has_flight_results=has_flight_results,
+            has_plan=has_plan,
+            has_plan_html=has_plan_html,
+        )
     if action not in ("flights", "hotels", "plan", "save", "ask", "direct"):
         action = "plan" if has_flight_results else ("flights" if not flights_searched else "direct")
     return {"params": merged, "need_fields": [], "next_action": action}

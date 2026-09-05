@@ -306,10 +306,21 @@ def agent_stream(
                 if node == "intent" and updates.get("intent"):
                     emit({"type": "intent", "intent": updates["intent"]})
     result = _agent_persist(session, task, kb_id, convo, body, final)
+    # 兜底：save 已写入 final.plan_html 但 emit 漏发时，仍推送方案页给前端
+    final_plan_html = final.get("plan_html") if isinstance(final.get("plan_html"), dict) else None
 
     def events():
+        emitted_plan = False
         for event in hook_events:
+            if isinstance(event, dict) and event.get("type") == "plan_html":
+                emitted_plan = True
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        if (
+            not emitted_plan
+            and isinstance(final_plan_html, dict)
+            and (final_plan_html.get("html") or final_plan_html.get("url"))
+        ):
+            yield f"data: {json.dumps({'type': 'plan_html', **final_plan_html}, ensure_ascii=False)}\n\n"
         for char in result.answer:
             yield f"data: {json.dumps({'type': 'token', 'text': char}, ensure_ascii=False)}\n\n"
         payload = {"type": "citations", **result.model_dump(mode="json")}

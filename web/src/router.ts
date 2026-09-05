@@ -17,9 +17,12 @@ import KnowledgeGraphView from "./views/KnowledgeGraphView.vue";
 import ToolsLayout from "./views/ToolsLayout.vue";
 import MyTripsView from "./views/MyTripsView.vue";
 import ToolPlaceholderView from "./views/ToolPlaceholderView.vue";
+import NewsListView from "./views/NewsListView.vue";
+import NewsDetailView from "./views/NewsDetailView.vue";
 import BasicsLayout from "./views/BasicsLayout.vue";
 import MenuManageView from "./views/MenuManageView.vue";
 import JobsManageView from "./views/JobsManageView.vue";
+import MonitoringLayout from "./views/MonitoringLayout.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -45,12 +48,9 @@ export const router = createRouter({
           component: ToolPlaceholderView,
           meta: { title: "创建新行程", sub: "在 Multi Agent 对话中描述出行需求，生成方案后会进入我的行程单。" },
         },
-        {
-          path: "consult",
-          name: "tools-consult",
-          component: ToolPlaceholderView,
-          meta: { title: "资讯中心", sub: "智能资讯入口占位，能力后续接入。" },
-        },
+        { path: "news", name: "tools-news", component: NewsListView },
+        { path: "news/:id", name: "tools-news-detail", component: NewsDetailView },
+        { path: "consult", redirect: { name: "tools-news" } },
         {
           path: "consult/history",
           name: "tools-consult-history",
@@ -81,9 +81,28 @@ export const router = createRouter({
     { path: "/settings", name: "settings", component: SettingsView },
     {
       path: "/monitoring",
-      name: "monitoring",
-      component: ToolPlaceholderView,
-      meta: { title: "监控", sub: "系统运行监控入口占位，能力后续接入。" },
+      component: MonitoringLayout,
+      children: [
+        { path: "", redirect: { name: "monitoring-decisions" } },
+        {
+          path: "decisions",
+          name: "monitoring-decisions",
+          component: ToolPlaceholderView,
+          meta: {
+            title: "决策审计",
+            sub: "记录 AI 问答与 Agent 的结构化决策链、依据与解释。需求见 docs/PRD-DECISIONS.md，能力后续接入。",
+          },
+        },
+        {
+          path: "operations",
+          name: "monitoring-operations",
+          component: ToolPlaceholderView,
+          meta: {
+            title: "操作审计",
+            sub: "记录文档导入、向量化、图谱抽取等系统操作与流水线。需求见 docs/PRD-OPERATIONS.md，能力后续接入。",
+          },
+        },
+      ],
     },
     {
       path: "/basics",
@@ -96,6 +115,7 @@ export const router = createRouter({
     },
     { path: "/challenge", name: "challenge", component: ChallengeView },
     { path: "/knowledge-graph", name: "knowledge-graph", component: KnowledgeGraphView },
+    { path: "/m/:menuId", name: "custom-menu", component: ToolPlaceholderView },
   ],
 });
 

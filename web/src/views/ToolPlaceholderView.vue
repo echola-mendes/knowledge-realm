@@ -1,10 +1,20 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute } from "vue-router";
+import { findNavNode, navTree } from "../navConfig";
 
 const route = useRoute();
-const title = computed(() => String(route.meta.title ?? "工具"));
-const sub = computed(() => String(route.meta.sub ?? "功能即将推出。"));
+const customNode = computed(() =>
+  route.name === "custom-menu" && typeof route.params.menuId === "string"
+    ? findNavNode(navTree.value, route.params.menuId)
+    : null,
+);
+const title = computed(() => customNode.value?.label ?? String(route.meta.title ?? "工具"));
+const sub = computed(() =>
+  customNode.value
+    ? "自定义菜单占位页，具体能力后续接入。"
+    : String(route.meta.sub ?? "功能即将推出。"),
+);
 </script>
 
 <template>

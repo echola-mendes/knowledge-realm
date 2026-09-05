@@ -3,45 +3,19 @@ import { computed, onMounted, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute } from "vue-router";
 import { getMe, type AppUser } from "./api";
 import Icon from "./components/Icon.vue";
+import SideNavItem from "./components/SideNavItem.vue";
 import { loadKnowledgeBases } from "./kb";
 import { debugEnabled } from "./debugFlag";
-import { NAV_ITEMS, navConfig, type NavItemDef } from "./navConfig";
+import { navTree, type NavNode } from "./navConfig";
 
 const route = useRoute();
 const me = ref<AppUser | null>(null);
 const isLogin = computed(() => route.name === "login");
 const initial = computed(() => (me.value?.username?.trim().charAt(0) || "?").toUpperCase());
 
-const links = computed<NavItemDef[]>(() => {
-  const { order, labels } = navConfig.value;
-  const byMatch = new Map(NAV_ITEMS.map((item) => [item.match, item]));
-  const list: NavItemDef[] = [];
-  for (const match of order) {
-    const item = byMatch.get(match);
-    if (!item) continue;
-    if (item.match === "debug" && !debugEnabled.value) continue;
-    list.push({ ...item, label: labels[item.match] ?? item.label });
-  }
-  return list;
-});
-
-function navOn(match: string) {
-  const p = route.path;
-  const qMode = typeof route.query.mode === "string" ? route.query.mode : "";
-  if (match === "home") return p === "/";
-  if (match === "chat") return p === "/chat" && qMode !== "report";
-  if (match === "kbs") return p === "/knowledge-bases";
-  if (match === "docs") return p === "/documents" || p.startsWith("/documents/");
-  if (match === "search") return p === "/search";
-  if (match === "debug") return p === "/debug";
-  if (match === "settings") return p === "/settings";
-  if (match === "knowledge-graph") return p === "/knowledge-graph";
-  if (match === "insights") return p === "/insights";
-  if (match === "tools") return p === "/tools" || p.startsWith("/tools/");
-  if (match === "monitoring") return p === "/monitoring";
-  if (match === "basics") return p === "/basics" || p.startsWith("/basics/");
-  return false;
-}
+const links = computed<NavNode[]>(() =>
+  navTree.value.filter((n) => n.enabled && !(n.id === "debug" && !debugEnabled.value)),
+);
 
 function loadShell() {
   loadKnowledgeBases().catch(() => undefined);
@@ -76,17 +50,7 @@ watch(isLogin, (login) => {
         </RouterLink>
       </header>
       <nav class="nav">
-        <RouterLink
-          v-for="item in links"
-          :key="item.match"
-          :to="item.to"
-          active-class=""
-          exact-active-class=""
-          :class="{ on: navOn(item.match) }"
-        >
-          <Icon :name="item.icon" />
-          <span class="nav-label">{{ item.label }}</span>
-        </RouterLink>
+        <SideNavItem v-for="item in links" :key="item.id" :node="item" :depth="0" />
       </nav>
       <div class="sidenav-foot">
         <button class="theme-btn" type="button" aria-label="主题">

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Literal
 
-from app.travel.params_parse import has_plan_oral_signal
+from app.travel.params_parse import has_plan_oral_signal, is_plan_revision_query
 from app.travel.plan_confirm import is_confirm_plan_query
 
 IntentLabel = Literal["knowledge", "plan", "booking", "chat"]
@@ -72,10 +72,12 @@ def _llm_label(query: str, history_tail: list[dict[str, str]] | None = None) -> 
                     "你是意图分类器。只输出 JSON，格式："
                     '{"intent":"knowledge|plan|booking|chat"}。'
                     "knowledge=知识库问答/资料检索/报告生成；"
-                    "plan=机酒出行规划（搜索比价、安排行程；含城市+日期+往返/出发/返回口述）；"
+                    "plan=机酒出行规划（搜索比价、安排行程；含城市+日期+往返/出发/返回口述；"
+                    "以及在已有行程对话里改日期/舱位/城市，如「换成下周三出发」「改公务舱」）；"
                     "booking=下单/取消/查询预订；用户确认已给出的行程方案（如「确认方案1」「确认P1」「选方案2」）必须是 booking，禁止当成 knowledge 用 RAG 检索或编造支付链接；"
                     "chat=寒暄或与知识库、出行无关的闲聊。"
-                    "用户给出出发地/目的地/日期并要求出行安排时必须是 plan，禁止当成 knowledge 直接编航班。",
+                    "用户给出出发地/目的地/日期并要求出行安排时必须是 plan，禁止当成 knowledge 直接编航班。"
+                    "上文已是行程规划时，用户仅改出发日期也必须是 plan，禁止当成 chat/knowledge。",
                 ),
                 ("human", "最近对话：\n{history}\n\n用户消息：{query}"),
             ]
@@ -96,13 +98,32 @@ def _llm_label(query: str, history_tail: list[dict[str, str]] | None = None) -> 
         return None
 
 
-def _rule_correct_to_plan(query: str, llm_label: IntentLabel | None) -> bool:
+def _history_travel_context(history_tail: list[dict[str, str]] | None) -> bool:
+    """上文是否已在谈行程（方案页/机酒词/完整口述），供改期追问纠偏。"""
+    blob = "\n".join(str(item.get("content") or "") for item in (history_tail or []))
+    if not blob.strip():
+        return False
+    if has_plan_oral_signal(blob):
+        return True
+    if any(k in blob for k in _PLAN_KEYWORDS):
+        return True
+    return "方案" in blob or "MinIO" in blob or "机票" in blob or "航班" in blob
+
+
+def _rule_correct_to_plan(
+    query: str,
+    llm_label: IntentLabel | None,
+    history_tail: list[dict[str, str]] | None = None,
+) -> bool:
     """LLM 判成 knowledge/chat（或失败）时，用正向/纠偏规则改走 plan。"""
     if llm_label not in _MISJUDGED_TO_PLAN:
         return False
     if has_plan_oral_signal(query):
         return True
     if _strong_travel(query):
+        return True
+    # 「换成下周三出发」本身无城市，靠上文行程上下文纠偏
+    if is_plan_revision_query(query) and _history_travel_context(history_tail):
         return True
     return False
 
@@ -120,8 +141,10 @@ def classify_intent(
     if is_confirm_plan_query(query):
         return "booking"
     label = _llm_label(query, history_tail)
-    if _rule_correct_to_plan(query, label):
+    if _rule_correct_to_plan(query, label, history_tail):
         return "plan"
     if label:
         return label
+    if is_plan_revision_query(query) and _history_travel_context(history_tail):
+        return "plan"
     return _heuristic_intent(query)

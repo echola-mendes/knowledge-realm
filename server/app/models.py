@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -373,3 +375,57 @@ class TaskExecution(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     task: Mapped[ScheduledTask] = relationship(back_populates="executions")
 
+class News(Base):
+    __tablename__ = "news"
+    __table_args__ = (
+        UniqueConstraint("url", name="uq_news_url"),
+        UniqueConstraint("content_hash", name="uq_news_content_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(200), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    importance_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    heat_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    daily_ranks: Mapped[list["NewsDailyRank"]] = relationship(
+        back_populates="news", cascade="all, delete-orphan"
+    )
+
+
+class NewsDailyRank(Base):
+    __tablename__ = "news_daily_rank"
+    __table_args__ = (
+        UniqueConstraint("rank_date", "category", "rank", name="uq_news_daily_rank_slot"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    news_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("news.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    rank_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    news: Mapped[News] = relationship(back_populates="daily_ranks")
+
+
+class NewsSettings(Base):
+    __tablename__ = "news_settings"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    enabled_categories: Mapped[list] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

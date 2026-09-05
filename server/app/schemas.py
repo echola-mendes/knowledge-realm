@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from app.chunk import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
@@ -557,3 +557,43 @@ class TaskTypeOut(BaseModel):
     task_type: str
     label: str
 
+
+class NewsHotItemOut(BaseModel):
+    id: int
+    rank: int
+    title: str
+    summary: str | None = None
+    category: str
+    source: str
+    published_at: datetime | None = None
+    heat_score: float | None = None
+
+
+class NewsHotOut(BaseModel):
+    date: date
+    category: str
+    items: list[NewsHotItemOut]
+
+
+class NewsDetailOut(BaseModel):
+    id: int
+    title: str
+    summary: str | None = None
+    content: str | None = None
+    url: str
+    source: str
+    category: str
+    published_at: datetime | None = None
+    collected_at: datetime | None = None
+    heat_score: float | None = None
+    importance_score: int | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class NewsSettingsOut(BaseModel):
+    enabled_categories: list[str]
+
+
+class NewsSettingsIn(BaseModel):
+    enabled_categories: list[str]

@@ -131,3 +131,34 @@ server/app/
 | 日期 | 决策 |
 |---|---|
 | 2026-09-01 | 认同分批拆分路线；P4 稳定前不执行搬迁；本文档归档判断与路线图 |
+
+
+
+建议：
+这个思路对。现在 server/app/ 根目录有三十多个模块（graph.py、master.py、chat.py、parse.py、index.py…），子包 mainly 只有 routers/、services/、travel/、worker/ 等，扁平 + 局部子包 混着用，后面加决策审计、操作审计会不知道该往哪挂。
+
+先迁移再开 P0，能避免：
+
+DecisionRecorder 写进 app/decision_recorder.py，迁完又要挪到 app/audit/ 或 app/decisions/
+graph / master / plan_agent 路径一变，埋点 import 全要改两遍
+Alembic 模型若和 models.py 拆包不同步，迁移期更难排错
+迁移时可以和 PRD 对齐的分包方向（供你参考，不必一次做完）：
+
+子包	可迁入的现有模块
+app/agents/
+graph.py、master.py、plan_agent.py、booking_agent.py、intent.py
+app/chat/ 或 app/rag/
+chat.py、chains.py、conversation_summary.py、ltm.py
+app/ingest/
+parse.py、index.py、chunk.py、url_import.py
+app/search/
+search.py、rerank.py、es_bm25.py
+app/audit/（迁完再加）
+decision/ + operations/ 的 recorder、models 薄封装
+models.py / schemas.py 可以暂时留在根上，或按域拆成 app/models/ —— 这和审计表何时加有关，表结构可以等包稳定后再迁 Alembic。
+
+和当前 PRD 的关系：
+
+文档、监控占位页已经写好，不依赖包结构，可以留着。
+P0 实现时，按 PRD 直接落在 app/audit/decision/（或你定的子包名）即可，一次到位。
+你先把后端归到子包里；迁完如果愿意，可以把目标目录结构发我，我可以帮你对一下 PRD-DECISIONS 里的埋点路径该怎么写 import。

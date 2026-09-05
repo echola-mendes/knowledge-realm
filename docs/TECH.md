@@ -30,7 +30,7 @@
 
 - Vue 3 `<script setup>` + TypeScript + Vite  
 - Vue Router：首页、文档、搜索、对话、阅读、设置（可合并）  
-- 侧边栏菜单配置：`web/src/navConfig.ts` 定义带稳定 key 的菜单元数据（默认顺序：首页/对话/搜索/知识库/文档/图谱/检测/工具/监控/基础/设置，调试随开关追加在设置前），顺序与自定义名称持久化在 localStorage（key `zhiyu-nav-config`）；`web/src/views/MenuManageView.vue`（基础页"菜单管理"）支持改名与原生 HTML5 拖拽排序（附上移/下移按钮兜底），`/basics` 使用 `BasicsLayout.vue` 二级菜单布局，`/tools` 使用 `ToolsLayout.vue` 二级菜单（旅程 / AI资讯 / AI生图 / 更多工具，样式见 `web/style.md` §13），`MyTripsView` 用行程类型、无状态（`web/style.md` §14；`plan_record.trip_type` / `nights`），`/monitoring` 复用 `ToolPlaceholderView.vue` 占位  
+- 侧边栏菜单配置：`web/src/navConfig.ts` 以树形结构（`NavNode`，最多 3 级）定义菜单元数据，持久化在 localStorage（key `zhiyu-nav-tree-v2`，旧扁平配置 `zhiyu-nav-config` 自动迁移）；`App.vue` 用递归组件 `web/src/components/SideNavItem.vue` 渲染侧边栏（有子菜单的节点为折叠按钮，路由命中时自动展开；`tools`/`basics`/`monitoring` 为页内二级分区，侧栏只作入口不展开子项，见 `PAGE_SECTION_IDS`；自定义菜单落地 `/m/:menuId` 占位页）；`web/src/views/MenuManageView.vue`（基础页"菜单管理"）支持树形增删改：新增子菜单、点击改名、删除（含确认，删除父级连带子级）、每项开关控制是否在侧边栏显示、同级拖拽排序与上移/下移；内置菜单被显式删除后不自动复活，可用"恢复默认"找回，`/basics` 使用 `BasicsLayout.vue` 二级菜单布局，`/tools` 使用 `ToolsLayout.vue` 二级菜单（旅程 / AI资讯 / AI生图 / 更多工具，样式见 `web/style.md` §13），`MyTripsView` 用行程类型、无状态（`web/style.md` §14；`plan_record.trip_type` / `nights`），`/monitoring` 使用 `MonitoringLayout.vue` 二级菜单（决策审计 / 操作审计，当前占位；需求见 `docs/PRD-DECISIONS.md`、`docs/PRD-OPERATIONS.md`）  
 - Markdown 展示：`markdown-it`  
 - HTTP：`fetch`；SSE 用 `fetch` 读 stream  
 - 开发：Vite 代理 `/api` → FastAPI  
@@ -58,7 +58,7 @@
 - **不需要** OpenAI 官网账号或 `sk-` OpenAI 密钥。  
 - URL：`httpx` 超时 20s；`trafilatura` 抽正文  
 - 哈希：SHA-256  
-- 定时任务：APScheduler 挂 FastAPI lifespan，只入队；独立进程 `python -m app.worker.worker` 消费 Redis 队列 `zhiyu:tasks`。单 uvicorn 实例，勿开多 worker。`NEWS_REFRESH` handler 现为 stub。  
+- 定时任务：APScheduler 挂 FastAPI lifespan，只入队；独立进程 `python -m app.worker.worker` 消费 Redis 队列 `zhiyu:tasks`。单 uvicorn 实例，勿开多 worker。`NEWS_REFRESH` 读 `news_settings.enabled_categories`，经 `app/news/` 管道（RSS→去重→摘要→热度→`news_daily_rank`）刷新；源列表见 `server/config/news_sources.yaml`（可用 `NEWS_SOURCES_PATH` 覆盖）。 摘要 prompt 对 JSON 花括号做 LangChain 转义；`NEWS_MAX_ITEMS` 按启用分类均分截断，避免单一大源占满名额；仅对当日可入榜条目调用 LLM。  
 
 目录：`server/`
 
@@ -225,9 +225,13 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearc
 | `server/app/graph.py` | Agent StateGraph 新增 `GRAPH` action：`reason` 输出 `action=graph`，`run_tool` 调用 `search_graph` |
 | `web/src/views/KnowledgeGraphView.vue` | `/knowledge-graph` 力导向 SVG 可视化页：知识库/实体/关系筛选与重置、力导向布局、搜索高亮、4 Tab 面板（节点详情、路径探索、邻居节点、检索辅助）、画布控制、统计 |
 | `web/src/components/Icon.vue` | 补齐 `minus / maximize / refresh / fullscreen` 等图谱控制图标 |
-| `web/src/router.ts` | `/knowledge-graph`；`/tools` 布局（默认 `trips`；另有 `consult` / `image` 占位） |
+| `web/src/router.ts` | `/knowledge-graph`；`/tools` 布局（默认 `trips`；`/tools/news` AI资讯；另有 `image` 等占位） |
 | `web/src/App.vue` | 侧栏「知识图谱」；「工具」（`tools` 图标）→ `/tools` |
-| `web/src/views/ToolsLayout.vue` | 工具页内二级菜单：旅程 / AI资讯 / AI生图 |
+| `web/src/views/ToolsLayout.vue` | 工具页内二级菜单：旅程 / AI资讯（今日热榜） / AI生图 |
+| `web/src/views/NewsListView.vue` / `NewsDetailView.vue` | AI资讯热榜与详情；启用板块调 `/api/news/settings` |
+| `server/app/news/` | 资讯管道：sources/collector/parser/dedup/summarizer/scorer/service |
+| `server/app/routers/news.py` | `/api/news/hot`、`/api/news/{id}`、`/api/news/settings` |
+| `server/config/news_sources.yaml` | 默认知讯源（8 启用 + Reuters 备选关闭） |
 | `web/src/views/MyTripsView.vue` | 工具 → 我的行程单：接 `GET /api/plans` 列表；空态引导 Multi Agent |
 | `server/app/message_ui.py` | 助手消息 UI 载荷：`plan_html`/`travel_data` 随 `message.citations` envelope 落库；`GET .../messages` 解包回放，旧消息可从 `plan_record` 补 url |
 | `web/src/views/ToolPlaceholderView.vue` | 工具占位页：读 `route.meta.title/sub`，展示「即将推出」 |

@@ -103,6 +103,26 @@ def _parse_destination_only(text: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
+_REVISION_KEYWORDS = ("换成", "改成", "改到", "改为", "调整为", "改一下", "修改为")
+
+
+def is_plan_revision_query(text: str, ref: dt.date | None = None) -> bool:
+    """改日期/舱位/路线的追问（如「换成下周三出发」），本身可无城市。"""
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if not any(k in raw for k in _REVISION_KEYWORDS):
+        return False
+    params = parse_travel_params(raw, ref=ref)
+    if params.get("depart_date") or params.get("return_date") or params.get("cabin"):
+        return True
+    if params.get("origin") or params.get("destination"):
+        return True
+    return any(k in raw for k in _ROUTE_KEYWORDS) or any(
+        k in raw for k in ("经济舱", "公务舱", "头等舱", "商务舱")
+    )
+
+
 def has_plan_oral_signal(text: str, ref: dt.date | None = None) -> bool:
     """正向机酒规划口述：城市(对) + 日期 + 出发/返回/往返（PRD §4.3 验收对齐）。"""
     raw = (text or "").strip()

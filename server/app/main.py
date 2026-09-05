@@ -21,6 +21,7 @@ from app.routers.retrieval_debug import router as retrieval_debug_router
 from app.routers.search import router as search_router
 from app.routers.tags import router as tags_router
 from app.routers.task import router as task_router
+from app.routers.news import router as news_router
 from app.scheduler.scheduler import shutdown_scheduler, start_scheduler
 from app.user import ensure_default_user
 
@@ -74,6 +75,7 @@ def create_app(*, load_file: bool = True, ensure_default: bool = True) -> FastAP
     app.include_router(recommendations_router)
     app.include_router(plans_router)
     app.include_router(task_router)
+    app.include_router(news_router)
 
     @app.exception_handler(EsNotConfiguredError)
     def _es_not_configured(_request, exc: EsNotConfiguredError):

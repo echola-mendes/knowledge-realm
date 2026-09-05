@@ -49,6 +49,11 @@ class Settings:
     minio_bucket: str
     minio_secure: bool
     redis_url: str
+    news_sources_path: Path
+    news_top_k: int
+    news_max_items: int
+    news_http_timeout: int
+    news_llm_timeout: int
     host: str = HOST
     port: int = PORT
 
@@ -71,6 +76,14 @@ def _min_score(name: str, raw: str | None, default: float) -> float:
     if value < 0:
         raise ConfigError(f"{name} must be >= 0")
     return value
+
+
+
+def _resolve_path(raw: str) -> Path:
+    path = Path(raw.strip())
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    return path
 
 
 def load_settings(environ: dict[str, str] | None = None, *, load_file: bool = False) -> Settings:
@@ -127,6 +140,13 @@ def load_settings(environ: dict[str, str] | None = None, *, load_file: bool = Fa
         minio_bucket=(env.get("MINIO_BUCKET") or "zhiyu").strip(),
         minio_secure=(env.get("MINIO_SECURE") or "").strip().lower() in ("1", "true", "yes"),
         redis_url=(env.get("REDIS_URL") or "redis://127.0.0.1:6379/0").strip(),
+        news_sources_path=_resolve_path(
+            env.get("NEWS_SOURCES_PATH") or "server/config/news_sources.yaml"
+        ),
+        news_top_k=_positive_int("NEWS_TOP_K", env.get("NEWS_TOP_K"), 20),
+        news_max_items=_positive_int("NEWS_MAX_ITEMS", env.get("NEWS_MAX_ITEMS"), 30),
+        news_http_timeout=_positive_int("NEWS_HTTP_TIMEOUT", env.get("NEWS_HTTP_TIMEOUT"), 10),
+        news_llm_timeout=_positive_int("NEWS_LLM_TIMEOUT", env.get("NEWS_LLM_TIMEOUT"), 60),
         host=HOST,
         port=PORT,
     )

@@ -261,3 +261,54 @@ def test_plan_agent_keeps_params_across_preference_change(monkeypatch):
     assert updates["params"]["cabin"] == "公务舱"
     assert updates["params"]["origin"] == "上海"
     assert updates["params"]["depart_date"] == "2026-09-10"
+
+def test_is_plan_revision_query_date_change():
+    from datetime import date
+
+    from app.travel.params_parse import is_plan_revision_query
+
+    ref = date(2026, 9, 5)
+    assert is_plan_revision_query("换成下周三出发", ref=ref)
+    assert is_plan_revision_query("改成公务舱", ref=ref)
+    assert not is_plan_revision_query("什么是RAG", ref=ref)
+
+
+def test_reason_decide_forces_pipeline_when_llm_says_direct_on_date_change(monkeypatch):
+    """改日期追问：LLM 误选 direct 时仍强制 flights→plan→save。"""
+    monkeypatch.setattr(
+        plan_mod,
+        "_reason_llm",
+        lambda state: {
+            "params": {"depart_date": "2026-09-09"},
+            "action": "direct",
+        },
+    )
+    state = plan_mod.plan_initial_state(
+        "换成下周三出发",
+        history=[
+            {"role": "user", "content": "下周二深圳出发去北京，周四返回，经济舱"},
+            {"role": "assistant", "content": "方案已生成，请查看下方完整方案展示。"},
+        ],
+    )
+    updates = plan_mod.reason_decide(state)
+    assert updates["params"]["origin"] == "深圳"
+    assert updates["params"]["destination"] == "北京"
+    assert updates["params"]["depart_date"] == "2026-09-09"
+    assert updates["next_action"] == "flights"
+
+
+def test_reason_decide_forces_save_after_plan_when_llm_says_direct(monkeypatch):
+    monkeypatch.setattr(plan_mod, "_reason_llm", lambda state: {"action": "direct"})
+    state = plan_mod.plan_initial_state("换成下周三出发")
+    state["params"] = {
+        "origin": "深圳",
+        "destination": "北京",
+        "depart_date": "2026-09-09",
+        "return_date": "2026-09-10",
+        "cabin": "经济舱",
+    }
+    state["flights_raw"] = FLIGHTS
+    state["plan"] = {"options": [{"id": "opt-1"}], "recommendation": {"option_id": "opt-1", "reason": "x"}}
+    updates = plan_mod.reason_decide(state)
+    assert updates["next_action"] == "save"
+
