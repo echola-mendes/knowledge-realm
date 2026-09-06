@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from typing import Iterable
+from typing import Iterable, Protocol
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -22,7 +23,13 @@ from app.news.scorer import (
     shanghai_today,
 )
 from app.news.sources import ALLOWED_CATEGORIES, load_sources
-from app.news.summarizer import summarize_item
+from app.news.summarizer import SummarizeResult, summarize_item
+
+
+class PipelineProgress(Protocol):
+    """worker 注入的进度上报器（写 Redis）；测试或直调时可传 None。"""
+
+    def stage(self, stage: str, *, done: int | None = None, total: int | None = None) -> None: ...
 
 
 def _utcnow() -> datetime:
@@ -167,18 +174,54 @@ def rewrite_daily_ranks(
     return {"rank_rows": written, "candidates": len(candidates)}
 
 
+def _summarize_concurrent(
+    tasks: list[dict],
+    *,
+    workers: int,
+    progress: PipelineProgress | None,
+) -> list[SummarizeResult]:
+    """并发跑 LLM 摘要；results 顺序与 tasks 一致。单条失败落回 fallback。"""
+    results: list[SummarizeResult | None] = [None] * len(tasks)
+    if progress is not None:
+        progress.stage("summarize", done=0, total=len(tasks))
+    done_ct = 0
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = {
+            pool.submit(
+                summarize_item,
+                title=task["title"],
+                content=task["content"],
+                category=task["category"],
+            ): idx
+            for idx, task in enumerate(tasks)
+        }
+        for future in as_completed(futures):
+            idx = futures[future]
+            try:
+                results[idx] = future.result()
+            except Exception:  # noqa: BLE001 — summarize_item 内部已兜底，这里双保险
+                results[idx] = SummarizeResult(summary=None, importance=5, ok=False, error="thread_error")
+            done_ct += 1
+            if progress is not None:
+                progress.stage("summarize", done=done_ct, total=len(tasks))
+    return [r if r is not None else SummarizeResult(None, 5, False, "no_result") for r in results]
+
+
 def refresh(
     session: Session,
     categories: Iterable[str] | None = None,
     *,
     now: datetime | None = None,
+    progress: PipelineProgress | None = None,
 ) -> dict:
-    """采集 → 解析 → 去重 → 摘要/重要性 → 热度 → 写当日排行榜。不 commit（由调用方负责）。"""
+    """采集 → 解析 → 去重 → 摘要/重要性（并发）→ 热度 → 写当日排行榜。不 commit（由调用方负责）。"""
     cats = _normalize_categories(categories)
     settings = get_settings()
     max_items = settings.news_max_items
 
     sources = load_sources(categories=cats, enabled_only=True)
+    if progress is not None:
+        progress.stage("collect", total=len(sources))
     collect_results = collect_sources(sources)
 
     items: list[NewsItem] = []
@@ -198,6 +241,9 @@ def refresh(
     failed = 0
     skipped_dup = 0
 
+    # Pass 1: 去重入库并挑出需要 LLM 的条目（不碰网络，事务内不做慢调用）。
+    pending: list[tuple[News, dict]] = []
+    scored: list[tuple[News, NewsItem]] = []
     for item in truncated:
         try:
             with session.begin_nested():
@@ -205,52 +251,51 @@ def refresh(
                 if dedup.action == "skip":
                     skipped_dup += 1
                     continue
-                if dedup.action == "update":
-                    news = dedup.news
-                    assert news is not None
-                    evt = event_time(news.published_at, news.collected_at)
-                    # Only spend LLM on items that can enter today's board.
-                    if news.summary is None and is_eligible_for_daily_rank(evt, now=now):
-                        result = summarize_item(
-                            title=news.title,
-                            content=news.content,
-                            category=news.category,
-                        )
-                        if result.ok and result.summary is not None:
-                            summarized += 1
-                        elif not result.ok:
-                            failed += 1
-                        news.summary = result.summary
-                        news.importance_score = result.importance
-                    heat = _score_news(news, item.weight, now=now)
-                    if heat is not None:
-                        news.heat_score = heat
-                    continue
-
                 news = dedup.news
                 assert news is not None
-                saved += 1
+                if dedup.action == "insert":
+                    saved += 1
                 evt = event_time(news.published_at, news.collected_at)
-                if is_eligible_for_daily_rank(evt, now=now):
-                    result = summarize_item(
-                        title=news.title,
-                        content=news.content,
-                        category=news.category,
+                if news.summary is None and is_eligible_for_daily_rank(evt, now=now):
+                    pending.append(
+                        (
+                            news,
+                            {
+                                "title": news.title,
+                                "content": news.content,
+                                "category": news.category,
+                            },
+                        )
                     )
-                    if result.ok and result.summary is not None:
-                        summarized += 1
-                    elif not result.ok:
-                        failed += 1
-                    news.summary = result.summary
-                    news.importance_score = result.importance
-                else:
+                elif dedup.action == "insert":
                     news.importance_score = 5
-                heat = _score_news(news, item.weight, now=now)
-                if heat is not None:
-                    news.heat_score = heat
-                news.updated_at = _utcnow()
+                scored.append((news, item))
         except Exception:  # noqa: BLE001 — per-item isolation
             failed += 1
+
+    # Pass 2: 线程池并发摘要（纯网络调用，不碰 session）。
+    if pending:
+        llm_results = _summarize_concurrent(
+            [task for _, task in pending],
+            workers=settings.news_summarize_workers,
+            progress=progress,
+        )
+        for (news, _), result in zip(pending, llm_results):
+            news.summary = result.summary
+            news.importance_score = result.importance
+            if result.ok:
+                summarized += 1
+            else:
+                failed += 1
+
+    # Pass 3: 热度评分 + 当日排行榜。
+    if progress is not None:
+        progress.stage("rank")
+    for news, item in scored:
+        heat = _score_news(news, item.weight, now=now)
+        if heat is not None:
+            news.heat_score = heat
+        news.updated_at = _utcnow()
 
     rank_meta = rewrite_daily_ranks(session, cats, now=now)
     return {

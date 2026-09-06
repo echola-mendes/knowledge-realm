@@ -30,7 +30,7 @@
 
 - Vue 3 `<script setup>` + TypeScript + Vite  
 - Vue Router：首页、文档、搜索、对话、阅读、设置（可合并）  
-- 侧边栏菜单配置：`web/src/navConfig.ts` 以树形结构（`NavNode`，最多 3 级）定义菜单元数据，持久化在 localStorage（key `zhiyu-nav-tree-v2`，旧扁平配置 `zhiyu-nav-config` 自动迁移）；`App.vue` 用递归组件 `web/src/components/SideNavItem.vue` 渲染侧边栏（有子菜单的节点为折叠按钮，路由命中时自动展开；`tools`/`basics`/`monitoring` 为页内二级分区，侧栏只作入口不展开子项，见 `PAGE_SECTION_IDS`；自定义菜单落地 `/m/:menuId` 占位页）；`web/src/views/MenuManageView.vue`（基础页"菜单管理"）支持树形增删改：新增子菜单、点击改名、删除（含确认，删除父级连带子级）、每项开关控制是否在侧边栏显示、同级拖拽排序与上移/下移；内置菜单被显式删除后不自动复活，可用"恢复默认"找回，`/basics` 使用 `BasicsLayout.vue` 二级菜单布局，`/tools` 使用 `ToolsLayout.vue` 二级菜单（旅程 / AI资讯 / AI生图 / 更多工具，样式见 `web/style.md` §13），`MyTripsView` 用行程类型、无状态（`web/style.md` §14；`plan_record.trip_type` / `nights`），`/monitoring` 使用 `MonitoringLayout.vue` 二级菜单（决策审计 / 操作审计，当前占位；需求见 `docs/PRD-DECISIONS.md`、`docs/PRD-OPERATIONS.md`）  
+- 侧边栏菜单配置：`web/src/navConfig.ts` 以树形结构（`NavNode`，最多 3 级）定义菜单元数据，持久化在 localStorage（key `zhiyu-nav-tree-v2`，旧扁平配置 `zhiyu-nav-config` 自动迁移）；`App.vue` 用递归组件 `web/src/components/SideNavItem.vue` 渲染侧边栏（有子菜单的节点为折叠按钮，路由命中时自动展开；`tools`/`basics`/`monitoring` 为页内二级分区，侧栏只作入口不展开子项，见 `PAGE_SECTION_IDS`；自定义菜单落地 `/m/:menuId` 占位页）；`web/src/views/MenuManageView.vue`（基础页"菜单管理"）支持树形增删改：新增子菜单、点击改名、删除（含确认，删除父级连带子级）、每项开关控制是否显示、同级拖拽排序与上移/下移；内置菜单被显式删除后不自动复活，可用"恢复默认"找回。**页内二级菜单同样收进导航树**：内置结构定义在 `SECTION_TREE_DEFAULTS`（`basics`→菜单管理/定时任务、`monitoring`→决策审计/操作审计、`tools`→旅程/AI资讯/AI生图/更多工具及其子项），`normalize` 时对缺失的内置子节点自动补齐（`refillSectionChildren`，用户自定义子节点保留）；内置二级项在菜单管理页**不可删除**（`BUILTIN_SECTION_DESCENDANT_IDS`），但可改名 / 开关 / 排序。布局页按导航树渲染二级菜单：`BasicsLayout.vue` / `MonitoringLayout.vue` 渲染平铺项，`ToolsLayout.vue` 渲染折叠分组（子项命中取最长前缀匹配高亮），改名、禁用、排序实时同步到对应页面（样式见 `web/style.md` §13），`MyTripsView` 用行程类型、无状态（`web/style.md` §14；`plan_record.trip_type` / `nights`），需求见 `docs/PRD-DECISIONS.md`、`docs/PRD-OPERATIONS.md`  
 - Markdown 展示：`markdown-it`  
 - HTTP：`fetch`；SSE 用 `fetch` 读 stream  
 - 开发：Vite 代理 `/api` → FastAPI  
@@ -59,6 +59,7 @@
 - URL：`httpx` 超时 20s；`trafilatura` 抽正文  
 - 哈希：SHA-256  
 - 定时任务：APScheduler 挂 FastAPI lifespan，只入队；独立进程 `python -m app.worker.worker` 消费 Redis 队列 `zhiyu:tasks`。单 uvicorn 实例，勿开多 worker。`NEWS_REFRESH` 读 `news_settings.enabled_categories`，经 `app/news/` 管道（RSS→去重→摘要→热度→`news_daily_rank`）刷新；源列表见 `server/config/news_sources.yaml`（可用 `NEWS_SOURCES_PATH` 覆盖）。 摘要 prompt 对 JSON 花括号做 LangChain 转义；`NEWS_MAX_ITEMS` 按启用分类均分截断，避免单一大源占满名额；仅对当日可入榜条目调用 LLM。  
+- Worker 执行模型：`process_task`（async）经 `asyncio.to_thread` 调用同步 handler，避免阻塞 arq 事件循环；管线内拆为「去重入库（事务内，无网络）→ LLM 摘要（`NEWS_SUMMARIZE_WORKERS` 默认 4 线程并发）→ 评分排名」三段。执行进度写 Redis `task:progress:{run_id}`（TTL 6h，任务结束即删），`GET /api/tasks/{id}/executions` 对 RUNNING 记录回带 `progress` 字段，任务页 4s 轮询展示「AI 摘要 x/y」等阶段。  
 
 目录：`server/`
 
@@ -157,7 +158,7 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearc
 | `server/app/main.py` | FastAPI 入口、`/health`、Session、启动时确保用户与默认库、APScheduler lifespan |
 | `server/app/routers/task.py` | `/api/tasks` CRUD / enable / disable / run / executions / types |
 | `server/app/scheduler/` | APScheduler 加载 enabled 任务；`executor.enqueue_task` 与 `/run` 共用 |
-| `server/app/worker/` | arq Worker：`process_task`、Redis 锁防重、handler 3 次重试 |
+| `server/app/worker/` | arq Worker：`process_task`（to_thread 调 handler）、Redis 锁防重、handler 3 次重试、`progress.py` 进度上报 |
 | `server/app/user.py` | `users` 表引导用户（环境变量密码哈希） |
 | `server/app/passwords.py` | Argon2 |
 | `server/app/deps.py` | Session 当前用户 |

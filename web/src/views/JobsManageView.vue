@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   createTask,
   deleteTask,
@@ -37,6 +37,8 @@ const formMinute = ref(0);
 
 const selected = computed(() => tasks.value.find((t) => t.id === selectedId.value) ?? null);
 
+let pollTimer: number | null = null;
+
 function typeLabel(taskType: string): string {
   return types.value.find((t) => t.task_type === taskType)?.label ?? taskType;
 }
@@ -62,7 +64,26 @@ function formatTime(iso: string | null | undefined): string {
   return d.toLocaleString("zh-CN", { hour12: false });
 }
 
+const STAGE_LABELS: Record<string, string> = {
+  collect: "采集资讯源",
+  dedup: "入库去重",
+  summarize: "AI 摘要",
+  rank: "更新排行",
+};
+
+function progressText(row: TaskExecutionItem): string | null {
+  if (row.status !== "RUNNING" || !row.progress) return null;
+  const stage = typeof row.progress.stage === "string" ? row.progress.stage : "";
+  const label = STAGE_LABELS[stage] ?? stage;
+  const done = typeof row.progress.done === "number" ? row.progress.done : null;
+  const total = typeof row.progress.total === "number" ? row.progress.total : null;
+  if (done != null && total != null) return `${label} ${done}/${total}`;
+  return label || null;
+}
+
 function resultText(row: TaskExecutionItem): string {
+  const progress = progressText(row);
+  if (progress) return progress;
   if (row.error_message) return row.error_message;
   if (row.result && Object.keys(row.result).length) return JSON.stringify(row.result);
   return "—";
@@ -106,6 +127,29 @@ async function loadExecutions() {
   } finally {
     execLoading.value = false;
   }
+  syncPolling();
+}
+
+// RUNNING/PENDING 时静默轮询，让进度（采集/摘要 x/y）实时可见。
+function syncPolling() {
+  const active = executions.value.some((r) => r.status === "RUNNING" || r.status === "PENDING");
+  if (active && pollTimer == null) {
+    pollTimer = window.setInterval(refreshExecutionsSilently, 4000);
+  } else if (!active && pollTimer != null) {
+    window.clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+async function refreshExecutionsSilently() {
+  if (selectedId.value == null) return;
+  try {
+    const rows = await listTaskExecutions(selectedId.value);
+    executions.value = rows;
+  } catch {
+    // 轮询失败不打断页面，下一轮再试
+  }
+  syncPolling();
 }
 
 function openCreate() {
@@ -224,6 +268,13 @@ watch(selectedId, () => {
 
 onMounted(() => {
   loadTasks().catch(() => undefined);
+});
+
+onUnmounted(() => {
+  if (pollTimer != null) {
+    window.clearInterval(pollTimer);
+    pollTimer = null;
+  }
 });
 </script>
 

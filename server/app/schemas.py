@@ -549,6 +549,7 @@ class ExecutionOut(BaseModel):
     result: dict[str, Any] | None = None
     error_message: str | None = None
     created_at: datetime | None = None
+    progress: dict[str, Any] | None = None
 
     model_config = {"from_attributes": True}
 

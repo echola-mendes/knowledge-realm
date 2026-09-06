@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from app.db import session_scope
 from app.models import ScheduledTask
 from app.services import task_service as ts
-from app.worker.handlers import HANDLERS
-from app.worker.queue import acquire_task_lock, create_redis, redis_settings, release_task_lock
 from app.worker import QUEUE_NAME
+from app.worker.handlers import HANDLERS
+from app.worker.progress import progress_key
+from app.worker.queue import acquire_task_lock, create_redis, redis_settings, release_task_lock
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,9 @@ async def process_task(ctx: dict, payload: dict) -> None:
         last_exc: Exception | None = None
         for attempt in range(MAX_ATTEMPTS):
             try:
-                result = handler(payload)
+                # handler 是同步阻塞实现（网络抓取 + LLM），必须丢进线程，
+                # 否则会卡死 arq 的事件循环，整个 worker 无法消费其他任务。
+                result = await asyncio.to_thread(handler, payload)
                 last_exc = None
                 break
             except Exception as exc:
@@ -118,6 +121,10 @@ async def process_task(ctx: dict, payload: dict) -> None:
     finally:
         if locked:
             await release_task_lock(redis, task_type)
+        try:
+            await redis.delete(progress_key(run_id))
+        except Exception:  # noqa: BLE001 — 清理失败可由 TTL 兜底
+            pass
         if own_redis:
             await redis.aclose()
         session.close()

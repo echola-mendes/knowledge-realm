@@ -9,6 +9,7 @@ from app.scheduler.scheduler import reload_jobs
 from app.scheduler.executor import enqueue_task
 from app.schemas import ExecutionOut, TaskCreate, TaskOut, TaskTypeOut, TaskUpdate
 from app.services import task_service as ts
+from app.worker.progress import read_progress
 from app.worker.queue import QueueUnavailableError
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -128,6 +129,13 @@ def list_executions(
     _user: User = Depends(current_user),
 ):
     try:
-        return ts.list_executions(session, task_id, limit=limit)
+        rows = ts.list_executions(session, task_id, limit=limit)
     except ts.TaskError as exc:
         raise _http(exc) from exc
+    out: list[ExecutionOut] = []
+    for row in rows:
+        item = ExecutionOut.model_validate(row)
+        if row.status == ts.STATUS_RUNNING:
+            item.progress = read_progress(row.run_id)
+        out.append(item)
+    return out

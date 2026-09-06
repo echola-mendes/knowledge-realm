@@ -2,35 +2,60 @@
 import { computed, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute } from "vue-router";
 import Icon from "../components/Icon.vue";
+import { navTree, type NavNode } from "../navConfig";
 
 const route = useRoute();
-const tripOpen = ref(true);
-const consultOpen = ref(true);
-const imageOpen = ref(true);
-const moreOpen = ref(true);
 
+const toolsNode = computed(() => navTree.value.find((n) => n.id === "tools"));
+
+/** 分组（有可见子项）与平铺项（无子项的自定义节点）统一从导航树取 */
+const groups = computed<NavNode[]>(() =>
+  (toolsNode.value?.children ?? []).filter((g) => g.enabled),
+);
+
+function visibleChildren(group: NavNode): NavNode[] {
+  return (group.children ?? []).filter((c) => c.enabled);
+}
+
+function isActive(to: string | undefined): boolean {
+  if (!to) return false;
+  const p = route.path;
+  return p === to || p.startsWith(`${to}/`);
+}
+
+/** 当前命中的子项 to：取最长匹配，避免「我的行程单」同时命中「创建新行程」的前缀 */
+const activeTo = computed<string>(() => {
+  const p = route.path;
+  let best = "";
+  for (const g of groups.value) {
+    for (const c of g.children ?? []) {
+      if (!c.enabled || !c.to) continue;
+      if (isActive(c.to) && c.to.length > best.length) best = c.to;
+    }
+  }
+  return best;
+});
+
+function groupActive(group: NavNode): boolean {
+  return visibleChildren(group).some((c) => c.to === activeTo.value);
+}
+
+const openMap = ref<Record<string, boolean>>({});
+function isOpen(group: NavNode): boolean {
+  return openMap.value[group.id] ?? true;
+}
+function toggleGroup(id: string) {
+  openMap.value[id] = !(openMap.value[id] ?? true);
+}
 watch(
   () => route.path,
-  (p) => {
-    if (p.startsWith("/tools/trips")) tripOpen.value = true;
-    if (p.startsWith("/tools/consult") || p.startsWith("/tools/news")) consultOpen.value = true;
-    if (p.startsWith("/tools/image")) imageOpen.value = true;
-    if (p.startsWith("/tools/market")) moreOpen.value = true;
+  () => {
+    for (const g of groups.value) {
+      if (groupActive(g)) openMap.value[g.id] = true;
+    }
   },
   { immediate: true },
 );
-
-const onTripsList = computed(() => route.path === "/tools/trips");
-const onTripsNew = computed(() => route.path.startsWith("/tools/trips/new"));
-const onTrips = computed(() => onTripsList.value || onTripsNew.value);
-const onNewsList = computed(() => route.path === "/tools/news");
-const onNewsDetail = computed(() => route.name === "tools-news-detail");
-const onConsultHistory = computed(() => route.path.startsWith("/tools/consult/history"));
-const onConsult = computed(() => onNewsList.value || onNewsDetail.value || onConsultHistory.value);
-const onImageDesk = computed(() => route.path === "/tools/image");
-const onImageWorks = computed(() => route.path.startsWith("/tools/image/works"));
-const onImage = computed(() => onImageDesk.value || onImageWorks.value);
-const onMarket = computed(() => route.path.startsWith("/tools/market"));
 </script>
 
 <template>
@@ -41,129 +66,43 @@ const onMarket = computed(() => route.path.startsWith("/tools/market"));
         <p class="nav-sub">发现更多 AI 工具，提升效率</p>
       </div>
       <div class="nav-card">
-        <div class="nav-group">
-          <button
-            type="button"
-            class="nav-parent"
-            :class="{ on: onTrips }"
-            :aria-expanded="tripOpen"
-            @click="tripOpen = !tripOpen"
-          >
-            <Icon name="plane" />
-            <span>旅程</span>
-            <Icon class="chev" name="chevron" />
-          </button>
-          <div v-show="tripOpen" class="nav-children">
-            <RouterLink
-              to="/tools/trips"
-              class="nav-child"
-              active-class=""
-              exact-active-class=""
-              :class="{ on: onTripsList }"
+        <template v-for="g in groups" :key="g.id">
+          <div v-if="visibleChildren(g).length" class="nav-group">
+            <button
+              type="button"
+              class="nav-parent"
+              :class="{ on: groupActive(g) }"
+              :aria-expanded="isOpen(g)"
+              @click="toggleGroup(g.id)"
             >
-              我的行程单
-            </RouterLink>
-            <RouterLink
-              to="/tools/trips/new"
-              class="nav-child"
-              active-class=""
-              exact-active-class=""
-              :class="{ on: onTripsNew }"
-            >
-              创建新行程
-            </RouterLink>
+              <Icon :name="g.icon" />
+              <span>{{ g.label }}</span>
+              <Icon class="chev" name="chevron" />
+            </button>
+            <div v-show="isOpen(g)" class="nav-children">
+              <RouterLink
+                v-for="c in visibleChildren(g)"
+                :key="c.id"
+                :to="c.to || '#'"
+                class="nav-child"
+                active-class=""
+                exact-active-class=""
+                :class="{ on: activeTo === c.to }"
+              >
+                {{ c.label }}
+              </RouterLink>
+            </div>
           </div>
-        </div>
-        <div class="nav-group">
-          <button
-            type="button"
-            class="nav-parent"
-            :class="{ on: onConsult }"
-            :aria-expanded="consultOpen"
-            @click="consultOpen = !consultOpen"
+          <RouterLink
+            v-else
+            :to="g.to || '#'"
+            class="nav-parent nav-parent-link"
+            :class="{ on: isActive(g.to) }"
           >
-            <Icon name="headset" />
-            <span>AI资讯</span>
-            <Icon class="chev" name="chevron" />
-          </button>
-          <div v-show="consultOpen" class="nav-children">
-            <RouterLink
-              to="/tools/news"
-              class="nav-child"
-              active-class=""
-              exact-active-class=""
-              :class="{ on: onNewsList || onNewsDetail }"
-            >
-              今日热榜
-            </RouterLink>
-            <RouterLink
-              to="/tools/consult/history"
-              class="nav-child"
-              active-class=""
-              exact-active-class=""
-              :class="{ on: onConsultHistory }"
-            >
-              历史记录
-            </RouterLink>
-          </div>
-        </div>
-        <div class="nav-group">
-          <button
-            type="button"
-            class="nav-parent"
-            :class="{ on: onImage }"
-            :aria-expanded="imageOpen"
-            @click="imageOpen = !imageOpen"
-          >
-            <Icon name="image" />
-            <span>AI生图</span>
-            <Icon class="chev" name="chevron" />
-          </button>
-          <div v-show="imageOpen" class="nav-children">
-            <RouterLink
-              to="/tools/image"
-              class="nav-child"
-              active-class=""
-              exact-active-class=""
-              :class="{ on: onImageDesk }"
-            >
-              生图台
-            </RouterLink>
-            <RouterLink
-              to="/tools/image/works"
-              class="nav-child"
-              active-class=""
-              exact-active-class=""
-              :class="{ on: onImageWorks }"
-            >
-              我的作品
-            </RouterLink>
-          </div>
-        </div>
-        <div class="nav-group">
-          <button
-            type="button"
-            class="nav-parent"
-            :class="{ on: onMarket }"
-            :aria-expanded="moreOpen"
-            @click="moreOpen = !moreOpen"
-          >
-            <Icon name="apps" />
-            <span>更多工具</span>
-            <Icon class="chev" name="chevron" />
-          </button>
-          <div v-show="moreOpen" class="nav-children">
-            <RouterLink
-              to="/tools/market"
-              class="nav-child"
-              active-class=""
-              exact-active-class=""
-              :class="{ on: onMarket }"
-            >
-              工具市场
-            </RouterLink>
-          </div>
-        </div>
+            <Icon :name="g.icon" />
+            <span>{{ g.label }}</span>
+          </RouterLink>
+        </template>
       </div>
     </aside>
     <section class="tools-main">

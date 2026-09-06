@@ -2,6 +2,7 @@
 import { computed, ref, type Directive } from "vue";
 import Icon from "../components/Icon.vue";
 import {
+  BUILTIN_SECTION_DESCENDANT_IDS,
   MAX_MENU_DEPTH,
   NAV_ITEMS,
   PAGE_SECTION_IDS,
@@ -25,17 +26,20 @@ interface Row {
   index: number;
   depth: number;
   siblingCount: number;
+  /** 任一祖先被关闭：行置灰提示当前不生效 */
+  inactive: boolean;
 }
 
 const rows = computed<Row[]>(() => {
   const list: Row[] = [];
-  const walk = (nodes: NavNode[], parentId: string | null, depth: number) => {
+  const walk = (nodes: NavNode[], parentId: string | null, depth: number, inactive: boolean) => {
     nodes.forEach((node, index) => {
-      list.push({ node, parentId, index, depth, siblingCount: nodes.length });
-      if (node.children?.length) walk(node.children, node.id, depth + 1);
+      const selfInactive = inactive || !node.enabled;
+      list.push({ node, parentId, index, depth, siblingCount: nodes.length, inactive: selfInactive });
+      if (node.children?.length) walk(node.children, node.id, depth + 1, selfInactive);
     });
   };
-  walk(navTree.value, null, 0);
+  walk(navTree.value, null, 0, false);
   return list;
 });
 
@@ -93,11 +97,10 @@ function findSiblings(tree: NavNode[], parentId: string | null): NavNode[] | nul
 }
 
 function canAddChild(row: Row): boolean {
-  return row.depth < MAX_MENU_DEPTH - 1 && !PAGE_SECTION_IDS.has(row.node.id);
+  return row.depth < MAX_MENU_DEPTH - 1;
 }
 
 function addMenu(parentId: string | null) {
-  if (parentId && PAGE_SECTION_IDS.has(parentId)) return;
   const tree = cloneTree(navTree.value);
   const siblings = findSiblings(tree, parentId);
   if (!siblings) return;
@@ -109,7 +112,10 @@ function addMenu(parentId: string | null) {
   draft.value = node.label;
 }
 
-function removeById(id: string, silent = false) {  const tree = cloneTree(navTree.value);
+function removeById(id: string, silent = false) {
+  const existing = findNode(navTree.value, id);
+  if (existing && BUILTIN_SECTION_DESCENDANT_IDS.has(existing.id)) return;
+  const tree = cloneTree(navTree.value);
   const row = rows.value.find((r) => r.node.id === id);
   const siblings = row ? findSiblings(tree, row.parentId) : null;
   if (!siblings) return;
@@ -137,7 +143,12 @@ function toggleEnabled(row: Row, value: boolean) {
   const tree = cloneTree(navTree.value);
   const node = findNode(tree, row.node.id);
   if (!node) return;
-  node.enabled = value;
+  // 级联：父级开关同步到所有子孙，保证父子状态一致
+  const setDeep = (n: NavNode) => {
+    n.enabled = value;
+    n.children?.forEach(setDeep);
+  };
+  setDeep(node);
   saveNavTree(tree);
 }
 
@@ -192,7 +203,7 @@ function fallbackLabel(id: string) {
       <div>
         <h1>菜单管理</h1>
         <p class="sub">
-          支持最多 {{ MAX_MENU_DEPTH }} 级菜单：点击名称修改显示名，用开关控制是否在侧边栏显示，可新增、编辑、删除与拖拽排序。工具 / 基础 / 监控为页内二级入口，侧栏不展开子菜单。配置保存在本机浏览器。
+          支持最多 {{ MAX_MENU_DEPTH }} 级菜单：点击名称修改显示名，用开关控制是否显示，可新增、编辑、删除与拖拽排序。工具 / 基础 / 监控为页内二级入口，其二级菜单（如「基础」下的菜单管理、定时任务）在下方展开管理，改名与开关会同步到对应页面；内置二级项不可删除。配置保存在本机浏览器。
         </p>
       </div>
       <div class="head-actions">
@@ -211,6 +222,7 @@ function fallbackLabel(id: string) {
             {
               dragging: dragFrom?.parentId === row.parentId && dragFrom.index === row.index,
               'drop-target': dragOver === row.node.id && dragFrom?.parentId === row.parentId,
+              inactive: row.inactive,
             },
           ]"
           draggable="true"
@@ -275,7 +287,8 @@ function fallbackLabel(id: string) {
               class="op-btn danger"
               type="button"
               aria-label="删除菜单"
-              title="删除菜单"
+              :title="BUILTIN_SECTION_DESCENDANT_IDS.has(row.node.id) ? '内置页内二级菜单，不可删除' : '删除菜单'"
+              :disabled="BUILTIN_SECTION_DESCENDANT_IDS.has(row.node.id)"
               @click="removeById(row.node.id)"
             >
               ×
@@ -359,6 +372,9 @@ function fallbackLabel(id: string) {
 }
 .menu-row.dragging {
   opacity: 0.5;
+}
+.menu-row.inactive {
+  opacity: 0.55;
 }
 .menu-row.drop-target {
   border-color: var(--teal);

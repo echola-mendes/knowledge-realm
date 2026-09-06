@@ -54,6 +54,7 @@ class Settings:
     news_max_items: int
     news_http_timeout: int
     news_llm_timeout: int
+    news_summarize_workers: int
     host: str = HOST
     port: int = PORT
 
@@ -147,6 +148,9 @@ def load_settings(environ: dict[str, str] | None = None, *, load_file: bool = Fa
         news_max_items=_positive_int("NEWS_MAX_ITEMS", env.get("NEWS_MAX_ITEMS"), 30),
         news_http_timeout=_positive_int("NEWS_HTTP_TIMEOUT", env.get("NEWS_HTTP_TIMEOUT"), 10),
         news_llm_timeout=_positive_int("NEWS_LLM_TIMEOUT", env.get("NEWS_LLM_TIMEOUT"), 60),
+        news_summarize_workers=_positive_int(
+            "NEWS_SUMMARIZE_WORKERS", env.get("NEWS_SUMMARIZE_WORKERS"), 4
+        ),
         host=HOST,
         port=PORT,
     )

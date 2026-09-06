@@ -804,6 +804,7 @@ export type TaskExecutionItem = {
   result: Record<string, unknown> | null;
   error_message: string | null;
   created_at?: string | null;
+  progress?: Record<string, unknown> | null;
 };
 
 export type TaskWrite = {

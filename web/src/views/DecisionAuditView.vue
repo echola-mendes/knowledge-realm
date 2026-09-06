@@ -89,6 +89,8 @@ async function loadDetail() {
   detail.value = null;
   try {
     detail.value = await getDecision(runId.value);
+    // 默认展开全部阶段，用户可再手动折叠
+    expanded.value = new Set(detail.value?.spans.map((span) => span.id));
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {

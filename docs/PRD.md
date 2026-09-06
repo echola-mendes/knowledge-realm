@@ -111,6 +111,7 @@
 
 - 支持连续多轮问答。
 - 会话历史可用于理解上下文。
+- **停止生成（已实现）**：流式回答期间，输入区发送按钮切换为「停止」按钮，点击即中断当前流式请求；已有部分内容保留展示，未产出内容的空占位气泡自动移除。
 
 ---
 
@@ -286,6 +287,7 @@
 - APScheduler（FastAPI lifespan）→ Redis 队列 `zhiyu:tasks` → arq Worker（`python -m app.worker.worker`）。
 - 第一种任务类型 `NEWS_REFRESH`（AI资讯更新）：handler 读 `news_settings.enabled_categories` 后跑真实管道；任务页不配分类。
 - 同 `task_type` 同时仅一条 RUNNING；失败最多 3 次尝试后标记 FAILED。
+- RUNNING 记录展示实时进度（采集资讯源 / AI 摘要 x/y / 更新排行），来自 Redis 进度键；页面在有未完成任务时每 4s 自动刷新，完成后展示计数结果或错误。
 
 ### 4.2.2 AI资讯（已实现）
 

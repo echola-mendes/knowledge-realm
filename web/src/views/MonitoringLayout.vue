@@ -2,10 +2,19 @@
 import { computed } from "vue";
 import { RouterLink, RouterView, useRoute } from "vue-router";
 import Icon from "../components/Icon.vue";
+import { navTree, type NavNode } from "../navConfig";
 
 const route = useRoute();
-const onDecisions = computed(() => route.path.startsWith("/monitoring/decisions"));
-const onOperations = computed(() => route.path.startsWith("/monitoring/operations"));
+
+const items = computed<NavNode[]>(() =>
+  (navTree.value.find((n) => n.id === "monitoring")?.children ?? []).filter((c) => c.enabled),
+);
+
+function isActive(to: string | undefined): boolean {
+  if (!to) return false;
+  const p = route.path;
+  return p === to || p.startsWith(`${to}/`);
+}
 </script>
 
 <template>
@@ -17,20 +26,14 @@ const onOperations = computed(() => route.path.startsWith("/monitoring/operation
       </div>
       <div class="nav-card">
         <RouterLink
-          to="/monitoring/decisions"
+          v-for="item in items"
+          :key="item.id"
+          :to="item.to || '#'"
           class="nav-parent nav-parent-link"
-          :class="{ on: onDecisions }"
+          :class="{ on: isActive(item.to) }"
         >
-          <Icon name="spark" />
-          <span>决策审计</span>
-        </RouterLink>
-        <RouterLink
-          to="/monitoring/operations"
-          class="nav-parent nav-parent-link"
-          :class="{ on: onOperations }"
-        >
-          <Icon name="list" />
-          <span>操作审计</span>
+          <Icon :name="item.icon" />
+          <span>{{ item.label }}</span>
         </RouterLink>
       </div>
     </aside>

@@ -49,6 +49,9 @@ defineProps<{ name: string }>();
     <template v-else-if="name === 'send'">
       <path d="m22 2-7 20-4-9-9-4 20-7z" fill="currentColor" stroke="none" />
     </template>
+    <template v-else-if="name === 'stop'">
+      <rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor" stroke="none" />
+    </template>
     <template v-else-if="name === 'upload'">
       <path d="M12 16V4.5" />
       <path d="m7.5 9 4.5-4.5L16.5 9" />

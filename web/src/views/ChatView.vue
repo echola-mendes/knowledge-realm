@@ -579,7 +579,14 @@ async function ask() {
     }
     await refreshConversations();
   } catch (e) {
-    if (ac.signal.aborted) return;
+    if (ac.signal.aborted) {
+      // 中止时若尚未产出任何内容，移除空的助手占位气泡
+      if (!assistant.content.trim() && !assistant.citations?.length) {
+        const i = messages.value.indexOf(assistant);
+        if (i >= 0) messages.value.splice(i, 1);
+      }
+      return;
+    }
     error.value = String(e);
   } finally {
     if (streamAbort.value === ac) {
@@ -587,6 +594,10 @@ async function ask() {
       streamAbort.value = null;
     }
   }
+}
+
+function stopStream() {
+  streamAbort.value?.abort();
 }
 
 function confirmHitl(confirm: boolean) {
@@ -969,7 +980,16 @@ function pickDoc(id: string) {
               </div>
               <div class="composer-right">
                 <span class="composer-hint">Enter 发送，Shift+Enter 换行</span>
-                <button class="btn btn-primary send-btn" type="button" :disabled="streaming" @click="ask">
+                <button
+                  v-if="streaming"
+                  class="btn btn-primary send-btn stop-btn"
+                  type="button"
+                  title="停止生成"
+                  @click="stopStream"
+                >
+                  <Icon name="stop" />
+                </button>
+                <button v-else class="btn btn-primary send-btn" type="button" @click="ask">
                   <Icon name="send" />
                 </button>
               </div>

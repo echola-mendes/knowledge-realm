@@ -2,10 +2,19 @@
 import { computed } from "vue";
 import { RouterLink, RouterView, useRoute } from "vue-router";
 import Icon from "../components/Icon.vue";
+import { navTree, type NavNode } from "../navConfig";
 
 const route = useRoute();
-const onMenus = computed(() => route.path.startsWith("/basics/menus"));
-const onJobs = computed(() => route.path.startsWith("/basics/jobs"));
+
+const items = computed<NavNode[]>(() =>
+  (navTree.value.find((n) => n.id === "basics")?.children ?? []).filter((c) => c.enabled),
+);
+
+function isActive(to: string | undefined): boolean {
+  if (!to) return false;
+  const p = route.path;
+  return p === to || p.startsWith(`${to}/`);
+}
 </script>
 
 <template>
@@ -17,20 +26,14 @@ const onJobs = computed(() => route.path.startsWith("/basics/jobs"));
       </div>
       <div class="nav-card">
         <RouterLink
-          to="/basics/menus"
+          v-for="item in items"
+          :key="item.id"
+          :to="item.to || '#'"
           class="nav-parent nav-parent-link"
-          :class="{ on: onMenus }"
+          :class="{ on: isActive(item.to) }"
         >
-          <Icon name="list" />
-          <span>菜单管理</span>
-        </RouterLink>
-        <RouterLink
-          to="/basics/jobs"
-          class="nav-parent nav-parent-link"
-          :class="{ on: onJobs }"
-        >
-          <Icon name="refresh" />
-          <span>定时任务</span>
+          <Icon :name="item.icon" />
+          <span>{{ item.label }}</span>
         </RouterLink>
       </div>
     </aside>
