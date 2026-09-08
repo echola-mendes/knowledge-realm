@@ -140,7 +140,7 @@ def register_version(doc: Document) -> None:
 def _chunks_for_document(doc: Document, session: Session) -> list[DocumentChunkOut]:
     rows = session.scalars(
         select(DocumentChunk)
-        .where(DocumentChunk.document_id == doc.id)
+        .where(DocumentChunk.document_id == doc.id, DocumentChunk.role == "child")
         .order_by(DocumentChunk.chunk_index)
     ).all()
     if rows:

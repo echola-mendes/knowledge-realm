@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy import delete, select
 
-from app.ingest.chunk import split_markdown
+from app.ingest.chunk import SectionSplit, split_markdown_sections
 from app.ingest.chunk_settings import get_user_chunk_settings
 from app.ingest.chunk_label import allocate_chunk_labels
 from app.config import get_settings
@@ -99,6 +99,111 @@ def _embed_all(texts: list[str]) -> list[list[float]]:
     return vectors
 
 
+
+def _align_keys_from_sections(sections: list[SectionSplit]) -> list[tuple]:
+    keys: list[tuple] = []
+    for sec in sections:
+        parent_key = None
+        if sec.parent is not None:
+            parent_key = ("parent", sec.parent.heading, sec.parent.content)
+            keys.append(parent_key)
+        for child in sec.children:
+            keys.append(("child", child.heading, child.content, parent_key))
+    return keys
+
+
+def _align_keys_from_db(chunks: list[DocumentChunk]) -> list[tuple]:
+    by_id = {c.id: c for c in chunks}
+    keys: list[tuple] = []
+    for c in chunks:
+        if getattr(c, "role", "child") == "parent":
+            keys.append(("parent", c.heading, c.content))
+            continue
+        parent_key = None
+        if c.parent_id and c.parent_id in by_id:
+            p = by_id[c.parent_id]
+            parent_key = ("parent", p.heading, p.content)
+        keys.append(("child", c.heading, c.content, parent_key))
+    return keys
+
+
+def _plan_chunk_rows(sections: list[SectionSplit]) -> tuple[list[dict[str, Any]], list[str], list[tuple]]:
+    """Build ordered parent/child rows; return rows, child texts, child align keys."""
+    rows: list[dict[str, Any]] = []
+    child_texts: list[str] = []
+    child_keys: list[tuple] = []
+    idx = 0
+    for sec in sections:
+        parent_key = None
+        parent_id = None
+        if sec.parent is not None:
+            parent_id = uuid.uuid4()
+            parent_key = ("parent", sec.parent.heading, sec.parent.content)
+            rows.append(
+                {
+                    "id": parent_id,
+                    "chunk_index": idx,
+                    "content": sec.parent.content,
+                    "page": sec.parent.page,
+                    "heading": sec.parent.heading,
+                    "role": "parent",
+                    "parent_id": None,
+                    "embedding": None,
+                }
+            )
+            idx += 1
+        for child in sec.children:
+            child_id = uuid.uuid4()
+            key = ("child", child.heading, child.content, parent_key)
+            rows.append(
+                {
+                    "id": child_id,
+                    "chunk_index": idx,
+                    "content": child.content,
+                    "page": child.page,
+                    "heading": child.heading,
+                    "role": "child",
+                    "parent_id": parent_id,
+                    "embedding": None,  # filled by caller
+                }
+            )
+            child_texts.append(child.content)
+            child_keys.append(key)
+            idx += 1
+    return rows, child_texts, child_keys
+
+
+def _persist_chunk_rows(
+    session,
+    doc: Document,
+    rows: list[dict[str, Any]],
+) -> None:
+    labels = allocate_chunk_labels(session, len(rows))
+    for row, label in zip(rows, labels, strict=True):
+        session.add(
+            DocumentChunk(
+                id=row["id"],
+                document_id=doc.id,
+                chunk_index=row["chunk_index"],
+                chunk_label=label,
+                content=row["content"],
+                page=row["page"],
+                heading=row["heading"],
+                metadata_={},
+                role=row["role"],
+                parent_id=row["parent_id"],
+                embedding=row["embedding"],
+            )
+        )
+
+
+def _upsert_child_chunks(doc: Document, rows: list[DocumentChunk]) -> None:
+    children = [c for c in rows if c.role == "child"]
+    upsert_chunks(
+        [(c.id, c.content, doc.knowledge_base_id, doc.id, doc.kind) for c in children]
+    )
+
+
 def index_document(document_id: uuid.UUID) -> None:
     session = session_scope()
     try:
@@ -126,12 +231,13 @@ def index_document(document_id: uuid.UUID) -> None:
             session.commit()
             return
         chunk_cfg = get_user_chunk_settings(session, kb.user_id)
-        pieces = split_markdown(
+        sections = split_markdown_sections(
             text,
             chunk_size=chunk_cfg.chunk_size,
             chunk_overlap=chunk_cfg.chunk_overlap,
         )
-        if not pieces:
+        planned, child_texts, _child_keys = _plan_chunk_rows(sections)
+        if not planned or not child_texts:
             doc.status = STATUS_INDEX_FAILED
             doc.error_message = "no_chunks"
             session.commit()
@@ -139,12 +245,17 @@ def index_document(document_id: uuid.UUID) -> None:
         doc.status = STATUS_INDEXING
         session.commit()
         try:
-            vectors = _embed_all([p.content for p in pieces])
+            vectors = _embed_all(child_texts)
         except Exception as exc:  # noqa: BLE001
             doc.status = STATUS_INDEX_FAILED
             doc.error_message = format_embed_error(exc)
             session.commit()
             return
+        child_i = 0
+        for row in planned:
+            if row["role"] == "child":
+                row["embedding"] = vectors[child_i]
+                child_i += 1
         try:
             delete_document_chunks(doc.id)
         except EsNotConfiguredError as exc:
@@ -153,20 +264,7 @@ def index_document(document_id: uuid.UUID) -> None:
             session.commit()
             return
         session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc.id))
-        labels = allocate_chunk_labels(session, len(pieces))
-        for i, (piece, vec, label) in enumerate(zip(pieces, vectors, labels, strict=True)):
-            session.add(
-                DocumentChunk(
-                    document_id=doc.id,
-                    chunk_index=i,
-                    chunk_label=label,
-                    content=piece.content,
-                    page=piece.page,
-                    heading=piece.heading,
-                    metadata_={},
-                    embedding=vec,
-                )
-            )
+        _persist_chunk_rows(session, doc, planned)
         doc.status = STATUS_READY
         doc.error_message = None
         doc.chunk_size = chunk_cfg.chunk_size
@@ -174,9 +272,7 @@ def index_document(document_id: uuid.UUID) -> None:
         session.commit()
         rows = session.scalars(select(DocumentChunk).where(DocumentChunk.document_id == doc.id)).all()
         try:
-            upsert_chunks(
-                [(c.id, c.content, doc.knowledge_base_id, doc.id, doc.kind) for c in rows]
-            )
+            _upsert_child_chunks(doc, list(rows))
         except EsNotConfiguredError as exc:
             doc.status = STATUS_INDEX_FAILED
             doc.error_message = str(exc)
@@ -201,7 +297,7 @@ def _enrich_after_index(document_id: uuid.UUID) -> None:
 
 
 def index_document_incremental(document_id: uuid.UUID) -> str:
-    """差量重索引：新旧切片按 (heading, content) 对齐，未变更切片复用现有 embedding。
+    """差量重索引：新旧切片按 role + (heading, content) + parent 结构对齐，未变更 child 复用 embedding。
 
     返回 "ready"（有差量并完成）/"unchanged"（切片完全一致）/"failed"。
     全新文档（无现有切片）行为等同 index_document。
@@ -230,12 +326,13 @@ def index_document_incremental(document_id: uuid.UUID) -> str:
             session.commit()
             return "failed"
         chunk_cfg = get_user_chunk_settings(session, kb.user_id)
-        pieces = split_markdown(
+        sections = split_markdown_sections(
             text,
             chunk_size=chunk_cfg.chunk_size,
             chunk_overlap=chunk_cfg.chunk_overlap,
         )
-        if not pieces:
+        planned, child_texts, child_keys = _plan_chunk_rows(sections)
+        if not planned or not child_texts:
             doc.status = STATUS_INDEX_FAILED
             doc.error_message = "no_chunks"
             session.commit()
@@ -245,8 +342,8 @@ def index_document_incremental(document_id: uuid.UUID) -> str:
                 select(DocumentChunk).where(DocumentChunk.document_id == doc.id).order_by(DocumentChunk.chunk_index)
             ).all()
         )
-        new_keys = [(p.heading, p.content) for p in pieces]
-        old_keys = [(c.heading, c.content) for c in existing]
+        new_keys = _align_keys_from_sections(sections)
+        old_keys = _align_keys_from_db(existing)
         if new_keys == old_keys:
             doc.status = STATUS_READY
             doc.error_message = None
@@ -254,14 +351,21 @@ def index_document_incremental(document_id: uuid.UUID) -> str:
             return "unchanged"
         doc.status = STATUS_INDEXING
         session.commit()
-        # 未变更切片复用旧向量；变更/新增按 (heading, content) 最近一次出现对齐
-        reusable: dict[tuple[str | None, str], Any] = {}
+        # 未变更 child 按 (role, heading, content, parent_key) 复用向量
+        reusable: dict[tuple, Any] = {}
+        by_id = {c.id: c for c in existing}
         for chunk in existing:
-            reusable[(chunk.heading, chunk.content)] = chunk.embedding
-        vectors: list[list[float]] = []
+            if chunk.role != "child" or chunk.embedding is None:
+                continue
+            parent_key = None
+            if chunk.parent_id and chunk.parent_id in by_id:
+                p = by_id[chunk.parent_id]
+                parent_key = ("parent", p.heading, p.content)
+            reusable[("child", chunk.heading, chunk.content, parent_key)] = chunk.embedding
+        vectors: list[list[float] | list] = []
         missing: list[int] = []
-        for i, piece in enumerate(pieces):
-            vec = reusable.get((piece.heading, piece.content))
+        for i, key in enumerate(child_keys):
+            vec = reusable.get(key)
             if vec is not None:
                 vectors.append(vec)
             else:
@@ -269,7 +373,7 @@ def index_document_incremental(document_id: uuid.UUID) -> str:
                 missing.append(i)
         if missing:
             try:
-                fresh = _embed_all([pieces[i].content for i in missing])
+                fresh = _embed_all([child_texts[i] for i in missing])
             except Exception as exc:  # noqa: BLE001
                 doc.status = STATUS_INDEX_FAILED
                 doc.error_message = format_embed_error(exc)
@@ -277,6 +381,11 @@ def index_document_incremental(document_id: uuid.UUID) -> str:
                 return "failed"
             for pos, vec in zip(missing, fresh, strict=True):
                 vectors[pos] = vec
+        child_i = 0
+        for row in planned:
+            if row["role"] == "child":
+                row["embedding"] = vectors[child_i]
+                child_i += 1
         try:
             delete_document_chunks(doc.id)
         except EsNotConfiguredError as exc:
@@ -285,20 +394,7 @@ def index_document_incremental(document_id: uuid.UUID) -> str:
             session.commit()
             return "failed"
         session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == doc.id))
-        labels = allocate_chunk_labels(session, len(pieces))
-        for i, (piece, vec, label) in enumerate(zip(pieces, vectors, labels, strict=True)):
-            session.add(
-                DocumentChunk(
-                    document_id=doc.id,
-                    chunk_index=i,
-                    chunk_label=label,
-                    content=piece.content,
-                    page=piece.page,
-                    heading=piece.heading,
-                    metadata_={},
-                    embedding=vec,
-                )
-            )
+        _persist_chunk_rows(session, doc, planned)
         doc.status = STATUS_READY
         doc.error_message = None
         doc.chunk_size = chunk_cfg.chunk_size
@@ -306,7 +402,7 @@ def index_document_incremental(document_id: uuid.UUID) -> str:
         session.commit()
         rows = session.scalars(select(DocumentChunk).where(DocumentChunk.document_id == doc.id)).all()
         try:
-            upsert_chunks([(c.id, c.content, doc.knowledge_base_id, doc.id, doc.kind) for c in rows])
+            _upsert_child_chunks(doc, list(rows))
         except EsNotConfiguredError as exc:
             doc.status = STATUS_INDEX_FAILED
             doc.error_message = str(exc)
@@ -353,6 +449,8 @@ def reindex_chunk(chunk_id: uuid.UUID) -> bool:
         chunk = session.get(DocumentChunk, chunk_id)
         if chunk is None:
             return False
+        if chunk.role == "parent" or chunk.embedding is None:
+            raise RuntimeError("parent 切片不可单独向量化")
         doc = session.get(Document, chunk.document_id)
         if doc is None:
             return False

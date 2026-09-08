@@ -43,8 +43,8 @@
 ## 后端
 
 - FastAPI + Pydantic v2 + python-dotenv  
-- LangChain：切块器用 `RecursiveCharacterTextSplitter` / Markdown 标题切分。P0 问答：`ChatOpenAI` 单链。P1 Agent（P1.3 起）可用 LangGraph，检索必须走现有 `search.py` 封装的 Tool，禁止第二套向量查询。  
-- 检索：P0/P1 为 SQL `ORDER BY embedding <=> :q LIMIT k` + 应用层 0.30。P2 在同一 `search_chunks` 内：pgvector + ES BM25 + RRF + 最多 20 条 Rerank，再按 `RELEVANCE_MIN_SCORE` 逐条过滤  
+- LangChain：切块器用 `RecursiveCharacterTextSplitter` / Markdown 标题切分（V1：`split_markdown_sections` 长节写 parent+children）。P0 问答：`ChatOpenAI` 单链。P1 Agent（P1.3 起）可用 LangGraph，检索必须走现有 `search.py` 封装的 Tool，禁止第二套向量查询。  
+- 检索：P0/P1 为 SQL `ORDER BY embedding <=> :q LIMIT k` + 应用层 0.30；仅 `role=child` 且有 embedding。P2 在同一 `search_chunks` 内：pgvector + ES BM25 + RRF + 最多 20 条 Rerank，再按 `RELEVANCE_MIN_SCORE` 逐条过滤；返回前 `_assemble_parent_context`（有 parent）或 V0 扩窗（无 parent）  
 - P2 Checkpoint：LangGraph 官方 Postgres checkpointer，同一 `DATABASE_URL`，禁止 Redis。Checkpoint 存 `AgentState` 快照，不替代 `message` / `conversation.summary` / `user_memory`。新 user 轮次从 DB 灌 STM，不以 checkpoint 旧消息为聊天权威。  
 - P2 Agent 路由：`p1/graph.py` 的 `reason` 为唯一决策点。P2-Agent-5 起 `DIRECT` / `RAG` / `WEB`；P2-Agent-6 可写 ≤3 子任务但仍走同一 reason，无第二张图。  
 - P2 关键词：本机 Elasticsearch（BM25）。应用仍绑 127.0.0.1；ES 为本机进程或**仅用于 ES 的** Docker，不把整个知域容器化。禁止 Meilisearch、禁止用 ES 存 embedding 做主向量检索   
@@ -173,10 +173,10 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearc
 | `web/src/components/RetrievalDebugPanel.vue` | 对话页 Retrieval Debug 抽屉 |
 | `server/app/routers/retrieval_debug.py` | `POST /api/retrieval-debug`、labels、`POST /api/retrieval-debug/answer-quality` |
 | `server/app/routers/master.py` | `/api/agent`、`/api/agent/stream`（伪流式，**sync def** 跑线程池，避免占事件循环卡住侧栏 `/me`）与旁路 `POST /api/agent/trace`（`stream_mode="updates"` 逐节点 SSE，不落库） |
-| `server/alembic/` | 迁移；当前 `20260901_0018`（新增 `booking_record`） |
+| `server/alembic/` | 迁移；含 `20260908_0025`（`document_chunk.role` / `parent_id`，`embedding` 可空） |
 | `web/src/styles.css` | 全局设计 token 与顶栏/页面自适应容器（不锁 1440×900） |
 | `server/app/routers/tags.py` | 标签创建/列表/删除 |
-| `server/app/rag/search.py` | Hybrid + RRF + Rerank；经 `search_kb_ids` 定库；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤；可选 `created_after`/`created_before`（文档 `created_at`）。V0：`_expand_same_heading` 在返回前按同 `(document_id, heading)` 扩窗（预算 4000 整块、`original_content`）；见 [`PRD_Chunk_V0.md`](PRD_Chunk_V0.md)。父子落库 V1 见 [`PRD_Chunk_V1.md`](PRD_Chunk_V1.md) |
+| `server/app/rag/search.py` | Hybrid + RRF + Rerank；经 `search_kb_ids` 定库；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤；可选 `created_after`/`created_before`（文档 `created_at`）。召回保险：`role=child` 且 `embedding IS NOT NULL`。V1：`_assemble_parent_context`——有 `parent_id` 用 parent 全文（同父去重；超 `SECTION_EXPAND_MAX_CHARS` 则对该父下 children center-out 整块回退）；无 parent 降级 V0 `_expand_same_heading`。`search_debug` 不组装。见 [`PRD_Chunk_V1.md`](PRD_Chunk_V1.md) / V0 [`PRD_Chunk_V0.md`](PRD_Chunk_V0.md) |
 | `server/app/rag/rerank.py` | DashScope 兼容 `/reranks`；无 Key 则 LLM 打分；都没有则保持 RRF 顺序 |
 | `server/app/rag/es_bm25.py` | BM25 索引与检索；chunk 与 PG 同步 upsert/删除；测试可替换为内存实现 |
 | `server/app/routers/search.py` | `POST /api/search`（可选 kind / 时间窗） |
@@ -193,13 +193,13 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearc
 | `server/app/routers/chat.py` | `POST /chat`、`/chat/stream`（sync def，与 agent/stream 同样不占事件循环）；会话列表/消息/删除 |
 | `server/app/ingest/url_import.py` | 公开页 httpx + trafilatura；超时 20s；无浏览器自动化 |
 | `server/app/ingest/parse.py` | md/txt UTF-8；PDF PyMuPDF 按页 `## Page N`；DOCX 按段落。无 OCR/MinerU |
-| `server/app/ingest/chunk.py` | LangChain 标题切分；默认 800/120；`split_markdown(..., chunk_size, chunk_overlap)`；无 LlamaIndex |
+| `server/app/ingest/chunk.py` | Markdown 标题切分；默认 800/120；`split_markdown_sections` 产出 `SectionSplit`（长节：parent=section 全文 + children；短节：仅 child、无空父）；`split_markdown` 兼容扁平 children；表格保护 / FAQ；无 LlamaIndex |
 | `server/app/ingest/chunk_settings.py` | 按用户读写 `user_chunk_setting`；无行则默认 800/120 |
 | `server/app/routers/chunk_settings.py` | `GET/PUT /api/chunk-settings`（Session 用户） |
-| `server/app/ingest/index.py` | 切块 Embedding 写入 `document_chunk`；切块用文档所属用户配置并写入 `document.chunk_size`/`chunk_overlap`；状态 `ready`；额度不足提示改 v4；P3 `index_document_incremental` 差量更新 |
+| `server/app/ingest/index.py` | 父子落库：先 parent（`embedding=None`）再 child（`parent_id` + embed）；`chunk_index` 含 parent 统一递增；ES `upsert_chunks` 仅 child；增量对齐键含 `role`/parent 结构；旁路读（`gather_document_text` / chunks API）只取 child。切块用用户配置写入 `document.chunk_size`/`chunk_overlap`；状态 `ready`；P3 `index_document_incremental` |
 | `server/app/ingest/storage.py` | 本地文件路径与清理 |
 | `server/app/schemas.py` | Pydantic 模型；`AgentRequest` 新增 `hitl_confirm`，`AgentOut` 新增 `pending_action` |
-| `server/app/models.py` | SQLAlchemy 表；新增 `booking_record` 存储旅行预订 |
+| `server/app/models.py` | SQLAlchemy 表；`document_chunk` 含 `role`/`parent_id`（parent 无 embedding）；另有 `booking_record` 等 |
 | `web/src/views/LoginView.vue` | 独立登录页 |
 | `server/app/chains.py` | P1.1/P1.2/P1.4 摘要、自动标签、文档对比、图谱抽取 Chain；禁止 import LangGraph |
 | `server/app/rag/conversation_summary.py` | 消息 >6 时压缩更早轮次写入 `conversation.summary` |

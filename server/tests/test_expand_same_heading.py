@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -7,8 +8,14 @@ from unittest.mock import MagicMock
 from app.rag.search import (
     SECTION_EXPAND_MAX_CHARS,
     SearchHit,
+    _assemble_parent_context,
     _center_out_chunks,
     _expand_same_heading,
+    _hits_for_ids,
+    _section_siblings,
+    _vector_stmt,
+    search_chunks,
+    search_debug,
 )
 
 
@@ -20,6 +27,7 @@ def _hit(
     score: float,
     heading: str | None,
     name: str = "doc.md",
+    parent_id: uuid.UUID | None = None,
 ) -> SearchHit:
     return SearchHit(
         document_id=doc_id,
@@ -30,6 +38,7 @@ def _hit(
         page=None,
         heading=heading,
         kind="note",
+        parent_id=parent_id,
     )
 
 
@@ -40,6 +49,7 @@ def _chunk(
     index: int,
     content: str,
     heading: str | None,
+    parent_id: uuid.UUID | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=chunk_id,
@@ -47,6 +57,7 @@ def _chunk(
         chunk_index=index,
         content=content,
         heading=heading,
+        parent_id=parent_id,
     )
 
 
@@ -165,3 +176,138 @@ def test_center_out_left_fail_still_tries_right():
     assert [c.id for c in chosen] == [ids[1], ids[2]]
     assert "".join(c.content for c in chosen)  # no truncation inside chunks
     assert all(len(c.content) in (2500, 1000) for c in chosen)
+
+
+def test_assemble_parent_full_text_and_child_ids():
+    doc_id = uuid.uuid4()
+    parent_id = uuid.uuid4()
+    child_id = uuid.uuid4()
+    parent = _chunk(
+        chunk_id=parent_id,
+        doc_id=doc_id,
+        index=0,
+        content="PARENT_FULL",
+        heading="Sec",
+    )
+    hit = _hit(
+        doc_id=doc_id,
+        chunk_id=child_id,
+        content="C1",
+        score=0.9,
+        heading="Sec",
+        parent_id=parent_id,
+    )
+    out = _assemble_parent_context(_session_with([parent]), [hit])
+    assert len(out) == 1
+    assert out[0].chunk_id == child_id
+    assert out[0].content == "PARENT_FULL"
+    assert out[0].original_content == "C1"
+    assert out[0].score == 0.9
+
+
+def test_assemble_dedupes_same_parent_keeps_highest_score():
+    doc_id = uuid.uuid4()
+    parent_id = uuid.uuid4()
+    c0_id, c1_id = uuid.uuid4(), uuid.uuid4()
+    parent = _chunk(
+        chunk_id=parent_id,
+        doc_id=doc_id,
+        index=0,
+        content="PARENT_FULL",
+        heading="Sec",
+    )
+    low = _hit(
+        doc_id=doc_id,
+        chunk_id=c0_id,
+        content="C0",
+        score=0.2,
+        heading="Sec",
+        parent_id=parent_id,
+    )
+    high = _hit(
+        doc_id=doc_id,
+        chunk_id=c1_id,
+        content="C1",
+        score=0.8,
+        heading="Sec",
+        parent_id=parent_id,
+    )
+    out = _assemble_parent_context(_session_with([parent]), [low, high])
+    assert len(out) == 1
+    assert out[0].chunk_id == c1_id
+    assert out[0].content == "PARENT_FULL"
+    assert out[0].original_content == "C1"
+
+
+def test_assemble_without_parent_matches_v0_expand():
+    doc_id = uuid.uuid4()
+    c0_id, c1_id, c2_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    siblings = [
+        _chunk(chunk_id=c0_id, doc_id=doc_id, index=0, content="C0", heading="Sec"),
+        _chunk(chunk_id=c1_id, doc_id=doc_id, index=1, content="C1", heading="Sec"),
+        _chunk(chunk_id=c2_id, doc_id=doc_id, index=2, content="C2", heading="Sec"),
+    ]
+    hit = _hit(doc_id=doc_id, chunk_id=c1_id, content="C1", score=0.9, heading="Sec")
+    session = _session_with(siblings)
+    assembled = _assemble_parent_context(session, [hit])
+    expanded = _expand_same_heading(_session_with(siblings), [hit])
+    assert len(assembled) == 1 == len(expanded)
+    assert assembled[0].chunk_id == expanded[0].chunk_id == c1_id
+    assert assembled[0].content == expanded[0].content == "C0\n\nC1\n\nC2"
+    assert assembled[0].original_content == expanded[0].original_content == "C1"
+
+
+def test_assemble_over_budget_falls_back_to_center_out_children():
+    doc_id = uuid.uuid4()
+    parent_id = uuid.uuid4()
+    c0_id, c1_id, c2_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    parent = _chunk(
+        chunk_id=parent_id,
+        doc_id=doc_id,
+        index=0,
+        content="P" * (SECTION_EXPAND_MAX_CHARS + 10),
+        heading="Sec",
+    )
+    children = [
+        _chunk(chunk_id=c0_id, doc_id=doc_id, index=1, content="C0", heading="Sec", parent_id=parent_id),
+        _chunk(chunk_id=c1_id, doc_id=doc_id, index=2, content="C1", heading="Sec", parent_id=parent_id),
+        _chunk(chunk_id=c2_id, doc_id=doc_id, index=3, content="C2", heading="Sec", parent_id=parent_id),
+    ]
+    session = MagicMock()
+    session.scalars.return_value.all.side_effect = [[parent], children]
+    hit = _hit(
+        doc_id=doc_id,
+        chunk_id=c1_id,
+        content="C1",
+        score=0.7,
+        heading="Sec",
+        parent_id=parent_id,
+    )
+    out = _assemble_parent_context(session, [hit])
+    assert len(out) == 1
+    assert out[0].chunk_id == c1_id
+    assert out[0].original_content == "C1"
+    assert out[0].content == "C0\n\nC1\n\nC2"
+    assert "P" not in out[0].content
+
+
+def test_section_siblings_query_filters_parent_role():
+    src = inspect.getsource(_section_siblings)
+    assert 'role == "child"' in src
+
+
+def test_vector_and_id_recall_require_child_with_embedding():
+    vector_src = inspect.getsource(_vector_stmt)
+    hits_src = inspect.getsource(_hits_for_ids)
+    for src in (vector_src, hits_src):
+        assert 'role == "child"' in src
+        assert "embedding.isnot(None)" in src
+
+
+def test_search_chunks_assembles_after_rerank_debug_does_not():
+    chunks_src = inspect.getsource(search_chunks)
+    debug_src = inspect.getsource(search_debug)
+    assert "_assemble_parent_context" in chunks_src
+    assert "_assemble_parent_context(session, _keep_relevant(_rerank(query, hits)))" in chunks_src
+    assert "_assemble_parent_context" not in debug_src
+    assert "_expand_same_heading" not in debug_src

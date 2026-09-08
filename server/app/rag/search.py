@@ -39,6 +39,7 @@ class SearchHit:
     heading: str | None
     kind: str
     original_content: str = ""
+    parent_id: uuid.UUID | None = None
 
 
 def normalize_query(query: str) -> str:
@@ -63,6 +64,7 @@ def _hit_from_row(chunk: DocumentChunk, doc: Document, dist: float) -> SearchHit
         page=chunk.page,
         heading=chunk.heading,
         kind=doc.kind,
+        parent_id=chunk.parent_id,
     )
 
 
@@ -114,6 +116,8 @@ def _vector_stmt(
         .join(Document, Document.id == DocumentChunk.document_id)
         .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
         .where(
+            DocumentChunk.role == "child",
+            DocumentChunk.embedding.isnot(None),
             Document.knowledge_base_id.in_(kb_ids),
             Document.status == STATUS_READY,
             KnowledgeBase.user_id == user_id,
@@ -142,6 +146,8 @@ def _hits_for_ids(session: Session, query_vec, kb_ids, user_id, chunk_ids: list[
         .join(KnowledgeBase, KnowledgeBase.id == Document.knowledge_base_id)
         .where(
             DocumentChunk.id.in_(chunk_ids),
+            DocumentChunk.role == "child",
+            DocumentChunk.embedding.isnot(None),
             Document.knowledge_base_id.in_(kb_ids),
             Document.status == STATUS_READY,
             KnowledgeBase.user_id == user_id,
@@ -213,7 +219,7 @@ def search_chunks(
     by_id.update(_hits_for_ids(session, query_vec, kb_ids, user_id, missing))
     ordered_ids = sorted(fused.keys(), key=lambda cid: fused[cid], reverse=True)
     hits = [by_id[cid] for cid in ordered_ids if cid in by_id][:k]
-    return _expand_same_heading(session, _keep_relevant(_rerank(query, hits)))
+    return _assemble_parent_context(session, _keep_relevant(_rerank(query, hits)))
 
 
 def _keep_relevant(hits: list[SearchHit]) -> list[SearchHit]:
@@ -286,7 +292,11 @@ def _section_siblings(
         and_(DocumentChunk.document_id == doc_id, DocumentChunk.heading == heading)
         for doc_id, heading in keys
     ]
-    rows = list(session.scalars(select(DocumentChunk).where(or_(*conds))).all())
+    rows = list(
+        session.scalars(
+            select(DocumentChunk).where(or_(*conds), DocumentChunk.role == "child")
+        ).all()
+    )
     out: dict[tuple[uuid.UUID, str], list[DocumentChunk]] = {}
     for chunk in rows:
         key = (chunk.document_id, chunk.heading or "")
@@ -324,6 +334,89 @@ def _expand_same_heading(session: Session, hits: list[SearchHit]) -> list[Search
     merged = passthrough + expanded
     merged.sort(key=lambda h: h.score, reverse=True)
     return merged
+
+
+def _chunks_by_ids(session: Session, ids: list[uuid.UUID]) -> dict[uuid.UUID, DocumentChunk]:
+    if not ids:
+        return {}
+    rows = session.scalars(select(DocumentChunk).where(DocumentChunk.id.in_(ids))).all()
+    return {chunk.id: chunk for chunk in rows}
+
+
+def _children_of_parents(
+    session: Session, parent_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[DocumentChunk]]:
+    if not parent_ids:
+        return {}
+    rows = list(
+        session.scalars(
+            select(DocumentChunk).where(
+                DocumentChunk.parent_id.in_(parent_ids),
+                DocumentChunk.role == "child",
+            )
+        ).all()
+    )
+    out: dict[uuid.UUID, list[DocumentChunk]] = {}
+    for chunk in rows:
+        if chunk.parent_id is None:
+            continue
+        out.setdefault(chunk.parent_id, []).append(chunk)
+    for pid in out:
+        out[pid].sort(key=lambda c: c.chunk_index)
+    return out
+
+
+def _assemble_with_parent(session: Session, hits: list[SearchHit]) -> list[SearchHit]:
+    best: dict[uuid.UUID, SearchHit] = {}
+    for hit in hits:
+        pid = hit.parent_id
+        if pid is None:
+            continue
+        prev = best.get(pid)
+        if prev is None or hit.score > prev.score:
+            best[pid] = hit
+    parents = _chunks_by_ids(session, list(best.keys()))
+    over_budget: list[tuple[uuid.UUID, SearchHit]] = []
+    out: list[SearchHit] = []
+    for pid, hit in best.items():
+        parent = parents.get(pid)
+        if parent is None:
+            out.append(replace(hit, original_content=hit.content))
+            continue
+        if len(parent.content) <= SECTION_EXPAND_MAX_CHARS:
+            out.append(replace(hit, content=parent.content, original_content=hit.content))
+        else:
+            over_budget.append((pid, hit))
+    if over_budget:
+        children_by_parent = _children_of_parents(session, [pid for pid, _ in over_budget])
+        for pid, hit in over_budget:
+            siblings = children_by_parent.get(pid, [])
+            chosen = _center_out_chunks(siblings, hit.chunk_id)
+            if not chosen:
+                out.append(replace(hit, original_content=hit.content))
+                continue
+            content = "\n\n".join(c.content for c in chosen)
+            out.append(replace(hit, content=content, original_content=hit.content))
+    return out
+
+
+def _assemble_parent_context(session: Session, hits: list[SearchHit]) -> list[SearchHit]:
+    if not hits:
+        return []
+    with_parent: list[SearchHit] = []
+    without: list[SearchHit] = []
+    for hit in hits:
+        if hit.parent_id is not None:
+            with_parent.append(hit)
+        else:
+            without.append(hit)
+    assembled: list[SearchHit] = []
+    if without:
+        assembled.extend(_expand_same_heading(session, without))
+    if with_parent:
+        assembled.extend(_assemble_with_parent(session, with_parent))
+    assembled.sort(key=lambda h: h.score, reverse=True)
+    return assembled
 
 
 def _rerank_model_name() -> str:

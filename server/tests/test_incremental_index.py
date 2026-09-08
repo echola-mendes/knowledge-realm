@@ -110,4 +110,4 @@ def test_incremental_only_embeds_new_chunks(monkeypatch):
     assert result == "ready"
     assert len(calls) == 1 and len(calls[0]) == 1 and "全新追加的段落" in calls[0][0]
     after = _chunks_of(doc_id)
-    assert {r.content for r in after} == {"# A\n旧内容不动", "# B\n全新追加的段落"}
+    assert {r.content for r in after if r.role == "child"} == {"# A\n旧内容不动", "# B\n全新追加的段落"}

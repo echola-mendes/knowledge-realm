@@ -79,3 +79,13 @@
 - 新增 Agent 路径时**必须**接入 `app/audit/recorder.py` 的 `DecisionRecorder`：经 `RunnableConfig.configurable["decision_recorder"]` 注入子图节点（注解须严格为 `RunnableConfig`）。
 - run 行经主流程会话 savepoint 落库（随主事务提交）；spans 与终态由 Recorder 用独立会话写。
 - Recorder 公开方法吞异常——**任何审计故障不得影响主回答**。
+
+## 9. 切块存储：Parent-Child（V1）
+
+长期数据约束（一张 `document_chunk`，不另建向量表）：
+
+- `role`：`parent` | `child`；存量默认 `child`
+- `parent_id`：child → parent；短 section 仅一行 `role=child` 且 `parent_id=null`（无空父）
+- **检索单位**：仅 child（向量 / BM25 / RRF / Rerank）；parent **无 embedding、不进 ES**
+- **生成上下文**：默认 `parent.content`；无 parent / 未 reindex → 降级 V0 同 heading 扩窗
+- 导入页切的是 child 策略，与「命中后组装 parent」分维；V1 不做组装 UI

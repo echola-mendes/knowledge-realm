@@ -61,6 +61,14 @@ class TextChunk:
     heading: str | None
 
 
+@dataclass
+class SectionSplit:
+    """One Markdown section: optional parent (full section) + child pieces."""
+
+    parent: TextChunk | None
+    children: list[TextChunk]
+
+
 def _protect_tables(text: str) -> tuple[str, dict[str, str]]:
     tables: dict[str, str] = {}
 
@@ -113,12 +121,12 @@ def _page_of(heading: str | None, content: str) -> int | None:
     return None
 
 
-def split_markdown(
+def split_markdown_sections(
     text: str,
     *,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
-) -> list[TextChunk]:
+) -> list[SectionSplit]:
     if not text.strip():
         return []
     if chunk_size <= 0:
@@ -137,19 +145,46 @@ def split_markdown(
     if not sections:
         return []
     rec = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    chunks: list[TextChunk] = []
+    results: list[SectionSplit] = []
     for section in sections:
         heading = _heading_from_meta(section.metadata)
         body = section.page_content
         if any(token in body for token in tables) and len(_restore_tables(body, tables)) > chunk_size:
             restored = _restore_tables(body, tables).strip()
             if restored:
-                chunks.append(TextChunk(restored, _page_of(heading, restored), heading))
+                child = TextChunk(restored, _page_of(heading, restored), heading)
+                results.append(SectionSplit(parent=None, children=[child]))
             continue
-        pieces = rec.split_text(body) if len(body) > chunk_size else [body]
-        for piece in pieces:
+        restored_full = _restore_tables(body, tables).strip()
+        if not restored_full:
+            continue
+        if len(body) <= chunk_size:
+            child = TextChunk(restored_full, _page_of(heading, restored_full), heading)
+            results.append(SectionSplit(parent=None, children=[child]))
+            continue
+        parent = TextChunk(restored_full, _page_of(heading, restored_full), heading)
+        children: list[TextChunk] = []
+        for piece in rec.split_text(body):
             restored = _restore_tables(piece, tables).strip()
             if not restored:
                 continue
-            chunks.append(TextChunk(restored, _page_of(heading, restored), heading))
+            children.append(TextChunk(restored, _page_of(heading, restored), heading))
+        if not children:
+            continue
+        results.append(SectionSplit(parent=parent, children=children))
+    return results
+
+
+def split_markdown(
+    text: str,
+    *,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+) -> list[TextChunk]:
+    """Flatten section children (compat for callers not yet on parent-child)."""
+    chunks: list[TextChunk] = []
+    for section in split_markdown_sections(
+        text, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+    ):
+        chunks.extend(section.children)
     return chunks

@@ -16,7 +16,7 @@ def gather_document_text(session: Session, doc: Document) -> str:
     chunks = list(
         session.scalars(
             select(DocumentChunk)
-            .where(DocumentChunk.document_id == doc.id)
+            .where(DocumentChunk.document_id == doc.id, DocumentChunk.role == "child")
             .order_by(DocumentChunk.chunk_index)
         )
     )

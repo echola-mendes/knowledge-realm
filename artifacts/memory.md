@@ -8,6 +8,7 @@
 | AI资讯（PRD-NEWS） | 2026-09-04 | news 表/管道/API/前端热榜；NEWS_REFRESH 接真实 refresh；源 yaml | 全 ✅ |
 | AI决策审计（Trace.md V1.1） | 2026-09-06 | decision_run/span 表 + DecisionRecorder(app/audit/) + chat/knowledge 埋点 + 3 查询 API + 决策审计前端页 | 全 ✅ |
 | 检索同节扩窗（PRD_Chunk_V0） | 2026-09-08 | search_chunks 返回前同 heading 扩窗 + original_content；不改表/debug | 全 ✅ |
+| 父子切块落库（PRD_Chunk_V1） | 2026-09-08 | document_chunk role/parent_id；索引写 parent+child；检索仅 child + parent 组装/V0 降级 | 全 ✅ |
 
 ## 经验
 
@@ -135,4 +136,12 @@
 问题：同节 child 被切散，只命中一块时上下文不完整。
 
 解法：仅 `search_chunks` 返回前 `_expand_same_heading`；键 `(document_id, heading)`；整块预算 4000；`search_debug` 不扩窗；`original_content` 默认空串保兼容。
+
+### Parent-Child：短节无空父、组装在门槛后
+
+日期：2026-09-08　来源：父子切块落库 V1
+
+问题：索引时既要 section 全文作 parent，又要避免短节多写空父行；检索侧仍要兼容未 reindex 数据。
+
+解法：长节才写 `role=parent`（无 embedding、不进 ES）+ children；短节仅一行 `role=child`/`parent_id=null`。召回 `role=child AND embedding IS NOT NULL`；`search_chunks` 门槛后 `_assemble_parent_context`（同父去重、超预算整块回退），无 parent → V0 扩窗；`search_debug` 不组装。增量对齐键含 `role`/parent 结构。
 
