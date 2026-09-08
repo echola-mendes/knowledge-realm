@@ -1,82 +1,87 @@
-# 当前子需求：父子切块落库（Parent-Child V1）
+# 当前子需求：知识 Agent 编排优化（Sufficiency V0）
 
-> 需求来源：`docs/PRD_Chunk_V1.md`（只读）  
-> 前置：V0 同节扩窗已落地（`search_chunks` + `_expand_same_heading`）；本需求改为索引时显式写 parent/child
+> 需求来源：`docs/Design_Agent.md`（只读）  
+> 范围：对话页「Agent」（`task=knowledge` → `graph.py`）；不改 Multi Agent / Master、`/api/chat`、RAG 内核
 
 ## 1. 目标
 
-索引阶段在同一张 `document_chunk` 表写入 parent（section 全文）与 child（可检索小块）；检索仍只命中 child，生成上下文默认用 parent 全文（预算不足时整块回退拼接）；未 reindex / 无 parent 的文档降级到现有 V0 或单 child。
+将 knowledge Agent 从「同一 query 多枪平铺检索 + `max_loops` 硬停」升级为：Query Analysis →（Simple 单次检索 | Complex 分解 Qi 串行检索）→ Evidence Sufficiency（V0 规则）→ 仅对不足 Qi Rewrite 再检 → Evidence Merge → Final Answer（可并存 Knowledge Gap）；编排决策与审计 span 同步埋点（每节点 `input`/`output`）。
 
 ## 2. 背景
 
-V0 用 `(document_id, heading)` 运行时拼兄弟，验证「同节上下文」思路，但不改表。V1 要解决：同 heading 跨度过大、无稳定父全文、增量对齐困难——在索引时落 parent 行，检索过滤 child，命中后取 parent。
+现网 `MAX_LOOPS` 与弱标签子任务混算 Tool 次数，证据靠平铺追加、缺「相关≠足够」判定与缺口表达。检索质量（RRF/Rerank/Parent-Child）已在 `search_chunks` 内；本需求只改 Agent 决策与编排，不在 Agent 内重做检索链路。
 
 ## 3. 功能范围
 
-- 模型 / 迁移：`document_chunk` 增加 `role`（`child`|`parent`）、`parent_id`（nullable FK → 本表）；`embedding` 允许 parent 为空（或不参与检索）
-- 切块 / 索引：`split_markdown` / `index_*` 两段式显式写 parent + child；表格保护 / FAQ 逻辑保持
-- 检索：向量 / BM25 / RRF / Rerank 仅 child；组装默认 `content = parent.content`，`original_content` = 命中 child；同父多命中按 score 去重只装一次 parent
-- Parent 超预算：按完整子块 center-out + 字符预算回退（复用 V0 思路），禁止字符串中途切断
-- 无 parent / 旧数据：降级为 V0 同 heading 扩窗
-- 文档：Phase 4 同步 `docs/TECH.md`、`docs/PRD.md` §3.2
+- Query Analysis：Agent 图内 Simple / Complex 判定；Simple 不分解、一次 `search_chunks`；Decomposition 失败降级 Simple
+- Decomposition：Complex 拆 Qi（引导尽量 ≤3，硬截断 5）；每 Qi 维护 `status` / `rewrite_count` / `evidence_ids`；串行检索
+- Evidence Sufficiency **V0**：`len(hits)>0` → SUFFICIENT，否则 INSUFFICIENT；不得用 score 阈值作最终定义
+- Query Rewrite：仅 INSUFFICIENT Qi；受 `MAX_REWRITE_PER_Q=2` 与全局补充检索 `MAX_LOOPS=3` 约束；完全相同 query 跳过 Tool（`searched_queries`）
+- Evidence Merge：作答前必做；去重键优先 `parent_id` 否则 `chunk_id`；预算 `MAX_EVIDENCE=10`；保留 `related_questions`
+- Knowledge Gap：补充额度用尽仍不足 → 有证据部分作答 + 列出缺口 Qi；禁止用模型常识补缺口；Citation 仅来自 Evidence
+- State：精简为 design §10 字段；禁止无限堆积完整 Tool 原始结果
+- 决策审计：继续 `DecisionRecorder`；保留 `route`/`retrieve`/`generate`；用 `decision.step` + `input`/`output` + 必要 `evidence_refs`；能力与埋点同步；详情页可读串链；chat 模式口径不变
+- 预算语义：`MAX_INITIAL_RETRIEVES = len(sub_questions)` 不计入 `MAX_LOOPS`；`MAX_LOOPS` 仅计 Rewrite 后补充检索
 
 ## 4. 非目标
 
-- 不上 Neo4j / 第二套向量表；不引入 LlamaIndex ParentDocumentRetriever
-- 不做语义切块策略本身；不做完整「自定义切片策略」后端
-- 不把「父子」做成导入页切片方式的第五个 radio
-- 不改导入页 UI（切 child ≠ 上下文组装；组装维度后置）
-- 不强制 `search_debug` 展示组装后上下文（另议）
-- 不对外 API 强制暴露 `parent_id`（`SearchHit` 继续用现有字段即可）
-- Parent：`embedding` 可空、不写向量、不进 ES；检索过滤 `role=child`
+- Multi-Agent / 新 Planner·Reviewer；HyDE；Graph RAG 改造
+- Agent 内自建 RRF / Rerank / 第二套向量查询
+- 重构 `/api/chat`、`/api/chat/stream`；Simple 不强行改走 Chat API
+- 本需求强制 Semantic Chunking / 切块策略改造
+- `web_search` / `search_graph` 纳入 Decomposition / Sufficiency 主流程（现网能力可保留，不进主流程）
+- LLM Sufficiency（V1，另立）；无限 Loop；另起审计表或后补埋点
+- 破坏 chat 模式审计语义
 
 ## 5. 业务规则
 
 | 规则 | 内容 |
 | --- | --- |
-| 表约束 | 仍一张 `document_chunk`；parent/child 同行表，用 `role` + `parent_id` 区分 |
-| 检索单位 | 仅 `role=child`（或 `embedding IS NOT NULL`）参与向量 / BM25 / RRF / Rerank |
-| 生成上下文 | 默认 parent 全文；无 parent / 旧数据 → V0 `_expand_same_heading` |
-| Parent 边界 | Markdown / 结构化文优先 `#`/`##`/`###` section |
-| 短 section | 长度 ≤ `chunk_size` 且不再切分：只写一行，`role=child`，`parent_id=null`（无空父行） |
-| 兄弟关系 | 同 `parent_id` + `ORDER BY chunk_index`；不存 sibling id 列表 |
-| 同父去重 | 多 child 命中保留最高分，parent 只组装一次 |
-| 字段契约 | `chunk_id`/`score` 仍为命中 child；`content` 为组装后；`original_content` 为 child 原文 |
-| 迁移 | 存量须 **重新向量化** 才有父子；未 reindex 行为须有测例 |
-| 增量索引 | 对齐键扩展含 `role`/parent 结构，避免父行漂移 |
+| 职责 | Agent 决策编排；`search_chunks` 负责完整检索（含 RRF/Rerank/V0·V1 扩窗） |
+| Simple | 单事实/单概念 → 1 次检索 → Merge → Answer |
+| Complex | 多实体/多知识点/多问句 → Decomposition → 每 Qi 初始各检索 1 次 |
+| Sufficiency V0 | 只看有无 SearchHit；有偏题 hit 也判够（已知局限，留给 V1） |
+| 补充检索 | 只 Rewrite 不足 Qi；禁止重搜已 SUFFICIENT；相同 query 不二次 Tool |
+| 停止 | 全部 SUFFICIENT；或 `loop_count >= MAX_LOOPS`；或某 Qi `rewrite_count >= MAX_REWRITE_PER_Q` → 带 Gap 作答 |
+| Merge | enough/insufficient 作答前都 Merge；同父多命中留最高分并合并 related_questions |
+| Gap | 与 Answer 可同屏；无证据要点不得常识硬补 |
+| 审计 | 每编排节点同步 span；故障不影响主回答；`evidence_refs` 用 id+excerpt（不塞 parent 全文） |
 
 ## 6. 输入与输出
 
-- 索引输入：现有解析后的 Markdown/结构化正文 + chunk_size/overlap  
-- 索引输出：parent 行（content=section 全文，embedding 可空）+ child 行（embed + ES，`parent_id` 指向 parent）  
-- 检索输入：与现网一致的 query / Top-K  
-- 检索输出：仍为 `list[SearchHit]`；调用方（Chat / Agent / 搜索）不感知表结构
+- 输入：用户 query（knowledge Agent 对话路径，现有 API/前端入口）
+- 输出：最终回答 + Citations（来自 Evidence）+ 可选 Knowledge Gap；审计详情可串：analyze → decompose → retrieve(Qi) → sufficiency → rewrite? → merge → gap? → generate
 
 ## 7. 涉及模块
 
-- 改：`server/app/models.py` + Alembic 迁移
-- 改：`server/app/ingest/chunk.py`、`server/app/ingest/index.py`
-- 改：`server/app/rag/search.py`（组装逻辑；保留 V0 作降级）
-- 测：索引落库、检索过滤 parent、组装/去重/降级
-- 文档：`docs/TECH.md`、`docs/PRD.md` §3.2（Phase 4）
-- 不动（本需求首期）：导入页 radio、Agent/Chat 调用方（只消费 SearchHit）
+- 改：`server/app/agent/graph.py`（及同包 state / 节点逻辑）
+- 改：`server/app/audit/`（span 载荷约定：`decision.step` / `input` / `output` / `evidence_refs`）
+- 改：决策审计详情前端（`DecisionAuditView` 等）— Trace 收口可读性
+- 测：编排规则（Simple/Complex、Sufficiency V0、Rewrite 约束、Merge 去重、Gap、重复 query 跳过）+ 审计 span 契约
+- 不动：`/api/chat`、RAG `search_chunks` 内核、Multi Agent、chunking、chat 审计语义
+- 文档：Phase 4 同步 `docs/TECH.md`、`docs/PRD.md`（若存在对应章节）
 
 ## 8. 验收标准
 
 | ID | 标准 |
 | --- | --- |
-| AC-01 | 新导入带标题 Markdown：库中有 parent + 多个 child，且 `child.parent_id` 正确 |
-| AC-02 | 向量 SQL / ES 检索不含 parent 行（或 parent 无有效检索向量） |
-| AC-03 | 命中 child → `content` 为对应 parent 全文（或预算内整块回退）；`chunk_id`/`original_content` 为 child |
-| AC-04 | 同父多命中去重，prompt 侧 parent 只出现一次 |
-| AC-05 | 未 reindex 旧文档走明确降级策略，有测例 |
-| AC-06 | Chat / Agent / 搜索路径仍只消费 `SearchHit`，无需改表结构感知 |
+| AC-01 | Simple → 不分解；`search_chunks` = 1；正常作答 |
+| AC-02 | Complex → 引导 ≤3、硬上限 5；各 Qi 独立检索；统一回答 |
+| AC-03 | 某 Qi 无 hit → INSUFFICIENT → 只 Rewrite 该 Qi |
+| AC-04 | 某 Qi 有 hit → SUFFICIENT → 不重搜该 Qi |
+| AC-05 | 全部有 hit → 不因 `loop_count < MAX_LOOPS` 空转 |
+| AC-06 | 始终无 hit → 补充检索达 `MAX_LOOPS` → Answer + Knowledge Gap |
+| AC-07 | 重复 query → 不二次调用 Tool |
+| AC-08 | 同 parent / 同 chunk 多 Qi 命中 → Merge 后一条 + `related_questions` |
+| AC-09 | `/api/chat` 不变；`search_debug` 仍以 child 召回为评估口径 |
+| AC-10 | 决策审计：每 Qi 检索 input/output + hit 摘要；Sufficiency 可见是否够及 hit_count；Merge 可见去重前后；可定位出错节点；chat 模式不受影响 |
 
 ## 9. 待确认问题
 
-无（确认①已拍板）：
-1. V0 收益已确认，授权 V1 全量（模型+索引+检索）
-2. 短 section：`role=child`，`parent_id=null`
-3. 无 parent / 旧数据：降级 V0 扩窗
-4. Parent：`embedding` 可空、不写向量、不进 ES；检索按 `role=child` 过滤
-5. 不改导入页 UI；后端默认「有 parent 则用 parent 组装」（导入页切的是 child，与组装维度无关，后者后置）
+无（需求文档 §16 已拍板）：
+
+1. `MAX_SUB_QUESTIONS`：引导 ≤3，硬上限 5  
+2. Sufficiency 第一期 = V0 规则 `len(hits)>0`；LLM Sufficiency 另立  
+3. 审计每节点同步埋 input/output（及命中摘要）；不改 chat 审计语义  
+
+实施顺序按 design §14 的 1→7 作为本子需求范围（不含 §14.8 LLM Sufficiency）。

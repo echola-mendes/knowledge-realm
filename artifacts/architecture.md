@@ -16,7 +16,7 @@
 /api/agent(/stream)
   → thin_intent（一次结构化：knowledge | plan | booking | chat）
   → MasterAgent（按 intent 调度 + 整合回复）
-       ├── knowledge   ← 现有 app/graph.py（reason→run_tool→generate）
+       ├── knowledge   ← app/agent/graph.py（Analysis→检索编排→Merge→Answer）
        ├── plan        ← itinerary_plan_agent（ReAct + travel tools）
        └── booking     ← booking_agent（ReAct + HITL 写工具）
 ```
@@ -26,6 +26,14 @@
 - `task=report`：路由 `knowledge`，生成后可选上传 MinIO `reports/{conversation_id}/...`。
 - 子 Agent 事件 **不冒泡** 打乱前端主 SSE 序列（等价 GoGo `forwardEvents(false)`）。
 
+### 2.1 knowledge 子图（长期）
+
+- **Agent 负责决策编排**；**`search_chunks`（经 Tool）负责** Vector+BM25→RRF→Rerank→Context Expansion。禁止在 Agent 内自建第二套检索。
+- 主路径：`analyze`（simple|complex）→ Simple 单次检索 | Complex `decompose`→按 Qi 检索 → Sufficiency（V0：`len(hits)>0`）→ 仅不足 Qi `rewrite` 再检 → `merge` →（可选 `gap`）→ `generate`。
+- 预算：`MAX_LOOPS` **仅计补充检索**；每 Qi 初始检索 1 次不计入；`MAX_SUB_QUESTIONS` 硬上限 5（引导 ≤3）；`MAX_EVIDENCE=10`。
+- `web_search` / `search_graph`：**不进** Decomposition/Sufficiency 主流程。
+- 不改 `/api/chat`；Simple **不**强行改走 Chat API。
+
 ## 3. 代码布局（禁止新建 p4/）
 
 全部位于 `server/app/`：
@@ -34,7 +42,7 @@
 |---|---|
 | `intent.py` | 薄意图分类 |
 | `master.py` | Supervisor 主图 + `MasterState` |
-| `graph.py` | knowledge 子图（现有，少改） |
+| `graph.py` | knowledge 子图（编排：Analysis / Qi / Sufficiency / Merge / Gap） |
 | `plan_agent.py` | 规划子 Agent + plan tools |
 | `booking_agent.py` | 预订子 Agent + booking tools |
 | `travel/flyai.py` | flyai search-flight / book（Step 2/3） |
@@ -79,6 +87,8 @@
 - 新增 Agent 路径时**必须**接入 `app/audit/recorder.py` 的 `DecisionRecorder`：经 `RunnableConfig.configurable["decision_recorder"]` 注入子图节点（注解须严格为 `RunnableConfig`）。
 - run 行经主流程会话 savepoint 落库（随主事务提交）；spans 与终态由 Recorder 用独立会话写。
 - Recorder 公开方法吞异常——**任何审计故障不得影响主回答**。
+- **node_type** 仍为 `route` / `retrieve` / `generate`；knowledge 用 `decision.step`（`analyze`/`decompose`/`retrieve_qi`/`sufficiency`/`rewrite`/`merge`/`gap`/`generate`）+ **`input`/`output`** 区分步骤；retrieve/sufficiency/merge 须带命中摘要 `evidence_refs`（id+excerpt，不塞 parent 全文）。
+- 能力与埋点**同步**落地，禁止后补；chat 模式审计口径不变。
 
 ## 9. 切块存储：Parent-Child（V1）
 
