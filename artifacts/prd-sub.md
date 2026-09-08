@@ -1,90 +1,72 @@
-# 当前子需求：AI 决策审计极简版（Trace.md V1.1）
+# 当前子需求：检索同节扩窗（Parent-Child V0）
 
-> 需求来源：`docs/Trace.md`（用户需求文档，只读）  
-> 前置：包拆分已完成（`app/agent/` `app/ingest/` `app/rag/`）；监控侧栏与 `/monitoring/decisions` 占位页已接入  
-> 包路径约定：审计代码落 `app/audit/`（见 `docs/split.md`）
+> 需求来源：`docs/PRD_Chunk_V0.md`（只读）  
+> 挂载：`search_chunks` 返回前；不改切块 / 表结构 / `search_debug`
 
 ## 1. 目标
 
-每条 assistant 回复落一条业务决策链（`DecisionRun` + 线性 `DecisionSpan`），在「监控 → 决策审计」页可按列表打开详情，复盘该轮路由与证据。本期覆盖 Chat 与知识 Agent 两条路径。
+命中单个 child 后，在字符预算内把同 `(document_id, heading)` 下相邻 child 拼进该 hit 的 `content`，缓解同节上下文被切散导致回答不完整；引用仍指向命中 child。
 
 ## 2. 背景
 
-现有 `/api/agent/trace` + 调试页是旁路实验：不落库、不绑 `message_id`。生产对话只能看到答案与引用，无法事后复盘「为什么选 RAG / Web / Graph、查了什么」。粒度：**每轮 assistant 消息一条链**，非整会话一条。
+Markdown 切块：标题分段 → section 内再切 child，只入库 child。Hybrid 检索命中单块时，同节定义/场景常在邻块。V0 不做父子表，仅在检索结果组装阶段运行时扩窗。
 
 ## 3. 功能范围
 
-### 后端
+- `SearchHit` 增加 `original_content`；`content` 改为扩窗后文本（未扩时等于原 child）
+- 在 `_keep_relevant(_rerank(...))` 之后、`return` 之前调用 `_expand_same_heading(session, hits)`
+- 实现与单测主要落在 `server/app/rag/search.py`（及对应测试）
+- 文档：Phase 4 同步 `docs/TECH.md` 检索段一句；`docs/PRD.md` §3.2 链到本需求
 
-- 表：`decision_run`、`decision_span`（Alembic 迁移；模型入 `models.py`）
-- 埋点：`app/audit/recorder.py` 提供 `DecisionRecorder`（start_run / add_span / finish_run），经 LangGraph `RunnableConfig.configurable` 与函数参数注入
-- 接入点：
-  - Chat：`/api/chat` 与 `/api/chat/stream`（共用 `_http_chat` → `run_chat`）→ `retrieve` + `generate` 两个 span
-  - 知识 Agent：`task=knowledge` → `_invoke_knowledge_graph` → `graph.py` 的 reason / run_tool / generate → `route` + `retrieve` + `generate` span（多圈多组）
-- API（Session 鉴权，仅本人数据，新 `routers/decisions.py`）：
-  - `GET /api/decisions`（列表：conversation_id / mode / status / 时间过滤）
-  - `GET /api/decisions/{run_id}`（run + 有序 spans）
-  - `GET /api/messages/{id}/decision`（按 assistant 消息反查，对话页预留）
-
-### 前端
-
-- `/monitoring/decisions` 占位页替换为 `DecisionAuditView.vue`
-- 列表：时间、模式、问题摘要、状态；筛 conversation_id / 时间
-- 详情：自上而下线性节点（route → retrieve → generate），展开看 decision / rationale / evidence / metrics
-- 样式对齐 `web/style.md` Operate 工具页；不做 DAG / 多 Tab
-
-### 文档
-
-- Phase 4 同步 `docs/TECH.md`、`docs/PRD.md`；不改 `docs/Trace.md`
+凡走 `search_chunks` 的调用方（Chat / Agent / 搜索页 / 相关推荐 / 首页推荐）统一受益，调用方代码原则上不改（只读 `content` / `chunk_id` / `score`）。
 
 ## 4. 非目标
 
-- LangSmith / 自建 Trace 平台 / 新增 Docker 可观测栈
-- 三受众 Explain / Validator / Judge；独立 Token 看板、告警熔断
-- CoT 原文展示（只记结构化摘要）
-- 操作审计（PRD-OPERATIONS 另期）
-- Master / plan / booking 全路径埋点（下一期）
-- `/api/agent/trace` 强制合并、`/debug` 改造（继续旁路）
-- 对话页「查看决策链」入口（可选增强，不做验收项）
+- 不新增 `document_chunk` 字段（无 `parent_id` / `role`）
+- 不改索引流水线、不强制 reindex
+- 不做导入页切片策略 radio 第五项
+- `search_debug` 各阶段不做扩窗
+- 不做 overlap 去重、不做真实 token 预算
+- 不实现 V1 父行落库（`PRD_Chunk_V1.md`）
 
 ## 5. 业务规则
 
 | 规则 | 内容 |
 | --- | --- |
-| 粒度 | 每轮 assistant 消息一条 `decision_run`；`mode` ∈ `chat` / `knowledge` |
-| run 状态 | `running` → `success` / `failed`；开始即落库（独立 session），正常轮绑 `message_id`，失败轮可空 |
-| span 结构 | `seq` 线性递增；`node_type` ∈ `route` / `retrieve` / `generate`；无 `parent_span_id` 树 |
-| route/reason | `decision={"action":...}` + 短 `rationale`（模型未给理由写「未给出理由」） |
-| retrieve | 工具名、query、候选/入选 chunk id（excerpt 截断）；web 命中记 `type:"web"` |
-| generate | 一句结论摘要（答案全文已在 message）+ 可选 `elapsed_ms` / `tokens` |
-| 隔离 | Recorder 全程 try/except 包裹；任何故障不影响主回答（不落库或 status=failed） |
-| 鉴权 | 列表/详情/反查均按 Session 用户过滤；他人 run 返回 404 |
+| 扩窗键 | `(document_id, heading)`；`heading` 为 `None` 或 `""` 则不扩窗，仅设 `original_content` |
+| 输出顺序 | 去重后按保留 hit 的 `score` 降序 |
+| 返回条数 | 仍 ≤ Top-K；同节多命中去重后可更少；**不是** TopK×邻块变长 |
+| 去重 | 同组保留 rerank `score` 最高的一条，再扩窗；扩窗后不改 `score` |
+| 预算 | `SECTION_EXPAND_MAX_CHARS = 4000`；按完整 child 累加；超则整块不加；禁止字符截断 |
+| 命中块超预算 | 命中块长度已 > 4000 仍保留全文，不再加邻块 |
+| 选型顺序 | 先放命中块，再按 `chunk_index` 距离 1,2,… 左右交替（center-out）；一侧加不进仍可试另一侧同距离；两侧该距离都加不进则停止向外 |
+| 正文顺序 | 已选块按 `chunk_index` 升序、`\n\n` 拼接 |
+| 字段 | `chunk_id` / `score` / 其它字段不变；`original_content` = 命中 child 原文；不新增 `source_chunk_id` |
+| overlap | 邻块边界重复文字 V0 接受，不去重 |
 
 ## 6. 输入与输出
 
-- 输入：Chat 请求、knowledge Agent 请求（现有 `/api/chat*`、`/api/agent*`）
-- 输出：`decision_run` / `decision_span` 行；3 个查询 API；决策审计前端页
+- 输入：门槛过滤后的 `list[SearchHit]` + DB session（查同 heading 切片）
+- 输出：可能更少条数的 `list[SearchHit]`；每条含 `original_content`；可扩者 `content` 为拼接文
 
 ## 7. 涉及模块
 
-- 新：`app/audit/__init__.py`、`app/audit/recorder.py`、`routers/decisions.py`、迁移、`web/src/views/DecisionAuditView.vue`
-- 改：`models.py`、`schemas.py`、`main.py`（include router）、`app/rag/chat.py`（返回 assistant message id + 埋点）、`routers/chat.py`（注入 recorder）、`routers/master.py`（knowledge 路径埋点 + persist 回传 message id）、`app/agent/graph.py`（三节点从 configurable 取 recorder）、`web/src/router.ts`、`web/src/api.ts`
-- 不动：`master.py` 埋点、plan/booking 子图、`/api/agent/trace`、`/debug`
+- 改：`server/app/rag/search.py`（`SearchHit`、`_expand_same_heading`、`search_chunks` 挂载）
+- 测：`_expand_same_heading` 单测 + `search_chunks` 无 heading/单块回归
+- 文档：`docs/TECH.md`、`docs/PRD.md` §3.2（Phase 4）
+- 不动：切块/索引、`search_debug`、前端切片 radio、表结构/迁移
 
 ## 8. 验收标准
 
 | ID | 标准 |
 | --- | --- |
-| AC-01 | Chat 问一轮 → DB 有 `decision_run`(mode=chat, status=success, 绑 message_id) + retrieve/generate spans |
-| AC-02 | knowledge Agent 问一轮 → run + route/retrieve/generate spans，多圈时 span 按序递增 |
-| AC-03 | `GET /api/messages/{assistant_msg_id}/decision` 反查到该 run |
-| AC-04 | 监控页列表可打开详情，能看到路由 action 与证据 chunk id |
-| AC-05 | Recorder 抛异常时主回答不受影响（单测模拟 recorder 故障） |
-| AC-06 | 未登录 401；他人 run/消息 404 |
-| AC-07 | 前端路由可进入列表与详情；typecheck 通过 |
+| AC-01 | 同 heading 下 C0/C1/C2，只命中 C1 → 1 条；预算内 `content` 含可装下的邻块；`original_content`/`chunk_id` 为 C1 |
+| AC-02 | Top-K 同节命中 C0（低分）与 C1（高分）→ 只保留 C1，无重复整节 |
+| AC-03 | `heading` 为空 → 不扩；`content` 与扩窗前一致 |
+| AC-04 | 邻块再加会超 4000 → 不加该邻块；已选无截断；命中块必在 `content` |
+| AC-05 | `search_debug` final 仍为 child 口径 |
+| AC-06 | 现有 Chat/搜索/Agent 单测在 mock 下不因新字段崩溃（字段可选默认或测试补齐） |
 
 ## 9. 待确认问题
 
-1. Chat 非流式 `/api/chat` 与流式 `/api/chat/stream` 共用实现，计划一并落链（Trace 表只列了 stream）——默认两者都接，可接受？
-2. run 起始即落库（status=running，独立 DB session），完成后更新状态并写 spans——比「完成后一次性写」多一次写入但可观测失败轮，默认按此实现？
-3. 列表分页默认 `limit=50&offset=0` + `mode/status/conversation_id/start/end` 过滤——够用？
+无（确认①已采纳：空串等同 None 不扩窗；去重后按 score 降序）。
