@@ -99,7 +99,7 @@
 
 #### 3.2.3 同节上下文扩窗 / 父子切块（需求文档）
 
-- **V0（已拍板，待开发）**：[`PRD_Chunk_V0.md`](PRD_Chunk_V0.md) — `search_chunks` 返回前按同 `heading` 扩窗，不改表。
+- **V0（已落地）**：[`PRD_Chunk_V0.md`](PRD_Chunk_V0.md) — `search_chunks` 返回前按同 `heading` 扩窗，不改表。
 - **V1（规划）**：[`PRD_Chunk_V1.md`](PRD_Chunk_V1.md) — 索引落库 parent/child（`role` / `parent_id`），检索仍只搜 child。
 
 ---

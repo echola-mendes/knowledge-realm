@@ -176,7 +176,7 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearc
 | `server/alembic/` | 迁移；当前 `20260901_0018`（新增 `booking_record`） |
 | `web/src/styles.css` | 全局设计 token 与顶栏/页面自适应容器（不锁 1440×900） |
 | `server/app/routers/tags.py` | 标签创建/列表/删除 |
-| `server/app/rag/search.py` | Hybrid + RRF + Rerank；经 `search_kb_ids` 定库；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤；可选 `created_after`/`created_before`（文档 `created_at`）。规划中 V0 同节扩窗见 [`PRD_Chunk_V0.md`](PRD_Chunk_V0.md)；父子落库 V1 见 [`PRD_Chunk_V1.md`](PRD_Chunk_V1.md) |
+| `server/app/rag/search.py` | Hybrid + RRF + Rerank；经 `search_kb_ids` 定库；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤；可选 `created_after`/`created_before`（文档 `created_at`）。V0：`_expand_same_heading` 在返回前按同 `(document_id, heading)` 扩窗（预算 4000 整块、`original_content`）；见 [`PRD_Chunk_V0.md`](PRD_Chunk_V0.md)。父子落库 V1 见 [`PRD_Chunk_V1.md`](PRD_Chunk_V1.md) |
 | `server/app/rag/rerank.py` | DashScope 兼容 `/reranks`；无 Key 则 LLM 打分；都没有则保持 RRF 顺序 |
 | `server/app/rag/es_bm25.py` | BM25 索引与检索；chunk 与 PG 同步 upsert/删除；测试可替换为内存实现 |
 | `server/app/routers/search.py` | `POST /api/search`（可选 kind / 时间窗） |

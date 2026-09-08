@@ -26,8 +26,8 @@
 
 ### 验收
 
-- [ ] `_expand_same_heading` 单测：整节拼接、同节去重、空 heading、超预算整块停、命中块必含、`original_content`
-- [ ] `SearchHit` 可不传 `original_content` 构造（默认值）
+- [✅] `_expand_same_heading` 单测：整节拼接、同节去重、空 heading、超预算整块停、命中块必含、`original_content`
+- [✅] `SearchHit` 可不传 `original_content` 构造（默认值）
 
 ---
 
@@ -46,9 +46,9 @@
 
 ### 验收
 
-- [ ] `search_chunks` 源码在 rerank+门槛之后调用 `_expand_same_heading`
-- [ ] `search_debug` 路径无扩窗调用（路径/grep 验证）
-- [ ] 现有 `server/tests/test_search.py` 通过
+- [✅] `search_chunks` 源码在 rerank+门槛之后调用 `_expand_same_heading`
+- [✅] `search_debug` 路径无扩窗调用（路径/grep 验证）
+- [✅] 现有 `server/tests/test_search.py` 通过
 
 ---
 
@@ -66,6 +66,6 @@ Chat / Agent / 搜索相关 mock 测试不因新字段崩溃；文档同步。
 
 ### 验收
 
-- [ ] 相关既有单测通过（无因 `original_content` 新增失败）
-- [ ] TECH.md / PRD.md §3.2 已更新
-- [ ] execution-plan 全部 [✅]
+- [✅] 相关既有单测通过（无因 `original_content` 新增失败）
+- [✅] TECH.md / PRD.md §3.2 已更新
+- [✅] execution-plan 全部 [✅]

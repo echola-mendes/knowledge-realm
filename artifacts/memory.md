@@ -7,6 +7,7 @@
 | 通用定时任务（PRD-Job） | 2026-09-04 | APScheduler+Redis+arq+任务页；NEWS_REFRESH handler 仍 stub | 全 ✅ |
 | AI资讯（PRD-NEWS） | 2026-09-04 | news 表/管道/API/前端热榜；NEWS_REFRESH 接真实 refresh；源 yaml | 全 ✅ |
 | AI决策审计（Trace.md V1.1） | 2026-09-06 | decision_run/span 表 + DecisionRecorder(app/audit/) + chat/knowledge 埋点 + 3 查询 API + 决策审计前端页 | 全 ✅ |
+| 检索同节扩窗（PRD_Chunk_V0） | 2026-09-08 | search_chunks 返回前同 heading 扩窗 + original_content；不改表/debug | 全 ✅ |
 
 ## 经验
 
@@ -126,3 +127,12 @@
 问题：Recorder 用独立 session 在主事务提交前写 `decision_run`，引用未提交 conversation 触发 FK 违反（被吞异常后静默丢链）。
 
 解法：`start_run` 用 `session.begin_nested()`（savepoint）在主会话落 run 行，随主事务一起提交；spans 与终态仍走独立会话。
+
+### 同节扩窗挂在 rerank 门槛之后
+
+日期：2026-09-08　来源：检索同节扩窗 V0
+
+问题：同节 child 被切散，只命中一块时上下文不完整。
+
+解法：仅 `search_chunks` 返回前 `_expand_same_heading`；键 `(document_id, heading)`；整块预算 4000；`search_debug` 不扩窗；`original_content` 默认空串保兼容。
+

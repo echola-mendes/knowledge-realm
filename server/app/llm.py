@@ -11,6 +11,11 @@ SYSTEM_PROMPT = (
 )
 
 
+def _escape_template_braces(text: str) -> str:
+    """History/summary/ltm are baked into ChatPromptTemplate; escape literal braces."""
+    return text.replace("{", "{{").replace("}", "}}")
+
+
 def llm_keys_ready() -> bool:
     return bool(get_settings().llm_api_key.strip())
 
@@ -56,17 +61,22 @@ def chat_with_usage(
     )
     system = SYSTEM_PROMPT + "\n\n资料：\n{context}"
     if ltm:
-        lines = "\n".join(f"- [{row.get('kind', '')}] {row.get('content', '')}" for row in ltm if row.get("content"))
+        lines = "\n".join(
+            f"- [{row.get('kind', '')}] {_escape_template_braces(row.get('content', ''))}"
+            for row in ltm
+            if row.get("content")
+        )
         if lines.strip():
             system = f"用户长期记忆：\n{lines}\n\n" + system
     if summary and summary.strip():
-        system = f"更早对话摘要：\n{summary.strip()}\n\n" + system
+        system = f"更早对话摘要：\n{_escape_template_braces(summary.strip())}\n\n" + system
     pairs: list[tuple[str, str]] = [("system", system)]
     for role, content in history or []:
+        safe = _escape_template_braces(content)
         if role == "user":
-            pairs.append(("human", content))
+            pairs.append(("human", safe))
         elif role == "assistant":
-            pairs.append(("ai", content))
+            pairs.append(("ai", safe))
     pairs.append(("human", "{question}"))
     prompt = ChatPromptTemplate.from_messages(pairs)
     chain = prompt | model

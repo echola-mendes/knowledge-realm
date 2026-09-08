@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -25,6 +25,7 @@ from app.schemas import (
 SCORE_THRESHOLD = 0.30
 DEFAULT_K = 5
 RRF_K = 60
+SECTION_EXPAND_MAX_CHARS = 4000
 
 
 @dataclass
@@ -37,6 +38,7 @@ class SearchHit:
     page: int | None
     heading: str | None
     kind: str
+    original_content: str = ""
 
 
 def normalize_query(query: str) -> str:
@@ -211,7 +213,7 @@ def search_chunks(
     by_id.update(_hits_for_ids(session, query_vec, kb_ids, user_id, missing))
     ordered_ids = sorted(fused.keys(), key=lambda cid: fused[cid], reverse=True)
     hits = [by_id[cid] for cid in ordered_ids if cid in by_id][:k]
-    return _keep_relevant(_rerank(query, hits))
+    return _expand_same_heading(session, _keep_relevant(_rerank(query, hits)))
 
 
 def _keep_relevant(hits: list[SearchHit]) -> list[SearchHit]:
@@ -227,6 +229,101 @@ def _rerank(query: str, hits: list[SearchHit]) -> list[SearchHit]:
     ranked = [replace(hit, score=float(scores[i])) for i, hit in enumerate(cands)]
     ranked.sort(key=lambda h: h.score, reverse=True)
     return ranked
+
+
+def _heading_blank(heading: str | None) -> bool:
+    return heading is None or heading == ""
+
+
+def _center_out_chunks(
+    siblings: list[DocumentChunk],
+    center_id: uuid.UUID,
+    max_chars: int = SECTION_EXPAND_MAX_CHARS,
+) -> list[DocumentChunk]:
+    """Pick center + neighbors by chunk_index distance; whole-child budget only."""
+    if not siblings:
+        return []
+    ordered = sorted(siblings, key=lambda c: c.chunk_index)
+    try:
+        center_pos = next(i for i, c in enumerate(ordered) if c.id == center_id)
+    except StopIteration:
+        return []
+    center = ordered[center_pos]
+    selected = {center_pos}
+    total = len(center.content)
+    if total > max_chars:
+        return [center]
+    max_dist = max(center_pos, len(ordered) - 1 - center_pos)
+    for dist in range(1, max_dist + 1):
+        left_added = False
+        right_added = False
+        left_i = center_pos - dist
+        right_i = center_pos + dist
+        if left_i >= 0:
+            left = ordered[left_i]
+            if total + len(left.content) <= max_chars:
+                selected.add(left_i)
+                total += len(left.content)
+                left_added = True
+        if right_i < len(ordered):
+            right = ordered[right_i]
+            if total + len(right.content) <= max_chars:
+                selected.add(right_i)
+                total += len(right.content)
+                right_added = True
+        if not left_added and not right_added:
+            break
+    return [ordered[i] for i in sorted(selected)]
+
+
+def _section_siblings(
+    session: Session,
+    keys: list[tuple[uuid.UUID, str]],
+) -> dict[tuple[uuid.UUID, str], list[DocumentChunk]]:
+    if not keys:
+        return {}
+    conds = [
+        and_(DocumentChunk.document_id == doc_id, DocumentChunk.heading == heading)
+        for doc_id, heading in keys
+    ]
+    rows = list(session.scalars(select(DocumentChunk).where(or_(*conds))).all())
+    out: dict[tuple[uuid.UUID, str], list[DocumentChunk]] = {}
+    for chunk in rows:
+        key = (chunk.document_id, chunk.heading or "")
+        out.setdefault(key, []).append(chunk)
+    for key in out:
+        out[key].sort(key=lambda c: c.chunk_index)
+    return out
+
+
+def _expand_same_heading(session: Session, hits: list[SearchHit]) -> list[SearchHit]:
+    if not hits:
+        return []
+    passthrough: list[SearchHit] = []
+    best: dict[tuple[uuid.UUID, str], SearchHit] = {}
+    for hit in hits:
+        if _heading_blank(hit.heading):
+            passthrough.append(replace(hit, original_content=hit.content))
+            continue
+        key = (hit.document_id, hit.heading or "")
+        prev = best.get(key)
+        if prev is None or hit.score > prev.score:
+            best[key] = hit
+    winners = list(best.values())
+    siblings_by_key = _section_siblings(session, list(best.keys()))
+    expanded: list[SearchHit] = []
+    for hit in winners:
+        key = (hit.document_id, hit.heading or "")
+        siblings = siblings_by_key.get(key, [])
+        chosen = _center_out_chunks(siblings, hit.chunk_id)
+        if not chosen:
+            expanded.append(replace(hit, original_content=hit.content))
+            continue
+        content = "\n\n".join(c.content for c in chosen)
+        expanded.append(replace(hit, content=content, original_content=hit.content))
+    merged = passthrough + expanded
+    merged.sort(key=lambda h: h.score, reverse=True)
+    return merged
 
 
 def _rerank_model_name() -> str:
