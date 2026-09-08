@@ -62,6 +62,14 @@ class DocumentVersionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class DocumentChunkMetaOut(BaseModel):
+    heading: str | None = None
+    page: int | None = None
+    level: int | None = None
+    table: bool = False
+    faq: bool = False
+
+
 class DocumentChunkOut(BaseModel):
     id: uuid.UUID | None = None
     chunk_index: int
@@ -71,6 +79,8 @@ class DocumentChunkOut(BaseModel):
     heading: str | None = None
     vector_status: str
     created_at: datetime | None = None
+    quality_labels: list[str] = Field(default_factory=list)
+    meta: DocumentChunkMetaOut | None = None
 
 
 class TagCreate(BaseModel):

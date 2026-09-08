@@ -32,6 +32,12 @@ const runId = computed(() => {
 
 const MODE_LABELS: Record<string, string> = { chat: "Chat", knowledge: "知识 Agent" };
 const NODE_LABELS: Record<string, string> = { route: "路由", retrieve: "检索", generate: "生成" };
+const ASSEMBLY_LABELS: Record<string, string> = {
+  child_only: "单块",
+  parent: "父块",
+  heading_expand: "同节扩窗",
+  expanded: "扩窗",
+};
 
 function modeLabel(mode: string): string {
   return MODE_LABELS[mode] ?? mode;
@@ -39,6 +45,11 @@ function modeLabel(mode: string): string {
 
 function nodeLabel(nodeType: string): string {
   return NODE_LABELS[nodeType] ?? nodeType;
+}
+
+function assemblyLabel(kind: unknown): string {
+  if (typeof kind !== "string") return "";
+  return ASSEMBLY_LABELS[kind] ?? kind;
 }
 
 function formatTime(iso: string | null | undefined): string {
@@ -61,6 +72,23 @@ function statusLabel(status: string): string {
 
 function truncate(text: string, max = 60): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function excerptOf(item: Record<string, unknown>): string {
+  if (typeof item.original_excerpt === "string" && item.original_excerpt) {
+    return item.original_excerpt;
+  }
+  if (typeof item.excerpt === "string") {
+    return item.excerpt;
+  }
+  return "";
+}
+
+function contextExcerptOf(item: Record<string, unknown>): string {
+  if (typeof item.excerpt === "string") {
+    return item.excerpt;
+  }
+  return "";
 }
 
 async function loadList() {
@@ -89,7 +117,6 @@ async function loadDetail() {
   detail.value = null;
   try {
     detail.value = await getDecision(runId.value);
-    // 默认展开全部阶段，用户可再手动折叠
     expanded.value = new Set(detail.value?.spans.map((span) => span.id));
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -148,7 +175,7 @@ watch(runId, (id) => {
     <div class="page-head">
       <div>
         <h1>决策链详情</h1>
-        <p class="sub">该轮回答的路由、检索证据与生成摘要。</p>
+        <p class="sub">该轮回答的路由、检索证据、上下文组装与生成摘要。</p>
       </div>
       <div class="toolbar-actions">
         <button class="btn" type="button" @click="backToList">返回列表</button>
@@ -191,11 +218,24 @@ watch(runId, (id) => {
             <div v-if="span.evidence_refs && span.evidence_refs.length" class="span-block">
               <h4>证据（{{ span.evidence_refs.length }}）</h4>
               <ul class="evidence">
-                <li v-for="(item, i) in span.evidence_refs" :key="i">
-                  <span class="ev-type">{{ item.type }}</span>
-                  <code>{{ item.id }}</code>
-                  <em v-if="typeof item.score === 'number'">score {{ item.score }}</em>
-                  <span v-if="item.document_name" class="muted">{{ item.document_name }}</span>
+                <li v-for="(item, i) in span.evidence_refs" :key="i" class="evidence-item">
+                  <div class="evidence-head">
+                    <span class="ev-type">{{ item.type }}</span>
+                    <span v-if="item.assembly" class="ev-assembly">{{ assemblyLabel(item.assembly) }}</span>
+                    <code>{{ item.id }}</code>
+                    <em v-if="typeof item.score === 'number'">score {{ item.score }}</em>
+                    <span v-if="item.document_name" class="muted">{{ item.document_name }}</span>
+                  </div>
+                  <p v-if="excerptOf(item)" class="ev-excerpt"><strong>命中块：</strong>{{ excerptOf(item) }}</p>
+                  <p
+                    v-if="contextExcerptOf(item) && contextExcerptOf(item) !== excerptOf(item)"
+                    class="ev-excerpt"
+                  >
+                    <strong>送入 LLM：</strong>{{ contextExcerptOf(item) }}
+                  </p>
+                  <p v-if="typeof item.context_chars === 'number'" class="ev-meta muted">
+                    上下文 {{ item.context_chars }} 字
+                  </p>
                 </li>
               </ul>
             </div>
@@ -505,9 +545,19 @@ watch(runId, (id) => {
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 0.3rem;
+  gap: 0.5rem;
 }
-.evidence li {
+.evidence-item {
+  display: grid;
+  gap: 0.2rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px dashed var(--line);
+}
+.evidence-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.evidence-head {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -520,6 +570,13 @@ watch(runId, (id) => {
   font-size: 0.68rem;
   color: var(--muted);
 }
+.ev-assembly {
+  background: #ecfeff;
+  color: #0e7490;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.68rem;
+}
 .evidence code {
   font-size: 0.7rem;
   color: var(--teal);
@@ -529,6 +586,16 @@ watch(runId, (id) => {
   color: var(--muted);
   font-style: normal;
   font-size: 0.7rem;
+}
+.ev-excerpt {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text);
+  line-height: 1.35;
+}
+.ev-meta {
+  margin: 0;
+  font-size: 0.68rem;
 }
 .muted {
   color: var(--muted);

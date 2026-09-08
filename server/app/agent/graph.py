@@ -8,6 +8,7 @@ from typing import Any, Literal, TypedDict
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
+from app.audit.evidence import context_assembly_summary, search_hit_evidence_ref
 from app.audit.recorder import recorder_from_config
 from app.agent.tools import search_graph, search_knowledge, web_search
 from app.rag.search import SearchHit
@@ -281,18 +282,12 @@ def node_run_tool(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
     if recorder:
         recorder.add_span(
             "retrieve",
-            decision={"tool": tool_name, "query": query},
-            evidence_refs=[
-                {
-                    "type": "chunk",
-                    "id": str(hit.chunk_id),
-                    "document_id": str(hit.document_id),
-                    "document_name": hit.document_name,
-                    "score": hit.score,
-                    "excerpt": hit.content[:80],
-                }
-                for hit in hits
-            ],
+            decision={
+                "tool": tool_name,
+                "query": query,
+                "context_assembly": context_assembly_summary(hits),
+            },
+            evidence_refs=[search_hit_evidence_ref(hit) for hit in hits],
             metrics={
                 "elapsed_ms": int((time.monotonic() - tool_started) * 1000),
                 "hits": len(hits),

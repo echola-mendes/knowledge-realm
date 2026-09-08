@@ -364,9 +364,11 @@ const mdSegments = computed(() => {
               </td>
               <td class="num-cell">{{ charCount(c.content) }}</td>
               <td class="meta-cell">
-                <span v-if="c.meta?.heading" class="meta-heading">
-                  <em v-if="levelTag(c.meta.level)" class="lv-tag">{{ levelTag(c.meta.level) }}</em>
-                  <span class="meta-heading-text" :title="c.meta.heading">{{ c.meta.heading }}</span>
+                <span v-if="c.meta?.heading || c.heading" class="meta-heading">
+                  <em v-if="levelTag(c.meta?.level ?? null)" class="lv-tag">{{ levelTag(c.meta?.level ?? null) }}</em>
+                  <span class="meta-heading-text" :title="c.meta?.heading || c.heading || undefined">{{
+                    c.meta?.heading || c.heading
+                  }}</span>
                 </span>
                 <span v-else class="meta-none">—</span>
                 <span class="meta-sub">
@@ -436,9 +438,11 @@ const mdSegments = computed(() => {
           <span><em class="meta-k">创建时间</em>{{ formatTime(detailChunk.created_at) }}</span>
           <span>
             <em class="meta-k">章节</em>
-            <template v-if="detailChunk.meta?.heading">
-              <em v-if="levelTag(detailChunk.meta.level)" class="lv-tag">{{ levelTag(detailChunk.meta.level) }}</em>
-              {{ detailChunk.meta.heading }}
+            <template v-if="detailChunk.meta?.heading || detailChunk.heading">
+              <em v-if="levelTag(detailChunk.meta?.level ?? null)" class="lv-tag">{{
+                levelTag(detailChunk.meta?.level ?? null)
+              }}</em>
+              {{ detailChunk.meta?.heading || detailChunk.heading }}
             </template>
             <template v-else>—</template>
           </span>

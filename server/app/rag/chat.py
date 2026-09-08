@@ -6,6 +6,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.audit.evidence import context_assembly_summary, search_hit_evidence_ref
 from app.audit.recorder import DecisionRecorder
 from app.ingest.index import STATUS_READY
 from app.kb import owned_document, resolve_knowledge_base_id
@@ -70,18 +71,13 @@ def run_chat(
     if recorder is not None:
         recorder.add_span(
             "retrieve",
-            decision={"tool": "search_knowledge", "query": query, "k": k},
-            evidence_refs=[
-                {
-                    "type": "chunk",
-                    "id": str(hit.chunk_id),
-                    "document_id": str(hit.document_id),
-                    "document_name": hit.document_name,
-                    "score": hit.score,
-                    "excerpt": hit.content[:80],
-                }
-                for hit in hits
-            ],
+            decision={
+                "tool": "search_knowledge",
+                "query": query,
+                "k": k,
+                "context_assembly": context_assembly_summary(hits),
+            },
+            evidence_refs=[search_hit_evidence_ref(hit) for hit in hits],
             metrics={"elapsed_ms": int((time.monotonic() - retrieve_started) * 1000), "hits": len(hits)},
         )
     if conversation_id is None:

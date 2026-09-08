@@ -444,6 +444,7 @@ def reindex_document_chunk_http(
     if updated is None:
         raise HTTPException(status_code=404, detail="切片不存在")
     session.refresh(updated)
+    chunk_size = doc.chunk_size or DEFAULT_CHUNK_SIZE
     return DocumentChunkOut(
         id=updated.id,
         chunk_index=updated.chunk_index,
@@ -453,6 +454,8 @@ def reindex_document_chunk_http(
         heading=updated.heading,
         vector_status="ready",
         created_at=updated.created_at,
+        quality_labels=quality_labels(updated.content, chunk_size=chunk_size),
+        meta=chunk_meta(updated.content, updated.heading, updated.page),
     )
 
 
