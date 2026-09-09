@@ -27,6 +27,7 @@ dump.rdb
 .DS_Store
 test.md
 .cursor/
+.vscode/
 server/_tmp_run_server.py
 .idea/
 .zcode/

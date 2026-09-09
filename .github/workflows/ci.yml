@@ -9,6 +9,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/knowledge
+      REDIS_URL: redis://localhost:6379/0
+      SESSION_SECRET: ci-session-secret-min-32-characters
+      INITIAL_PASSWORD: ci-test-password
+      LLM_API_KEY: dummy
+
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -35,9 +42,9 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -49,23 +56,18 @@ jobs:
       - name: Prepare database
         env:
           PGPASSWORD: postgres
+        working-directory: server
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client
           psql -h localhost -U postgres -d knowledge -c "CREATE EXTENSION IF NOT EXISTS vector;"
-          python server/scripts/alembic_upgrade.py
+          python scripts/alembic_upgrade.py
 
       - name: Run pytest
         working-directory: server
-        env:
-          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/knowledge
-          REDIS_URL: redis://localhost:6379/0
-          SESSION_SECRET: ci-session-secret-min-32-characters
-          INITIAL_PASSWORD: ci-test-password
-          LLM_API_KEY: dummy
         run: pytest -q
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: npm
@@ -79,4 +81,6 @@ jobs:
           npm run build
 
       - name: Verify Docker images build
-        run: docker compose build
+        run: |
+          cp .env.docker.example .env
+          docker compose build

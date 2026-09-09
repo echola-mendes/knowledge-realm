@@ -2,10 +2,12 @@
 """Run Alembic upgrade without server/alembic shadowing the alembic package."""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 _SERVER = Path(__file__).resolve().parents[1]
+os.chdir(_SERVER)
 sys.path = [p for p in sys.path if Path(p).resolve() != _SERVER]
 
 from alembic import command  # noqa: E402
