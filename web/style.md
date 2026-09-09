@@ -508,6 +508,7 @@ Pipeline：横向 `flex` + 节点 `flex: 1`，`min-width: 7.2rem`，箭头 `→`
 | `.file-cell` | 文件名链接 | `white-space: nowrap`；链接用全局 `a` 色 |
 | `.overview` | 概述 | `max-width: 12rem`；正文超 **15 字** 显示「前 15 字…」 |
 | `.overview .tip` | 概述悬浮全文 | hover 显示白底浮层：`border + shadow`，`font-size: 0.68rem`，`max-width: 22rem` |
+| `.source-snippet-wrap` / `.source-tip` | 对话资料来源摘要悬浮全文 | 同概述 tip 模式：白底 `border + shadow`；`max-height: 14rem` 可滚动；`white-space: pre-wrap` |
 | `.tags-cell` | 标签 | 每标签一个全局 `.pill`；**最多 3 个**，超出加 `…` pill；hover `title` 显示全部 |
 | `.tags-cell .pill` | 表内标签 pill | `padding: 0.08rem 0.45rem; font-size: 0.62rem; margin: 0 0.1rem; cursor: default` |
 | `.status-cell` | 状态 | 表头 `th`、数据 `td` 均用此类；内嵌 `.pill.status-pill` |

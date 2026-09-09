@@ -33,6 +33,7 @@
 - 侧边栏菜单配置：`web/src/navConfig.ts` 以树形结构（`NavNode`，最多 3 级）定义菜单元数据，持久化在 localStorage（key `zhiyu-nav-tree-v2`，旧扁平配置 `zhiyu-nav-config` 自动迁移）；`App.vue` 用递归组件 `web/src/components/SideNavItem.vue` 渲染侧边栏（有子菜单的节点为折叠按钮，路由命中时自动展开；`tools`/`basics`/`monitoring` 为页内二级分区，侧栏只作入口不展开子项，见 `PAGE_SECTION_IDS`；自定义菜单落地 `/m/:menuId` 占位页）；`web/src/views/MenuManageView.vue`（基础页"菜单管理"）支持树形增删改：新增子菜单、点击改名、删除（含确认，删除父级连带子级）、每项开关控制是否显示、同级拖拽排序与上移/下移；内置菜单被显式删除后不自动复活，可用"恢复默认"找回。**页内二级菜单同样收进导航树**：内置结构定义在 `SECTION_TREE_DEFAULTS`（`basics`→菜单管理/定时任务、`monitoring`→决策审计/操作审计、`tools`→旅程/AI资讯/AI生图/更多工具及其子项），`normalize` 时对缺失的内置子节点自动补齐（`refillSectionChildren`，用户自定义子节点保留）；内置二级项在菜单管理页**不可删除**（`BUILTIN_SECTION_DESCENDANT_IDS`），但可改名 / 开关 / 排序。布局页按导航树渲染二级菜单：`BasicsLayout.vue` / `MonitoringLayout.vue` 渲染平铺项，`ToolsLayout.vue` 渲染折叠分组（子项命中取最长前缀匹配高亮），改名、禁用、排序实时同步到对应页面（样式见 `web/style.md` §13），`MyTripsView` 用行程类型、无状态（`web/style.md` §14；`plan_record.trip_type` / `nights`），需求见 `docs/PRD-DECISIONS.md`、`docs/PRD-OPERATIONS.md`  
 - Markdown 展示：`markdown-it`  
 - HTTP：`fetch`；SSE 用 `fetch` 读 stream  
+- 对话页资料来源：`ChatView` 右侧面板；有引用时自动展开；点击引用 chip / 来源卡片选中并展开切片；文档名 → 阅读页；摘要 hover 浮层全文；「相关切片」→ `DocumentChunksView` 用 `?chunk=` 按 `chunk_id` 过滤；窄屏（≤960px）改为抽屉叠加而非隐藏  
 - 开发：Vite 代理 `/api` → FastAPI  
 - 不做：Pinia 大模块、组件库套装、SSR  
 

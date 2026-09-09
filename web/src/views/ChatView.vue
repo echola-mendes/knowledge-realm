@@ -122,6 +122,7 @@ watch(listAction, (action) => {
 const box = ref<HTMLElement | null>(null);
 const activeDoc = ref<string>("");
 const showAllSources = ref(false);
+const sourcesOpen = ref(false);
 
 type DocCite = {
   document_id: string;
@@ -313,12 +314,6 @@ const donutStyle = computed(() => {
 
 const sourceList = computed(() => (showAllSources.value ? panelDocs.value : panelDocs.value.slice(0, 3)));
 
-const shownDoc = computed(() => {
-  const rows = panelDocs.value;
-  if (!rows.length) return null;
-  return rows.find((c) => c.document_id === activeDoc.value) || rows[0];
-});
-
 async function refreshConversations() {
   conversations.value = await listConversations();
 }
@@ -360,7 +355,12 @@ function citePreview(content: string, limit = 72) {
   return `${text.slice(0, limit)}…`;
 }
 
-function chunksPath(documentId: string) {
+function docPath(documentId: string) {
+  return `/documents/${documentId}`;
+}
+
+function chunksPath(documentId: string, chunkId?: string) {
+  if (chunkId) return `/documents/${documentId}/chunks?chunk=${encodeURIComponent(chunkId)}`;
   return `/documents/${documentId}/chunks`;
 }
 
@@ -653,10 +653,17 @@ onBeforeUnmount(() => {
   document.removeEventListener("click", closeConvMenu);
 });
 
-watch(panelDocs, (rows) => {
-  activeDoc.value = rows[0]?.document_id || "";
-  showAllSources.value = false;
-});
+watch(
+  () => panelDocs.value.map((d) => d.document_id).join("\0"),
+  () => {
+    const rows = panelDocs.value;
+    activeDoc.value = rows[0]?.document_id || "";
+    showAllSources.value = false;
+    // 有引用时自动展开资料来源；清空时收起
+    sourcesOpen.value = rows.length > 0;
+  },
+  { immediate: true },
+);
 
 watch(
   () => route.query.mode,
@@ -684,7 +691,12 @@ async function setMode(next: ChatMode) {
 }
 
 function pickDoc(id: string) {
+  sourcesOpen.value = true;
   activeDoc.value = id;
+  nextTick(() => {
+    const el = document.querySelector(`[data-doc-id="${CSS.escape(id)}"]`);
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
 }
 </script>
 
@@ -924,7 +936,7 @@ function pickDoc(id: string) {
                     :key="d.document_id"
                     type="button"
                     class="cite-chip"
-                    :class="{ on: d.document_id === shownDoc?.document_id }"
+                    :class="{ on: d.document_id === activeDoc }"
                     @click="pickDoc(d.document_id)"
                   >
                     <span class="cite-name">{{ d.document_name }}</span>
@@ -1008,9 +1020,32 @@ function pickDoc(id: string) {
         </div>
       </div>
 
-      <aside v-if="panelDocs.length" class="source-side">
+      <button
+        v-if="panelDocs.length && !sourcesOpen"
+        class="sources-reopen"
+        type="button"
+        title="展开资料来源"
+        @click="sourcesOpen = true"
+      >
+        资料来源 · {{ panelDocs.length }}
+      </button>
+      <div
+        v-if="panelDocs.length && sourcesOpen"
+        class="source-backdrop"
+        aria-hidden="true"
+        @click="sourcesOpen = false"
+      ></div>
+      <aside v-if="panelDocs.length && sourcesOpen" class="source-side">
         <header class="source-head">
           <h2>资料来源</h2>
+          <button
+            class="list-tool-btn"
+            type="button"
+            title="收起资料来源"
+            @click="sourcesOpen = false"
+          >
+            <Icon name="panel-close" />
+          </button>
         </header>
         <section class="source-overview">
           <h3>来源概览</h3>
@@ -1036,20 +1071,30 @@ function pickDoc(id: string) {
             :key="d.document_id"
             class="source-card"
             :class="{ on: d.document_id === activeDoc }"
+            :data-doc-id="d.document_id"
             @click="pickDoc(d.document_id)"
           >
             <div class="source-card-top">
-              <RouterLink class="source-doc" :to="chunksPath(d.document_id)" @click.stop>
+              <RouterLink class="source-doc" :to="docPath(d.document_id)" @click.stop>
                 {{ d.document_name }}
               </RouterLink>
               <span class="source-meta">{{ d.chunks.length }} 段</span>
             </div>
-            <div v-for="(c, i) in d.chunks" :key="c.chunk_id" class="source-chunk">
-              <p class="source-snippet">{{ citePreview(c.content, 120) }}</p>
-              <RouterLink class="source-chunk-link" :to="chunksPath(d.document_id)" @click.stop>
-                相关切片 {{ i + 1 }}
-              </RouterLink>
-            </div>
+            <template v-if="d.document_id === activeDoc">
+              <div v-for="(c, i) in d.chunks" :key="c.chunk_id" class="source-chunk">
+                <div class="source-snippet-wrap">
+                  <p class="source-snippet">{{ citePreview(c.content, 120) }}</p>
+                  <div v-if="c.content.trim()" class="source-tip">{{ c.content }}</div>
+                </div>
+                <RouterLink
+                  class="source-chunk-link"
+                  :to="chunksPath(d.document_id, c.chunk_id)"
+                  @click.stop
+                >
+                  相关切片 {{ i + 1 }}
+                </RouterLink>
+              </div>
+            </template>
           </article>
           <button
             v-if="panelDocs.length > 3 && !showAllSources"
@@ -1117,6 +1162,7 @@ function pickDoc(id: string) {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+  position: relative;
 }
 .chat-list {
   width: 15.5rem;
@@ -1759,10 +1805,41 @@ pre {
   min-height: 0;
   overflow: auto;
   padding: 0.75rem 0.85rem 1rem;
+  background: #fff;
+  z-index: 5;
+}
+.source-backdrop {
+  display: none;
+}
+.sources-reopen {
+  position: absolute;
+  right: 0.75rem;
+  top: 0.75rem;
+  z-index: 3;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.68rem;
+  color: var(--teal);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.sources-reopen:hover {
+  background: #eff6ff;
+}
+.source-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
 }
 .source-head h2 {
   margin: 0 0 0.65rem;
   font-size: 0.88rem;
+}
+.source-head .list-tool-btn {
+  margin: 0 0 0.65rem;
 }
 .source-overview h3,
 .source-all h3 {
@@ -1857,8 +1934,12 @@ pre {
   padding-top: 0;
   border-top: none;
 }
-.source-snippet {
+.source-snippet-wrap {
+  position: relative;
   margin: 0 0 0.2rem;
+}
+.source-snippet {
+  margin: 0;
   font-size: 0.68rem;
   line-height: 1.45;
   color: var(--muted);
@@ -1866,6 +1947,28 @@ pre {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.source-tip {
+  display: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% - 0.1rem);
+  z-index: 8;
+  max-height: 14rem;
+  overflow: auto;
+  padding: 0.45rem 0.55rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  color: var(--text);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+.source-snippet-wrap:hover .source-tip {
+  display: block;
 }
 .source-chunk-link {
   font-size: 0.62rem;
@@ -2039,8 +2142,21 @@ pre {
   cursor: not-allowed;
 }
 @media (max-width: 960px) {
+  .source-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    background: rgba(15, 23, 42, 0.28);
+  }
   .source-side {
-    display: none;
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: min(19rem, 85vw);
+    min-width: 0;
+    box-shadow: -8px 0 24px rgba(15, 23, 42, 0.12);
   }
   .chat-list {
     width: 13rem;

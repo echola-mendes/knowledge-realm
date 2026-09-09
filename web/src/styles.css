@@ -84,7 +84,8 @@ textarea {
   overflow: auto;
 }
 
-.app-main:has(.tools-page) > :first-child {
+.app-main:has(.tools-page) > :first-child,
+.app-main:has(.chat-page) > :first-child {
   overflow: hidden;
 }
 

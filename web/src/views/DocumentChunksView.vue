@@ -23,10 +23,20 @@ const pageSize = 20;
 const page = ref(1);
 let timer: number | undefined;
 
-const pageCount = computed(() => Math.max(1, Math.ceil(chunks.value.length / pageSize)));
+const filterChunkId = computed(() => {
+  const q = route.query.chunk;
+  return typeof q === "string" && q.trim() ? q.trim() : "";
+});
+
+const visibleChunks = computed(() => {
+  if (!filterChunkId.value) return chunks.value;
+  return chunks.value.filter((c) => c.id === filterChunkId.value);
+});
+
+const pageCount = computed(() => Math.max(1, Math.ceil(visibleChunks.value.length / pageSize)));
 const pagedChunks = computed(() => {
   const start = (page.value - 1) * pageSize;
-  return chunks.value.slice(start, start + pageSize);
+  return visibleChunks.value.slice(start, start + pageSize);
 });
 
 const needsPoll = computed(
@@ -263,6 +273,10 @@ async function onDelete() {
   await router.push("/documents");
 }
 
+function clearChunkFilter() {
+  router.replace({ path: `/documents/${docId.value}/chunks` });
+}
+
 onMounted(() => {
   refresh().catch((e: Error) => {
     error.value = e.message;
@@ -289,6 +303,10 @@ watch(docId, () => {
   refresh().catch((e: Error) => {
     error.value = e.message;
   });
+});
+
+watch(filterChunkId, () => {
+  page.value = 1;
 });
 
 watch(pageCount, (n) => {
@@ -323,7 +341,11 @@ const mdSegments = computed(() => {
           <span class="crumb-sep" aria-hidden="true">›</span>
           <span>切片</span>
         </h1>
-        <p v-if="doc" class="sub">共 {{ chunks.length }} 条切片</p>
+        <p v-if="doc && filterChunkId" class="sub">
+          按引用切片过滤 · 匹配 {{ visibleChunks.length }} / {{ chunks.length }} 条
+          <button class="btn-link filter-clear" type="button" @click="clearChunkFilter">清除过滤</button>
+        </p>
+        <p v-else-if="doc" class="sub">共 {{ chunks.length }} 条切片</p>
         <p v-else class="sub">加载文档信息…</p>
       </div>
     </div>
@@ -411,10 +433,13 @@ const mdSegments = computed(() => {
             <tr v-if="!chunks.length">
               <td colspan="10" class="empty">暂无切片。文档解析或向量化完成后会在此展示。</td>
             </tr>
+            <tr v-else-if="filterChunkId && !visibleChunks.length">
+              <td colspan="10" class="empty">未找到该引用切片（可能已重建索引）。<button class="btn-link" type="button" @click="clearChunkFilter">查看全部切片</button></td>
+            </tr>
           </tbody>
         </table>
       </div>
-      <div v-if="chunks.length" class="pager">
+      <div v-if="visibleChunks.length" class="pager">
         <button class="btn" type="button" :disabled="page <= 1" @click="page -= 1">上一页</button>
         <span>{{ page }} / {{ pageCount }}</span>
         <button class="btn" type="button" :disabled="page >= pageCount" @click="page += 1">下一页</button>
@@ -1005,5 +1030,11 @@ tbody tr:nth-child(even) {
   background: #fef08a;
   border-radius: 3px;
   padding: 0.05rem 0;
+}
+
+.filter-clear {
+  margin-left: 0.45rem;
+  font-size: inherit;
+  vertical-align: baseline;
 }
 </style>
