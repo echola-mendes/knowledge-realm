@@ -12,12 +12,24 @@ from sqlalchemy.engine.url import make_url
 from app.config import get_settings
 from app.main import reset_app_state
 
-TEST_DB_NAME = "echola_kb_test"
+TEST_DB_NAME = "knowledge_test"
 _SERVER_DIR = Path(__file__).resolve().parents[1]
 
 
 def _render(url) -> str:
     return url.render_as_string(hide_password=False)
+
+
+def _alembic_upgrade() -> None:
+    candidates = [
+        Path(sys.executable).parent / "alembic",
+        _SERVER_DIR / ".venv" / "bin" / "alembic",
+    ]
+    for cli in candidates:
+        if cli.is_file():
+            subprocess.run([str(cli), "upgrade", "head"], cwd=str(_SERVER_DIR), check=True)
+            return
+    raise RuntimeError("alembic CLI not found; run: pip install -r requirements.txt")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -46,12 +58,7 @@ def isolate_from_user_database(tmp_path_factory):
     os.environ["INITIAL_USERNAME"] = "echola"
     os.environ["INITIAL_PASSWORD"] = "pytest-isolated-password"
     reset_app_state()
-    alembic_cli = _SERVER_DIR / ".venv" / "bin" / "alembic"
-    subprocess.run(
-        [sys.executable, str(alembic_cli), "upgrade", "head"],
-        cwd=str(_SERVER_DIR),
-        check=True,
-    )
+    _alembic_upgrade()
     loaded = make_url(get_settings(load_file=True).database_url).database
     if loaded != TEST_DB_NAME:
         raise RuntimeError(f"pytest refused to use user database {loaded!r}")

@@ -34,5 +34,5 @@ cd server && .venv/bin/pytest tests/ -q
 ### 结论
 
 - **保留**：是当前功能的回归护栏，不应删除
-- `conftest.py` 用独立库 `echola_kb_test`，mock embedding/ES/rerank，不污染正式数据
+- `conftest.py` 用独立库 `knowledge_test`，mock embedding/ES/rerank，不污染正式数据
 - P4 Master 改造时需同步更新：`test_p1_agent.py`、`test_p1_graph.py`、`test_search_graph.py`

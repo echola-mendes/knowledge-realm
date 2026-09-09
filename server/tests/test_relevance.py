@@ -20,7 +20,7 @@ def _client() -> TestClient:
 
 def test_relevance_default_is_half():
     s = load_settings(
-        environ={"DATABASE_URL": "postgresql+psycopg://postgres@127.0.0.1:5432/echola_kb"},
+        environ={"DATABASE_URL": "postgresql+psycopg://postgres@127.0.0.1:5432/knowledge"},
         load_file=False,
     )
     assert s.relevance_min_score == 0.5

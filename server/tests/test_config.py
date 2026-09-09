@@ -12,13 +12,13 @@ def test_missing_database_url_raises():
 
 
 def test_invalid_embedding_dim_raises():
-    env = {"DATABASE_URL": "postgresql+psycopg://postgres@127.0.0.1:5432/echola_kb", "EMBEDDING_DIM": "0"}
+    env = {"DATABASE_URL": "postgresql+psycopg://postgres@127.0.0.1:5432/knowledge", "EMBEDDING_DIM": "0"}
     with pytest.raises(ConfigError, match="EMBEDDING_DIM"):
         load_settings(environ=env, load_file=False)
 
 
 def test_settings_without_llm_key():
-    env = {"DATABASE_URL": "postgresql+psycopg://postgres@127.0.0.1:5432/echola_kb"}
+    env = {"DATABASE_URL": "postgresql+psycopg://postgres@127.0.0.1:5432/knowledge"}
     s = load_settings(environ=env, load_file=False)
     assert s.ai_configured is False
     assert s.host == "127.0.0.1"
@@ -27,7 +27,7 @@ def test_settings_without_llm_key():
 
 
 def test_health_without_llm_key(monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://postgres@127.0.0.1:5432/echola_kb")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://postgres@127.0.0.1:5432/knowledge")
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("EMBEDDING_API_KEY", raising=False)
     reset_settings()

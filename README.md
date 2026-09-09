@@ -1,9 +1,31 @@
 # 知域
 
-个人本机知识库 Web：沉淀资料、语义检索、RAG 问答，并支持 Agent 研究、出行规划与 AI 资讯。
+个人知识库 Web：沉淀资料、语义检索、RAG 问答，并支持 Agent 研究、出行规划与 AI 资讯。
 
 代码仓库名：`knowledge_realm`  
-绑定本机 `127.0.0.1`；身份只来自 Session，数据按用户隔离。
+身份只来自 Session，数据按用户隔离。
+
+## 快速部署（Docker，推荐）
+
+**前提**：已安装 [Docker](https://docs.docker.com/get-docker/) 与 Docker Compose。
+
+```bash
+git clone git@github.com:echola-mendes/knowledge_realm.git
+cd knowledge_realm
+cp .env.docker.example .env
+# 编辑 .env：填写 LLM_API_KEY、SESSION_SECRET（≥32 字符）、INITIAL_PASSWORD
+./scripts/deploy.sh
+```
+
+浏览器打开 `http://localhost:8080`（端口可在 `.env` 的 `HTTP_PORT` 修改）。
+
+```bash
+docker compose logs -f api worker   # 日志
+docker compose down                 # 停止
+docker compose up -d --build        # 更新后重建
+```
+
+Compose 拉起 Postgres（pgvector）+ Redis + API + Worker + Nginx；数据库迁移在 API 启动时自动执行。
 
 ## 功能概览
 
@@ -23,22 +45,23 @@
 ## 技术栈
 
 - 后端：FastAPI、SQLAlchemy、Alembic；P0 Chat 用 LangChain 单链；Agent 用 LangGraph
-- 数据库：PostgreSQL + pgvector（库名 `echola_kb`），一张 `document_chunk` 表
+- 数据库：PostgreSQL + pgvector（库名 `knowledge`），一张 `document_chunk` 表
 - 解析：PyMuPDF、python-docx、trafilatura（公开 URL）；无 OCR
 - LLM / Embedding：阿里云 DashScope 兼容接口（`openai` / `langchain-openai` 仅作客户端）
 - 任务：短任务 BackgroundTasks；定时任务 APScheduler + Redis + arq Worker
-- 可选：本机 Elasticsearch（BM25）；MinIO（行程方案页）
+- 可选：Elasticsearch（BM25）；MinIO（行程方案页）
 - 前端：Vue 3 + TypeScript + Vite（`web/`）
+- 部署：Docker Compose（推荐）或本机 venv + npm
 
-## 运行
+## 本机开发（不用 Docker）
 
 ### 1. 数据库
 
 本机 PostgreSQL 建库并启用扩展：
 
 ```sql
-CREATE DATABASE echola_kb;
-\c echola_kb
+CREATE DATABASE knowledge;
+\c knowledge
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
@@ -48,7 +71,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 cp .env.example .env
 ```
 
-必填：`DATABASE_URL`（`postgresql+psycopg://用户名:密码@127.0.0.1:5432/echola_kb`）、DashScope API Key（[百炼控制台](https://bailian.console.aliyun.com/)）、`SESSION_SECRET`、`INITIAL_PASSWORD`。
+必填：`DATABASE_URL`（`postgresql+psycopg://用户名:密码@127.0.0.1:5432/knowledge`）、DashScope API Key（[百炼控制台](https://bailian.console.aliyun.com/)）、`SESSION_SECRET`、`INITIAL_PASSWORD`。
 
 定时任务还需本机 Redis（默认 `REDIS_URL=redis://127.0.0.1:6379/0`）。混合检索可选配 `ELASTICSEARCH_URL`；行程方案上传可选配 MinIO。
 

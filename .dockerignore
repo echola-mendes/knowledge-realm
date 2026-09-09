@@ -1,0 +1,28 @@
+# Git
+.git
+.gitignore
+
+# Python
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+
+# Frontend dev
+web/node_modules
+web/dist
+
+# Local data & secrets
+.env
+data/files/**
+data/parsed/**
+
+# IDE
+.idea
+.cursor
+.vscode
+.zcode
+
+# Logs & temp
+**/*.log
+dump.rdb

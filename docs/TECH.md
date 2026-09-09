@@ -21,7 +21,7 @@
 | 任务 | 短任务 FastAPI BackgroundTasks；定时任务 APScheduler + Redis + arq | 解析入库仍进程内；调度与执行分离 | Celery、Kafka |
 | LLM / Embedding | Python 包 `openai`（仅作 HTTP 客户端）打 **DashScope 兼容模式** | 你不需要 OpenAI 账号；用阿里云 DashScope Key。协议碰巧和 OpenAI 一样 | 直连各家五花八门 SDK；Ollama |
 | 认证 | FastAPI Session Cookie + Argon2 | 最小多用户隔离；身份只来自 Session | JWT / OAuth / RBAC |
-| 部署 | 本机 `server/.venv` + npm；无 Docker | 设计明确 | conda 新建环境；K8s |
+| 部署 | Docker Compose 一键部署（推荐）；或本机 `server/.venv` + npm | 可 clone 即跑 | conda 新建环境；K8s |
 | 测试 | pytest + httpx | 测 API 与隔离检索 | 强制 E2E |
 
 ---
@@ -69,7 +69,7 @@
 
 ## 存储
 
-- 本机 PostgreSQL（已含 pgvector），库名 `echola_kb`  
+- 本机 PostgreSQL（已含 pgvector），库名 `knowledge`  
 - `CREATE EXTENSION vector`；HNSW + `vector_cosine_ops`  
 - 磁盘：`data/files/`、`data/parsed/`（无 `images`）  
 
@@ -77,9 +77,10 @@
 
 ## 认证与部署
 
-- HttpOnly Session；表 `users`；监听 `127.0.0.1`  
-- 不使用 Docker  
-- 定时任务需本机 Redis，并另开 Worker：`cd server && python -m app.worker.worker`  
+- HttpOnly Session；表 `users`  
+- **Docker Compose（推荐）**：根目录 `docker-compose.yml` + `./scripts/deploy.sh`；Nginx 反代 `/api`，Postgres/Redis/API/Worker 同编排；见 README「快速部署」  
+- **本机开发**：监听 `127.0.0.1`；`server/.venv` + `npm run dev`；Worker 另开 `python -m app.worker.worker`  
+- **CI**：`.github/workflows/ci.yml`（pytest + 前端 build + `docker compose build`）  
 
 ---
 
@@ -94,7 +95,7 @@
 
 | 变量 | 用途 |
 |---|---|
-| `DATABASE_URL` | 例 `postgresql+psycopg://用户@127.0.0.1:5432/echola_kb` |
+| `DATABASE_URL` | 例 `postgresql+psycopg://用户@127.0.0.1:5432/knowledge` |
 | `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | **DashScope** Key 与兼容 Base URL，不是 OpenAI |
 | `EMBEDDING_API_KEY` / `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL` / `EMBEDDING_DIM` | 向量；Key/URL 可与 LLM 相同 |
 | `DATA_DIR` | 默认仓库 `data/` |
@@ -133,7 +134,7 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearc
 
 ### P4 Master 入口（2026-08-31 起）
 
-- 对话模式分流：`task=knowledge` 直连旧版单知识库 Agent（`graph.py`，不经 Master）；`task=agent|report` 仍走 `/api/agent(/stream)`：**薄意图 → Master → 子能力**；`/api/chat` 不改，禁止并行第二条 travel API。
+- 对话模式分流：`task=knowledge` 直连 `knowledge_flow`（analyze→…→generate，不经 Master）；`task=agent|report` 仍走 `/api/agent(/stream)`：**薄意图 → Master → 子能力**；Master 内 knowledge 意图仍挂旧 `graph.py`；`/api/chat` 不改，禁止并行第二条 travel API。
 - **意图 ≠ Master**：`intent.py` 只输出标签（一次结构化 LLM 分类，失败回退启发式）；`master.py` 只按标签调度并整合，不做第二套意图识别。
 - Master 图：`intent → (knowledge | chat | plan | booking) → finalize`。knowledge = 现有 `graph.py` 作为子图挂载（内部 checkpoint `thread_id=conversation_id` 不变）；plan = `plan_agent.py` ReAct 子图；booking = `booking_agent.py` HITL 子图。Master 自身 checkpoint 用 `master-{conversation_id}` 前缀，二者互不覆盖。
 - `AgentOut` / stream 终态新增 `intent` 字段；stream 首个 SSE 事件为 `{type:'intent', intent}`。
@@ -218,8 +219,8 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearc
 | `server/app/models.py` / Alembic `20260902_0019` | `plan_record`：本人行程方案元数据（title/origin/destination/depart_date/minio_key/url/payload） |
 | `server/app/routers/plans.py` | `GET /api/plans`、`GET /api/plans/{id}`：Session 用户隔离 |
 | `server/app/agent/plan_agent.py` | `save` 后 `persist_plan_record`（无 MinIO 也落库）；Master `node_plan` 传入 session/user_id |
-| `server/app/routers/master.py` | P1.2 `POST /api/compare`；`POST /api/agent` 与 `/api/agent/stream`：`task=knowledge` 直连 `build_graph()`；`task=agent|report` 调 `build_master_graph()`（薄意图 → Master → 子能力；stream 首事件 `{type:'intent'}`；booking HITL）；旁路 `POST /api/agent/trace` 仍走 `graph.py` |
-| `web/src/views/ChatView.vue` | 默认 `/api/chat/stream`；「知识 Agent」→ `task=knowledge` 直连 `graph.py`；「Multi Agent / Report」→ `task=agent|report` 经 Master；共享 `conversation_id`；离开页 abort SSE，且仅在 `/chat` 上 sync query，避免思考中把侧栏导航拽回 |
+| `server/app/routers/master.py` | P1.2 `POST /api/compare`；`POST /api/agent` 与 `/api/agent/stream`：`task=knowledge` 直连 `build_knowledge_flow_graph()`；`task=agent|report` 调 `build_master_graph()`（薄意图 → Master → 子能力；stream 首事件 `{type:'intent'}`；booking HITL）；旁路 `POST /api/agent/trace` 仍走 `graph.py` |
+| `web/src/views/ChatView.vue` | 默认 `/api/chat/stream`；「知识 Agent」→ `task=knowledge` 直连 `knowledge_flow`；「Multi Agent / Report」→ `task=agent|report` 经 Master；共享 `conversation_id`；离开页 abort SSE，且仅在 `/chat` 上 sync query，避免思考中把侧栏导航拽回 |
 | `web/src/views/ReaderView.vue` | 阅读页：摘要/自动标签；P1.4「抽取图谱」+ 实体/关系列表 + 相近文档；P3-EXT 抽取后「查看图谱」入口 |
 
 | `server/app/agent/tools.py` | 新增 `search_graph()` 与 `search_graph_details()`：实体名子串匹配 → 沿 `entity_link` 扩展 1–2 跳 → 返回关联文档切片；`search_graph_details` 额外返回命中实体、关系、路径、相关文档；两者不建第二套向量集合 |
@@ -238,9 +239,11 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearc
 | `server/app/routers/decisions.py` | `/api/decisions`（mode/status/conversation_id/时间过滤 + limit/offset）、`/api/decisions/{run_id}`（run+有序 spans）、`/api/messages/{id}/decision`（按 assistant 消息反查）；Session 鉴权仅本人数据 |
 | `server/app/models.py` + Alembic `20260906_0024` | `decision_run`（mode=chat/knowledge，status=running/success/failed，绑 message_id ON DELETE SET NULL）/ `decision_span`（seq 线性，node_type=route/retrieve/generate，decision/rationale/evidence_refs/metrics） |
 | `server/app/rag/chat.py` | `run_chat` 可选 `recorder`：检索后 retrieve span、生成后 generate span，落库后 finish_run(success, message_id)；`_http_chat` 失败路径 finish_run(failed) |
-| `server/app/agent/graph.py` | knowledge 路径埋点：reason/run_tool/generate 节点经 config 埋 route/retrieve/generate span（LangGraph 注入要求注解严格为 `RunnableConfig`，可带默认值）；`reason_decide` 模型 JSON 支持可选 `why` 理由字段，缺省写「未给出理由」 |
-| `server/app/routers/master.py` | `_invoke_knowledge_graph` 创建 recorder 注入 configurable，经 out 内部 key 传 `_agent_persist` 的 assistant message id，persist 后 finish_run |
-| `web/src/views/DecisionAuditView.vue` | 监控 → 决策审计：列表（模式/状态/会话 ID/时间过滤）+ 详情线性节点卡（决策/理由/证据/指标展开） |
+| `server/app/agent/graph.py` | 旧 reason→run_tool 图（Master knowledge 意图 / trace）；埋点 route/retrieve/generate；`reason_decide` 可选 `why` |
+| `server/app/agent/knowledge_flow.py` | `task=knowledge` 主图：analyze→(simple\|complex)→decompose?/retrieve_qi→sufficiency→rewrite→merge→gap→generate；检索经 `search_knowledge` Tool |
+| `server/app/agent/analyze.py` / `decompose.py` / `rewrite.py` / `sufficiency.py` / `evidence_merge.py` | Query Analysis、分解、改写、Sufficiency V0、Evidence Merge（`MAX_EVIDENCE=10`） |
+| `server/app/routers/master.py` | `_invoke_knowledge_graph` → `build_knowledge_flow_graph()`；recorder 注入 configurable，persist 后 finish_run |
+| `web/src/views/DecisionAuditView.vue` | 决策审计详情：展示 `decision.step`；有 input/output 时分区展示；旧 chat 决策仍整段 pretty |
 | `web/src/router.ts` | `/monitoring/decisions` 列表、`/monitoring/decisions/:id` 详情 |
 | `web/src/views/MyTripsView.vue` | 工具 → 我的行程单：接 `GET /api/plans` 列表；空态引导 Multi Agent |
 | `server/app/message_ui.py` | 助手消息 UI 载荷：`plan_html`/`travel_data` 随 `message.citations` envelope 落库；`GET .../messages` 解包回放，旧消息可从 `plan_record` 补 url |
@@ -250,5 +253,5 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearc
 | `data/files/`、`data/parsed/` | 原件与解析稿；内容被 gitignore |
 | `.env.example` | 环境变量模板（DashScope，无真实密钥） |
 | `.gitignore` | 忽略 `.env`、venv、node_modules、用户 data |
-| 本机 PostgreSQL `echola_kb` | 已创建；`vector` 0.8.0。连接用户 `postgres`，密码仅本机，不入库 |
+| 本机 PostgreSQL `knowledge` | 已创建；`vector` 0.8.0。连接用户 `postgres`，密码仅本机，不入库 |
 
