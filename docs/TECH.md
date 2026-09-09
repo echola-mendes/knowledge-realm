@@ -80,7 +80,7 @@
 - HttpOnly Session；表 `users`  
 - **Docker Compose（推荐）**：根目录 `docker-compose.yml` + `./scripts/deploy.sh`；Nginx 反代 `/api`，Postgres/Redis/API/Worker 同编排；见 README「快速部署」  
 - **本机开发**：监听 `127.0.0.1`；`server/.venv` + `npm run dev`；Worker 另开 `python -m app.worker.worker`  
-- **CI**：`.github/workflows/ci.yml`（pytest + 前端 build + `docker compose build`；job 级注入 `DATABASE_URL` 供 Alembic；Actions 用 Node 24 runtime 的 checkout / setup-python / setup-node v6）  
+- **CI**：`.github/workflows/ci.yml`（pytest + 前端 build + `docker compose build`；job 级 `DATABASE_URL`；用 psycopg 等库就绪后 Alembic，不装 postgresql-client；Actions 用 Node 24 的 checkout/setup-python/setup-node v6）  
 
 ---
 

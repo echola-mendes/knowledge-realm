@@ -34,14 +34,20 @@ def upgrade() -> None:
         WHERE dc.id = ordered.id
         """
     )
+    # Empty DB: MAX is NULL; setval(0) is invalid (seq min=1).
+    # setval(n+1, false) makes the next nextval() return n+1 (or 1 when empty).
     op.execute(
         """
         SELECT setval(
             'chunk_label_seq',
-            COALESCE(
-                (SELECT MAX(CAST(SUBSTRING(chunk_label FROM 7) AS INTEGER)) FROM document_chunk),
-                0
-            )
+            (
+                SELECT COALESCE(
+                    MAX(CAST(SUBSTRING(chunk_label FROM 7) AS INTEGER)),
+                    0
+                )
+                FROM document_chunk
+            ) + 1,
+            false
         )
         """
     )
