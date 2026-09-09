@@ -1,7 +1,6 @@
 # 知域 — 技术栈
 
-**依据：** `memory-bank/design-document.md`  
-**原则：** 能覆盖 V1 P0 的最少组合；不引入设计已列为非目标的组件。
+**原则：** 只记录本仓库技术选型与硬约束；产品行为与需求见 `PRD.md` 及子 PRD。
 
 ---
 
@@ -9,86 +8,75 @@
 
 | 层 | 选型 | 理由 | 不选 |
 |---|---|---|---|
-| 前端 | Vue 3 + TypeScript + Vite | 设计已定 Web；四五个页面，不必上大框架 | React（避免双栈） |
+| 前端 | Vue 3 + TypeScript + Vite | 设计已定 Web；页面不多，不必上大框架 | React（避免双栈） |
 | 后端 | Python 3.11+ / FastAPI / Uvicorn | 上传 + JSON + SSE 足够 | Django |
-| RAG 编排 | P0：LangChain 单链。P1 Agent / Research Report：LangGraph 做多步状态编排，经 Tool 调用 P0 检索 | P0 已定单链；Agent 复用而非替换 RAG | 用图重写 `/api/chat`；为引入图而重构 P0；LlamaIndex |
+| RAG 编排 | P0：LangChain 单链。P1 Agent / Research Report：LangGraph，经 Tool 调用 P0 检索 | P0 已定单链；Agent 复用而非替换 RAG | 用图重写 `/api/chat`；LlamaIndex |
 | P1 短任务 | LangChain Chain（摘要、自动标签、对比） | 一次 LLM 足够 | 把摘要/标签做成 Graph |
-| 向量读写 | SQLAlchemy 管表 + SQL 余弦查询 | 一张 `document_chunk`，避免第二套向量表 | langchain 自建 PGVector 集合 |
-| 解析 | pymupdf、python-docx、标准库读文本 | 无 MinerU、无 OCR | MinerU、Unstructured 全家桶 |
-| 网页正文 | httpx + trafilatura | 公开文章抽正文，失败即导入失败 | Playwright（过重） |
-| 存储 | 本机 PostgreSQL + pgvector | 已安装；元数据与向量一体 | Milvus、Docker Postgres |
+| 向量读写 | SQLAlchemy + SQL 余弦；一张 `document_chunk` | 元数据与向量一体，避免第二套向量表 | langchain 自建 PGVector 集合 |
+| 解析 | pymupdf、python-docx、标准库读文本 | 无 OCR | MinerU、Unstructured |
+| 网页正文 | httpx + trafilatura | 公开页抽正文 | Playwright |
+| 存储 | PostgreSQL + pgvector | 已安装；库名 `knowledge` | Milvus |
 | ORM / 迁移 | SQLAlchemy 2 + Alembic | 表演进可重复 | 纯手写 SQL |
-| 任务 | 短任务 FastAPI BackgroundTasks；定时任务 APScheduler + Redis + arq | 解析入库仍进程内；调度与执行分离 | Celery、Kafka |
-| LLM / Embedding | Python 包 `openai`（仅作 HTTP 客户端）打 **DashScope 兼容模式** | 你不需要 OpenAI 账号；用阿里云 DashScope Key。协议碰巧和 OpenAI 一样 | 直连各家五花八门 SDK；Ollama |
-| 认证 | FastAPI Session Cookie + Argon2 | 最小多用户隔离；身份只来自 Session | JWT / OAuth / RBAC |
-| 部署 | Docker Compose 一键部署（推荐）；或本机 `server/.venv` + npm | 可 clone 即跑 | conda 新建环境；K8s |
-| 测试 | pytest + httpx | 测 API 与隔离检索 | 强制 E2E |
+| 任务 | BackgroundTasks（短）；APScheduler + Redis + arq（定时） | 调度与执行分离 | Celery、Kafka |
+| 关键词检索 | Elasticsearch BM25（P2 Hybrid） | 与 pgvector 同走 `search_chunks` | Meilisearch；用 ES 存 embedding |
+| LLM / Embedding | PyPI `openai` 客户端 → **DashScope 兼容模式** | 不需要 OpenAI 账号 | 各家杂 SDK；Ollama |
+| 重排 | DashScope/硅基兼容 `/reranks`；无 Key 则 LLM 打分 | 可降级 | — |
+| 认证 | FastAPI Session Cookie + Argon2 | 身份只来自 Session | JWT / OAuth / RBAC |
+| 对象存储 | MinIO（软依赖，方案/报告 HTML） | 未配置则仅实时展示 | 强制依赖云 OSS |
+| 差旅工具 | flyai skill CLI（机票/酒店） | 外置 CLI，stdout JSON | 自建爬虫 |
+| 部署 | Docker Compose（推荐）；或本机 `server/.venv` + npm | clone 即跑 | conda；K8s |
+| 测试 | pytest + httpx | API 与隔离检索 | 强制 E2E |
+
+目录：前端 `web/`；后端 `server/`。
 
 ---
 
 ## 前端
 
-- Vue 3 `<script setup>` + TypeScript + Vite  
-- Vue Router：首页、文档、搜索、对话、阅读、设置（可合并）  
-- 侧边栏菜单配置：`web/src/navConfig.ts` 以树形结构（`NavNode`，最多 3 级）定义菜单元数据，持久化在 localStorage（key `zhiyu-nav-tree-v2`，旧扁平配置 `zhiyu-nav-config` 自动迁移）；`App.vue` 用递归组件 `web/src/components/SideNavItem.vue` 渲染侧边栏（有子菜单的节点为折叠按钮，路由命中时自动展开；`tools`/`basics`/`monitoring` 为页内二级分区，侧栏只作入口不展开子项，见 `PAGE_SECTION_IDS`；自定义菜单落地 `/m/:menuId` 占位页）；`web/src/views/MenuManageView.vue`（基础页"菜单管理"）支持树形增删改：新增子菜单、点击改名、删除（含确认，删除父级连带子级）、每项开关控制是否显示、同级拖拽排序与上移/下移；内置菜单被显式删除后不自动复活，可用"恢复默认"找回。**页内二级菜单同样收进导航树**：内置结构定义在 `SECTION_TREE_DEFAULTS`（`basics`→菜单管理/定时任务、`monitoring`→决策审计/操作审计、`tools`→旅程/AI资讯/AI生图/更多工具及其子项），`normalize` 时对缺失的内置子节点自动补齐（`refillSectionChildren`，用户自定义子节点保留）；内置二级项在菜单管理页**不可删除**（`BUILTIN_SECTION_DESCENDANT_IDS`），但可改名 / 开关 / 排序。布局页按导航树渲染二级菜单：`BasicsLayout.vue` / `MonitoringLayout.vue` 渲染平铺项，`ToolsLayout.vue` 渲染折叠分组（子项命中取最长前缀匹配高亮），改名、禁用、排序实时同步到对应页面（样式见 `web/style.md` §13），`MyTripsView` 用行程类型、无状态（`web/style.md` §14；`plan_record.trip_type` / `nights`），需求见 `docs/PRD-DECISIONS.md`、`docs/PRD-OPERATIONS.md`  
-- Markdown 展示：`markdown-it`  
-- HTTP：`fetch`；SSE 用 `fetch` 读 stream  
-- 对话页资料来源：`ChatView` 右侧面板；有引用时自动展开；点击引用 chip / 来源卡片选中并展开切片；文档名 → 阅读页；摘要 hover 浮层全文；「相关切片」→ `DocumentChunksView` 用 `?chunk=` 按 `chunk_id` 过滤；窄屏（≤960px）改为抽屉叠加而非隐藏  
-- 开发：Vite 代理 `/api` → FastAPI  
-- 不做：Pinia 大模块、组件库套装、SSR  
-
-目录：`web/`
+- Vue 3 `<script setup>` + TypeScript + Vite；Vue Router；`markdown-it`
+- HTTP：`fetch`；SSE 用 `fetch` 读 stream
+- 开发：Vite 代理 `/api` → FastAPI（绑 `127.0.0.1`）
+- 样式约定：`web/style.md`
+- 不做：Pinia 大模块、组件库套装、SSR
 
 ---
 
 ## 后端
 
-- FastAPI + Pydantic v2 + python-dotenv  
-- LangChain：切块器用 `RecursiveCharacterTextSplitter` / Markdown 标题切分（V1：`split_markdown_sections` 长节写 parent+children）。P0 问答：`ChatOpenAI` 单链。P1 Agent（P1.3 起）可用 LangGraph，检索必须走现有 `search.py` 封装的 Tool，禁止第二套向量查询。  
-- 检索：P0/P1 为 SQL `ORDER BY embedding <=> :q LIMIT k` + 应用层 0.30；仅 `role=child` 且有 embedding。P2 在同一 `search_chunks` 内：pgvector + ES BM25 + RRF + 最多 20 条 Rerank，再按 `RELEVANCE_MIN_SCORE` 逐条过滤；返回前 `_assemble_parent_context`（有 parent）或 V0 扩窗（无 parent）  
-- P2 Checkpoint：LangGraph 官方 Postgres checkpointer，同一 `DATABASE_URL`，禁止 Redis。Checkpoint 存 `AgentState` 快照，不替代 `message` / `conversation.summary` / `user_memory`。新 user 轮次从 DB 灌 STM，不以 checkpoint 旧消息为聊天权威。  
-- P2 Agent 路由：`p1/graph.py` 的 `reason` 为唯一决策点。P2-Agent-5 起 `DIRECT` / `RAG` / `WEB`；P2-Agent-6 可写 ≤3 子任务但仍走同一 reason，无第二张图。  
-- P2 关键词：本机 Elasticsearch（BM25）。应用仍绑 127.0.0.1；ES 为本机进程或**仅用于 ES 的** Docker，不把整个知域容器化。禁止 Meilisearch、禁止用 ES 存 embedding 做主向量检索   
-- 对话与向量：安装 PyPI 上的包 **`openai`**。这是通用客户端，**不是**「必须注册 OpenAI」。  
-  指向阿里云兼容地址即可，例如：  
-  `LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`  
-  `LLM_API_KEY=` 你的 **DashScope API Key**  
-  `LLM_MODEL=qwen-plus`  
-  Embedding 同样用该 Key 与兼容地址，默认 `EMBEDDING_MODEL=text-embedding-v3`。额度不够时由提出人改成 `text-embedding-v4`（应用须提示，不自动切换）。V1 不用本机 Embedding。  
-- 也可改成 DeepSeek / 其它兼容端点，仍用同一包，只改 env。  
-- **不需要** OpenAI 官网账号或 `sk-` OpenAI 密钥。  
-- URL：`httpx` 超时 20s；`trafilatura` 抽正文  
-- 哈希：SHA-256  
-- 定时任务：APScheduler 挂 FastAPI lifespan，只入队；独立进程 `python -m app.worker.worker` 消费 Redis 队列 `zhiyu:tasks`。单 uvicorn 实例，勿开多 worker。`NEWS_REFRESH` 读 `news_settings.enabled_categories`，经 `app/news/` 管道（RSS→去重→摘要→热度→`news_daily_rank`）刷新；源列表见 `server/config/news_sources.yaml`（可用 `NEWS_SOURCES_PATH` 覆盖）。 摘要 prompt 对 JSON 花括号做 LangChain 转义；`NEWS_MAX_ITEMS` 按启用分类均分截断，避免单一大源占满名额；仅对当日可入榜条目调用 LLM。  
-- Worker 执行模型：`process_task`（async）经 `asyncio.to_thread` 调用同步 handler，避免阻塞 arq 事件循环；管线内拆为「去重入库（事务内，无网络）→ LLM 摘要（`NEWS_SUMMARIZE_WORKERS` 默认 4 线程并发）→ 评分排名」三段。执行进度写 Redis `task:progress:{run_id}`（TTL 6h，任务结束即删），`GET /api/tasks/{id}/executions` 对 RUNNING 记录回带 `progress` 字段，任务页 4s 轮询展示「AI 摘要 x/y」等阶段。  
+- FastAPI + Pydantic v2 + python-dotenv
+- 切块：Markdown 标题切分；长节 parent + children（`role` / `parent_id`）；parent 无 embedding、不进 ES
+- P0 问答：`ChatOpenAI` 单链；检索只用当前句
+- 检索（`search_chunks`）：pgvector +（可选）ES BM25 → RRF → Rerank → `RELEVANCE_MIN_SCORE`；仅 `role=child` 且有 embedding；组装见 Chunk PRD（V0/V1/V3）
+- Agent：LangGraph；检索必须经 Tool 调现有 `search.py`，禁止第二套向量查询
+- Checkpoint：LangGraph PostgresSaver，同一 `DATABASE_URL`；不作 STM/聊天权威
+- URL 导入：`httpx` 超时 20s + `trafilatura`
+- 内容哈希：SHA-256
+- 定时任务：APScheduler 只入队；`python -m app.worker.worker` 消费 Redis 队列 `zhiyu:tasks`；单 uvicorn，勿开多 worker
 
-目录：`server/`
-
-默认模型：`qwen-plus`、`text-embedding-v3`、`EMBEDDING_DIM=1024`。同维换 `text-embedding-v4` 后须对该库文档 reindex。改 `EMBEDDING_DIM` 必须重建向量列并全量 reindex。
+默认模型：`qwen-plus`、`text-embedding-v3`、`EMBEDDING_DIM=1024`。同维换模型须 reindex；改维须重建向量列并全量 reindex。
 
 ---
 
 ## 存储
 
-- 本机 PostgreSQL（已含 pgvector），库名 `knowledge`  
-- `CREATE EXTENSION vector`；HNSW + `vector_cosine_ops`  
-- 磁盘：`data/files/`、`data/parsed/`（无 `images`）  
+- PostgreSQL + pgvector；`CREATE EXTENSION vector`；HNSW + `vector_cosine_ops`
+- 磁盘：`data/files/`、`data/parsed/`（无 `images`）
 
 ---
 
 ## 认证与部署
 
-- HttpOnly Session；表 `users`  
-- **Docker Compose（推荐）**：根目录 `docker-compose.yml` + `./scripts/deploy.sh`；Nginx 反代 `/api`，Postgres/Redis/API/Worker 同编排；见 README「快速部署」  
-- **本机开发**：监听 `127.0.0.1`；`server/.venv` + `npm run dev`；Worker 另开 `python -m app.worker.worker`  
-- **CI**：`.github/workflows/ci.yml`（安装 `pytest` 后跑测 + 前端 build + `docker compose build`；job 级 `DATABASE_URL`；psycopg 等库就绪后 Alembic；Actions 用 Node 24 的 checkout/setup-python/setup-node v6）  
+- HttpOnly Session；表 `users`
+- **Compose**：根目录 `docker-compose.yml` + `./scripts/deploy.sh`；Nginx 反代 `/api`
+- **本机**：`127.0.0.1`；Worker 另开进程
+- **CI**：`.github/workflows/ci.yml`（pytest + 前端 build + `docker compose build`；Node 24）
 
 ---
 
 ## 测试
 
-- pytest 覆盖：默认库、上传校验、checksum 去重、库隔离、标签筛选、收藏、无命中短路径（Embedding 可 mock）  
-- 真 DashScope、真网页：本机按设计第 9 节手工验收  
+- pytest：默认库、上传校验、checksum 去重、库隔离、标签/收藏、无命中短路径（Embedding 可 mock）
+- 真 DashScope / 真网页：本机手工验收
 
 ---
 
@@ -97,162 +85,33 @@
 | 变量 | 用途 |
 |---|---|
 | `DATABASE_URL` | 例 `postgresql+psycopg://用户@127.0.0.1:5432/knowledge` |
-| `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | **DashScope** Key 与兼容 Base URL，不是 OpenAI |
+| `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | DashScope 兼容，非 OpenAI |
 | `EMBEDDING_API_KEY` / `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL` / `EMBEDDING_DIM` | 向量；Key/URL 可与 LLM 相同 |
 | `DATA_DIR` | 默认仓库 `data/` |
-| `ELASTICSEARCH_URL` | P2 BM25；例 `http://127.0.0.1:9200`。未配则 Hybrid 关键词路不可用（见计划，禁止假装已 Hybrid） |
-| `RERANK_API_KEY` / `RERANK_BASE_URL` / `RERANK_MODEL` | P2-RAG-2 重排。硅基：`https://api.siliconflow.cn/v1/rerank` + `Qwen/Qwen3-Reranker-0.6B`。无 Key 则 LLM 打分 |
-| `RELEVANCE_MIN_SCORE` | P2-RAG-3 逐条门槛，默认 0.5（Rerank 分；未重排时仍是余弦分）。须可调 |
-| `SESSION_SECRET` | Session 签名，至少 32 字符 |
-| `INITIAL_USERNAME` | 空库引导用户名，默认 `echola` |
-| `INITIAL_PASSWORD` | 空库引导密码，只放本机 `.env`，哈希入库 |
-| `FLYAI_CLI` / `FLYAI_API_KEY` / `FLYAI_TIMEOUT` | 飞猪 flyai skill CLI（免 Key trial 可用）；CLI 子命令 `search-flight`/`search-hotel`，stdout 单行 JSON |
-| `HOTEL_SOURCE` | 酒店源：留空=占位提示（不伪造房型）；`flyai`=启用 flyai search-hotel |
-| `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` / `MINIO_BUCKET` / `MINIO_SECURE` | MinIO 软依赖：方案页 `plans/{conversation_id}/` 与知识报告 `reports/{conversation_id}/` 回看；未配置仅实时展示 |
-| `REDIS_URL` | 定时任务队列，默认 `redis://127.0.0.1:6379/0`（须 `redis://` 或 `rediss://`） |
+| `ELASTICSEARCH_URL` | P2 BM25；未配则关键词路不可用 |
+| `RERANK_API_KEY` / `RERANK_BASE_URL` / `RERANK_MODEL` | 重排；无 Key 则降级 |
+| `RELEVANCE_MIN_SCORE` | 逐条门槛，默认 0.5 |
+| `SESSION_SECRET` | Session 签名，≥32 字符 |
+| `INITIAL_USERNAME` / `INITIAL_PASSWORD` | 空库引导用户（密码只放本机 `.env`） |
+| `REDIS_URL` | 任务队列，默认 `redis://127.0.0.1:6379/0` |
+| `FLYAI_CLI` / `FLYAI_API_KEY` / `FLYAI_TIMEOUT` | 差旅 CLI |
+| `HOTEL_SOURCE` | 空=占位；`flyai`=启用酒店搜索 |
+| `MINIO_*` | 方案/报告 HTML；未配置则降级 |
+| `NEWS_SOURCES_PATH` | 可选，覆盖默认知讯源 YAML |
 
-`.env` gitignore；提供无密钥的 `.env.example`。
+`.env` gitignore；提供无密钥的 `.env.example` / `.env.docker.example`。
 
 ---
 
 ## 明确拒绝
 
-MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearch、浏览器自动化抓登录页。Redis **仅**用于定时任务队列（arq），不作 Checkpoint / 通用缓存。P2 关键词检索用 Elasticsearch BM25，不用 Postgres `pg_trgm` 充当 BM25。
+MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearch、浏览器自动化抓登录页。  
+Redis **仅**作 arq 任务队列，不作 Checkpoint / 通用缓存。  
+P2 关键词用 ES BM25，不用 `pg_trgm` 冒充。
 
-### LangGraph 使用边界
+### LangGraph 边界
 
-核心：LangGraph 只负责 P1 的复杂 Agent 工作流；P0 RAG 保持原样。Agent 调用 P0 RAG，而不是替换 P0 RAG。
-
-1. LangGraph 用于 P1 的 Agent / Research Report 等需要多步骤状态编排的能力。
-2. P0 的 `/api/chat` 和 `/api/chat/stream` 保持现有 LangChain Chain 实现，不迁移到 LangGraph。
-3. P1 Agent 必须复用 P0 已有 RAG / Search 能力，不得重新实现 pgvector 检索。
-4. LangGraph 可以通过 Tool 调用 P0 Search/RAG 能力。
-5. 不得为了引入 LangGraph 而重构 P0。  
-6. P1 中简单的摘要、自动标签、文档对比等线性任务继续使用 LangChain Chain，不强制 Graph 化。  
-7. P2 检索增强必须改现有 `search.py` 的 `search_chunks`，供 Chat、搜索 HTTP、Agent Tool 共用。  
-8. P2 不得把 `/api/chat` 迁到 LangGraph；不得无命中强制 Web Search；不得用 `document_chunk` 冒充 LTM。  
-9. P2 不得把 Checkpoint 当成 STM/Summary；`reason` 统一路由，禁止各 Tool 自行决定是否调用。
-
-### P4 Master 入口（2026-08-31 起）
-
-- 对话模式分流：`task=knowledge` 直连 `knowledge_flow`（analyze→…→generate，不经 Master）；`task=agent|report` 仍走 `/api/agent(/stream)`：**薄意图 → Master → 子能力**；Master 内 knowledge 意图仍挂旧 `graph.py`；`/api/chat` 不改，禁止并行第二条 travel API。
-- **意图 ≠ Master**：`intent.py` 只输出标签（一次结构化 LLM 分类，失败回退启发式）；`master.py` 只按标签调度并整合，不做第二套意图识别。
-- Master 图：`intent → (knowledge | chat | plan | booking) → finalize`。knowledge = 现有 `graph.py` 作为子图挂载（内部 checkpoint `thread_id=conversation_id` 不变）；plan = `plan_agent.py` ReAct 子图；booking = `booking_agent.py` HITL 子图。Master 自身 checkpoint 用 `master-{conversation_id}` 前缀，二者互不覆盖。
-- `AgentOut` / stream 终态新增 `intent` 字段；stream 首个 SSE 事件为 `{type:'intent', intent}`。
-- plan / booking 意图分别在 P4 Step 2 / 3 落地为真实子 Agent；Step 1 的 stub 已替换。
-- 代码组织：原 `server/app/p1/` 已上移，并于 2026-09-05 按 `docs/split.md` 批次拆入域子包：`app/agent/`（graph/master/intent/tools/plan_agent/booking_agent/checkpoint/ltm）、`app/ingest/`（parse/chunk/index/storage/url_import/chunk_settings/chunk_label）、`app/rag/`（search/rerank/es_bm25/chat/conversation_summary）；`chains.py` 暂留根目录；路由层仍在 `routers/master.py`；审计新代码落 `app/audit/`。
-- **TRAVEL-PLAN-1（Step 2，2026-09-01）**：`plan` 意图 → `plan_agent.py` ReAct 子图（reason→run_tool 循环，无 checkpointer）。工具：`travel/tools.py` 的 `search_flights`（flyai 响应原样透传，前端卡片绑 `itemList`）/`search_hotels`（无源时 `{kind:"placeholder"}`，不伪造房型）/`plan_itinerary`（LLM 结构化 `{options,comparison,recommendation,total_price_summary}`，失败用搜索结果兜底）/`save_plan_html`（渲染 HTML→MinIO `plans/`，软依赖）。缺失要素（出发地/目的地/出发日期）对话补问；口头偏好只改提及字段，params merge 不丢日期/城市。SSE 事件：`progress`/`travel_data`（平铺 flights/hotels/plan）/`plan_html`；`task=report` 报告 HTML 上传 MinIO `reports/`，`AgentOut.report_url` 回传。
-- **TRAVEL-BOOK-1（Step 3，2026-09-01）**：`booking` 意图 → `booking_agent.py` HITL 子图。写操作（book/cancel）先返回 `pending_action`，经 SSE `{type:'hitl', ...}` 推送前端；`list` / 确认落库后 SSE `{type:'booking_data', items}`。用户同会话确认（`AgentRequest.hitl_confirm`）后再落库。数据表 `booking_record`；`list_bookings` 仅查当前用户；`cancel_booking` 校验用户归属并更新 `status='cancelled'`。写限流 30 次/分钟 → HTTP 429。`AgentOut` 含 `pending_action`、`bookings`；前端 `BookingListCard.vue` 展示列表/支付链接。
-
-
-### 文件说明
-| 路径 | 职责 |
-|---|---|
-| `PRD.md` | 产品需求（P0 名单；P1 指向 `PRD-P1.md`） |
-| `PRD-P2.md` | P2 范围与边界（Hybrid；STM/Summary/LTM 与 Checkpoint 分层；reason 统一路由；P3 名单） |
-| `memory-bank/design-document.md` | 实现规格 |
-| `memory-bank/tech-stack.md` | 技术选型 |
-| `AGENTS.md` | Agent 约束 |
-| `docs/split.md` | `server/app` 包结构评估与分批拆分路线图 |
-| `server/.venv` | Python 3.12 虚拟环境（不用 conda） |
-| `server/requirements.txt` | 后端依赖 |
-| `server/app/config.py` | 环境变量与 Settings |
-| `server/app/main.py` | FastAPI 入口、`/health`、Session、启动时确保用户与默认库、APScheduler lifespan |
-| `server/app/routers/task.py` | `/api/tasks` CRUD / enable / disable / run / executions / types |
-| `server/app/scheduler/` | APScheduler 加载 enabled 任务；`executor.enqueue_task` 与 `/run` 共用 |
-| `server/app/worker/` | arq Worker：`process_task`（to_thread 调 handler）、Redis 锁防重、handler 3 次重试、`progress.py` 进度上报 |
-| `server/app/user.py` | `users` 表引导用户（环境变量密码哈希） |
-| `server/app/passwords.py` | Argon2 |
-| `server/app/deps.py` | Session 当前用户 |
-| `server/app/routers/auth.py` | login/logout/me |
-| `server/app/kb.py` | 默认库；`search_kb_ids`（未传 id → 用户已开启库；传 id → 单库） |
-| `server/app/routers/knowledge_bases.py` | 知识库 HTTP（含 `is_enabled` 开关；P3 `POST .../refresh-urls`） |
-| `web/src/views/KnowledgeBasesView.vue` | 知识库管理（开关/筛选） |
-| `server/app/routers/documents.py` | 上传、笔记、URL、列表、详情、版本、删除、标签、收藏、index/reindex、P3 `POST .../refresh`（url）、P1 summarize/auto-tags/graph/related |
-| `web/src/App.vue` | 左侧主导航；库切换与用户在侧栏底部 |
-| `web/src/views/DebugView.vue` | 调试模式页：检索调试、Agent 执行轨迹（含总 Token）、答案质量评估；不含切片配置 |
-| `web/src/views/SettingsView.vue` | 设置；调试 panel 内可开调试模式，开启后同 panel 配置用户级 Chunk Size/Overlap |
-| `web/src/components/RetrievalDebugPanel.vue` | 对话页 Retrieval Debug 抽屉 |
-| `server/app/routers/retrieval_debug.py` | `POST /api/retrieval-debug`、labels、`POST /api/retrieval-debug/answer-quality` |
-| `server/app/routers/master.py` | `/api/agent`、`/api/agent/stream`（伪流式，**sync def** 跑线程池，避免占事件循环卡住侧栏 `/me`）与旁路 `POST /api/agent/trace`（`stream_mode="updates"` 逐节点 SSE，不落库） |
-| `server/alembic/` | 迁移；含 `20260908_0025`（`document_chunk.role` / `parent_id`，`embedding` 可空） |
-| `web/src/styles.css` | 全局设计 token 与顶栏/页面自适应容器（不锁 1440×900） |
-| `server/app/routers/tags.py` | 标签创建/列表/删除 |
-| `server/app/rag/search.py` | Hybrid + RRF + Rerank；经 `search_kb_ids` 定库；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤；可选 `created_after`/`created_before`（文档 `created_at`）。召回保险：`role=child` 且 `embedding IS NOT NULL`。V1：`_assemble_parent_context`——有 `parent_id` 用 parent 全文（同父去重；超 `SECTION_EXPAND_MAX_CHARS` 则对该父下 children center-out 整块回退）；无 parent 降级 V0 `_expand_same_heading`。`search_debug` 不组装。见 [`PRD_Chunk_V1.md`](rag/PRD_Chunk_V1.md) / V0 [`PRD_Chunk_V0.md`](rag/PRD_Chunk_V0.md)；V3（邻域+Expansion Rerank，待开发）见 [`PRD_Chunk_V3.md`](rag/PRD_Chunk_V3.md) |
-| `server/app/rag/rerank.py` | DashScope 兼容 `/reranks`；无 Key 则 LLM 打分；都没有则保持 RRF 顺序 |
-| `server/app/rag/es_bm25.py` | BM25 索引与检索；chunk 与 PG 同步 upsert/删除；测试可替换为内存实现 |
-| `server/app/routers/search.py` | `POST /api/search`（可选 kind / 时间窗） |
-| `web/src/views/SearchView.vue` | 搜索页：标签、kind、时间窗；不调 Chat |
-| `server/app/insights.py` | P3 洞察 Chain：冲突 / 缺口 / 自动整理（补标签 + 重复/空摘要/命名报告） |
-| `server/app/routers/insights.py` | `POST /api/knowledge-bases/{id}/insights/conflicts|gaps|organize`；报告不落库（organize 的自动补标签会写 `document_tag`） |
-| `server/app/recommendations.py` | 主动推荐：收藏 + 最近 citation 文档作种子，`search_chunks` 扩展相似文档，排除种子/已收藏，取 5 |
-| `server/app/routers/recommendations.py` | `GET /api/recommendations` |
-| `web/src/views/HomeView.vue` | 首页：统计、最近文档、推荐阅读卡片 |
-| `web/src/views/InsightsView.vue` | `/insights`：冲突检测 + 缺口分析 + 自动整理；本机历史 |
-| `web/src/api-insights.ts` | 洞察 API 客户端 |
-| `server/app/llm.py` | LangChain 单链 Chat；`chat_with_usage()` 返回 usage；Agent Trace 读取 token；无命中不调用 |
-| `server/app/rag/chat.py` | 问答：检索只用当前句；最近 6 条历史给 LLM |
-| `server/app/routers/chat.py` | `POST /chat`、`/chat/stream`（sync def，与 agent/stream 同样不占事件循环）；会话列表/消息/删除 |
-| `server/app/ingest/url_import.py` | 公开页 httpx + trafilatura；超时 20s；无浏览器自动化 |
-| `server/app/ingest/parse.py` | md/txt UTF-8；PDF PyMuPDF 按页 `## Page N`；DOCX 按段落。无 OCR/MinerU |
-| `server/app/ingest/chunk.py` | Markdown 标题切分；默认 800/120；`split_markdown_sections` 产出 `SectionSplit`（长节：parent=section 全文 + children；短节：仅 child、无空父）；`split_markdown` 兼容扁平 children；表格保护 / FAQ；无 LlamaIndex |
-| `server/app/ingest/chunk_settings.py` | 按用户读写 `user_chunk_setting`；无行则默认 800/120 |
-| `server/app/routers/chunk_settings.py` | `GET/PUT /api/chunk-settings`（Session 用户） |
-| `server/app/ingest/index.py` | 父子落库：先 parent（`embedding=None`）再 child（`parent_id` + embed）；`chunk_index` 含 parent 统一递增；ES `upsert_chunks` 仅 child；增量对齐键含 `role`/parent 结构；旁路读（`gather_document_text` / chunks API）只取 child。切块用用户配置写入 `document.chunk_size`/`chunk_overlap`；状态 `ready`；P3 `index_document_incremental` |
-| `server/app/ingest/storage.py` | 本地文件路径与清理 |
-| `server/app/schemas.py` | Pydantic 模型；`AgentRequest` 新增 `hitl_confirm`，`AgentOut` 新增 `pending_action` |
-| `server/app/models.py` | SQLAlchemy 表；`document_chunk` 含 `role`/`parent_id`（parent 无 embedding）；另有 `booking_record` 等 |
-| `web/src/views/LoginView.vue` | 独立登录页 |
-| `server/app/chains.py` | P1.1/P1.2/P1.4 摘要、自动标签、文档对比、图谱抽取 Chain；禁止 import LangGraph |
-| `server/app/rag/conversation_summary.py` | 消息 >6 时压缩更早轮次写入 `conversation.summary` |
-| `server/app/agent/ltm.py` | `user_memory` 读写；Agent 灌入 `ltm_hits`（非向量检索） |
-| `server/app/agent/checkpoint.py` | LangGraph `PostgresSaver`（同库连接池）；`setup` 建 checkpoint 表 |
-| `server/app/agent/tools.py` | `search_knowledge`（内部 `search_chunks`，禁止 HTTP `/api/search`）；P2-Agent-5 `web_search`（httpx POST 配置端点，禁止 Playwright） |
-| `server/app/agent/graph.py` | 一张 StateGraph：reason → DIRECT \| RAG \| WEB \| GRAPH；首圈可写入 ≤3 有序子任务，之后每圈仍只选四者之一；`run_tool` 只执行 reason 指定的 Tool；`generate` 可带 STM / Summary / LTM / web_hits，有子任务时汇总；compile 带 checkpointer；`task=agent|report` 同图；max_loops=3 |
-| `server/app/agent/intent.py` | P4 薄意图：一次 LLM 结构化分类 → `knowledge \| plan \| booking \| chat`；`task=report` 强制 `knowledge`；LLM 失败/解析失败回退关键词启发式；只出标签，不做检索与整合 |
-| `server/app/agent/master.py` | P4 Master 图（Supervisor 骨架）：`intent → knowledge/chat/plan/booking → finalize`；knowledge 节点调用 `graph.build_graph()`（子图 checkpoint `thread_id=conversation_id` 不变）；chat 节点经 `llm.chat` 直接寒暄；plan 节点调用 `plan_agent.py`；booking 节点调用 `booking_agent.py`；Master 自身 checkpoint `thread_id=master-{conversation_id}` |
-| `server/app/agent/plan_agent.py` | P4 plan 子 Agent（TRAVEL-PLAN-1）：ReAct reason→run_tool；缺要素 `ask` 补问；params merge 保留未提及字段；无 checkpointer |
-| `server/app/agent/booking_agent.py` | P4 booking 子 Agent（TRAVEL-BOOK-1）：ReAct reason→run_tool；book/cancel 写操作 HITL；未确认生成 `pending_action`，确认后落库 `booking_record`；无 Master 自身 checkpoint 外的持久 |
-| `server/app/travel/rate_limit.py` | 预订写限流：进程内 sliding window，用户维度 30 次/60s，超限抛 `RateLimitedError` |
-| `server/app/travel/flyai.py` | flyai skill CLI 封装：`search-flight`/`search-hotel`；stdout 单行 JSON 原样返回（含 `itemList`）；失败抛 `FlyaiError` |
-| `server/app/travel/tools.py` | 差旅工具：机票透传/酒店占位（无源不伪造）/`plan_itinerary`（LLM 结构化+兜底）/`save_plan_html`（HTML→MinIO） |
-| `server/app/travel/minio_store.py` | MinIO 软依赖：`plans/{conversation_id}/{ts}.html` 与 `reports/{conversation_id}/{ts}.html` 前缀分离；未配置/失败返回 None 降级 |
-| `server/app/models.py` / Alembic `20260902_0019` | `plan_record`：本人行程方案元数据（title/origin/destination/depart_date/minio_key/url/payload） |
-| `server/app/routers/plans.py` | `GET /api/plans`、`GET /api/plans/{id}`：Session 用户隔离 |
-| `server/app/agent/plan_agent.py` | `save` 后 `persist_plan_record`（无 MinIO 也落库）；Master `node_plan` 传入 session/user_id |
-| `server/app/routers/master.py` | P1.2 `POST /api/compare`；`POST /api/agent` 与 `/api/agent/stream`：`task=knowledge` 直连 `build_knowledge_flow_graph()`；`task=agent|report` 调 `build_master_graph()`（薄意图 → Master → 子能力；stream 首事件 `{type:'intent'}`；booking HITL）；旁路 `POST /api/agent/trace` 仍走 `graph.py` |
-| `web/src/views/ChatView.vue` | 默认 `/api/chat/stream`；「知识 Agent」→ `task=knowledge` 直连 `knowledge_flow`；「Multi Agent / Report」→ `task=agent|report` 经 Master；共享 `conversation_id`；离开页 abort SSE，且仅在 `/chat` 上 sync query，避免思考中把侧栏导航拽回 |
-| `web/src/views/ReaderView.vue` | 阅读页：摘要/自动标签；P1.4「抽取图谱」+ 实体/关系列表 + 相近文档；P3-EXT 抽取后「查看图谱」入口 |
-
-| `server/app/agent/tools.py` | 新增 `search_graph()` 与 `search_graph_details()`：实体名子串匹配 → 沿 `entity_link` 扩展 1–2 跳 → 返回关联文档切片；`search_graph_details` 额外返回命中实体、关系、路径、相关文档；两者不建第二套向量集合 |
-| `server/app/routers/master.py` | 新增 `GET /api/graph/search`、`GET /api/graph/search/details`、`GET /api/graph/documents`；`/api/agent/stream` 流式事件识别 `search_graph` Tool |
-| `server/app/agent/graph.py` | Agent StateGraph 新增 `GRAPH` action：`reason` 输出 `action=graph`，`run_tool` 调用 `search_graph` |
-| `web/src/views/KnowledgeGraphView.vue` | `/knowledge-graph` 力导向 SVG 可视化页：知识库/实体/关系筛选与重置、力导向布局、搜索高亮、4 Tab 面板（节点详情、路径探索、邻居节点、检索辅助）、画布控制、统计 |
-| `web/src/components/Icon.vue` | 补齐 `minus / maximize / refresh / fullscreen` 等图谱控制图标 |
-| `web/src/router.ts` | `/knowledge-graph`；`/tools` 布局（默认 `trips`；`/tools/news` AI资讯；另有 `image` 等占位） |
-| `web/src/App.vue` | 侧栏「知识图谱」；「工具」（`tools` 图标）→ `/tools` |
-| `web/src/views/ToolsLayout.vue` | 工具页内二级菜单：旅程 / AI资讯（今日热榜） / AI生图 |
-| `web/src/views/NewsListView.vue` / `NewsDetailView.vue` | AI资讯热榜与详情；启用板块调 `/api/news/settings` |
-| `server/app/news/` | 资讯管道：sources/collector/parser/dedup/summarizer/scorer/service |
-| `server/app/routers/news.py` | `/api/news/hot`、`/api/news/{id}`、`/api/news/settings` |
-| `server/config/news_sources.yaml` | 默认知讯源（8 启用 + Reuters 备选关闭） |
-| `server/app/audit/` | 决策审计（Trace.md V1.1）：`DecisionRecorder`（start_run/add_span/finish_run；run 行经主会话 savepoint 随主事务提交，spans 与终态走独立会话；公开方法吞异常，审计故障不影响主回答）；`recorder_from_config` 供 LangGraph 节点取 `configurable.decision_recorder` |
-| `server/app/routers/decisions.py` | `/api/decisions`（mode/status/conversation_id/时间过滤 + limit/offset）、`/api/decisions/{run_id}`（run+有序 spans）、`/api/messages/{id}/decision`（按 assistant 消息反查）；Session 鉴权仅本人数据 |
-| `server/app/models.py` + Alembic `20260906_0024` | `decision_run`（mode=chat/knowledge，status=running/success/failed，绑 message_id ON DELETE SET NULL）/ `decision_span`（seq 线性，node_type=route/retrieve/generate，decision/rationale/evidence_refs/metrics） |
-| `server/app/rag/chat.py` | `run_chat` 可选 `recorder`：检索后 retrieve span、生成后 generate span，落库后 finish_run(success, message_id)；`_http_chat` 失败路径 finish_run(failed) |
-| `server/app/agent/graph.py` | 旧 reason→run_tool 图（Master knowledge 意图 / trace）；埋点 route/retrieve/generate；`reason_decide` 可选 `why` |
-| `server/app/agent/knowledge_flow.py` | `task=knowledge` 主图：analyze→(simple\|complex)→decompose?/retrieve_qi→sufficiency→rewrite→merge→gap→generate；检索经 `search_knowledge` Tool |
-| `server/app/agent/analyze.py` / `decompose.py` / `rewrite.py` / `sufficiency.py` / `evidence_merge.py` | Query Analysis、分解、改写、Sufficiency V0、Evidence Merge（`MAX_EVIDENCE=10`） |
-| `server/app/routers/master.py` | `_invoke_knowledge_graph` → `build_knowledge_flow_graph()`；recorder 注入 configurable，persist 后 finish_run |
-| `web/src/views/DecisionAuditView.vue` | 决策审计详情：展示 `decision.step`；有 input/output 时分区展示；旧 chat 决策仍整段 pretty |
-| `web/src/router.ts` | `/monitoring/decisions` 列表、`/monitoring/decisions/:id` 详情 |
-| `web/src/views/MyTripsView.vue` | 工具 → 我的行程单：接 `GET /api/plans` 列表；空态引导 Multi Agent |
-| `server/app/message_ui.py` | 助手消息 UI 载荷：`plan_html`/`travel_data` 随 `message.citations` envelope 落库；`GET .../messages` 解包回放，旧消息可从 `plan_record` 补 url |
-| `web/src/views/ToolPlaceholderView.vue` | 工具占位页：读 `route.meta.title/sub`，展示「即将推出」 |
-
-| `web/` | Vite + Vue 3 + TS；左侧栏 + 首页/文档/搜索/对话/Debug/阅读/设置 |
-| `data/files/`、`data/parsed/` | 原件与解析稿；内容被 gitignore |
-| `.env.example` | 环境变量模板（DashScope，无真实密钥） |
-| `.gitignore` | 忽略 `.env`、venv、node_modules、用户 data |
-| 本机 PostgreSQL `knowledge` | 已创建；`vector` 0.8.0。连接用户 `postgres`，密码仅本机，不入库 |
-
+1. 只用于 P1 Agent / Research 等多步编排；P0 `/api/chat` 保持 LangChain Chain。
+2. Agent 经 Tool 复用 P0 `search_chunks`，不得另建向量检索。
+3. 摘要 / 自动标签 / 文档对比继续用 Chain，不强制 Graph。
+4. Checkpoint 不替代 `message` / `conversation.summary` / `user_memory`。
