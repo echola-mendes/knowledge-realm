@@ -10,6 +10,7 @@
 | 检索同节扩窗（PRD_Chunk_V0） | 2026-09-08 | search_chunks 返回前同 heading 扩窗 + original_content；不改表/debug | 全 ✅ |
 | 父子切块落库（PRD_Chunk_V1） | 2026-09-08 | document_chunk role/parent_id；索引写 parent+child；检索仅 child + parent 组装/V0 降级 | 全 ✅ |
 | 知识 Agent 编排优化（Sufficiency V0） | 2026-09-09 | knowledge_flow：analyze/Simple·Complex/decompose/sufficiency/rewrite/merge/gap/generate；审计 step+IO；详情页可读 | 全 ✅ |
+| 局部邻居扩窗 + 双条件过滤（Chunk V3） | 2026-09-09 | search_chunks 门槛后 ±1 + 双条件；SearchHit 两字段；审计 assembly；Merge 按 chunk_id；TECH/PRD 同步 | 全 ✅ |
 
 ## 经验
 
@@ -169,3 +170,11 @@
 问题：knowledge 用 `decision.step/input/output`，chat 仍是 tool/summary。
 
 解法：`DecisionAuditView` 有 step 时标题用 STEP_LABELS 并分区展示输入/输出；否则整段 pretty，chat 口径不变。
+
+### V3 组装：邻居二次打分勿复用锚点 Rerank 分
+
+日期：2026-09-09　来源：局部邻居扩窗 V3
+
+问题：未命中邻居没有「原 Rerank 分」；若用全局 0.5 门槛会把邻居几乎全灭。
+
+解法：仅锚点过 `RELEVANCE_MIN_SCORE`；邻居用更低的 `EXPAND_QUERY_MIN`（默认 0.3）+ `EXPAND_ANCHOR_MIN`（0.6）双条件；有 Rerank Key 时对去重邻居批量二次 `score_documents`，无 Key / 失败则 query–chunk 余弦。Merge 去重键改为 `chunk_id`，与「同父多命中保留多条」一致。

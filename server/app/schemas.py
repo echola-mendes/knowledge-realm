@@ -116,6 +116,10 @@ class SearchHitOut(BaseModel):
     knowledge_base_name: str | None = None
     tags: list[str] = []
     created_at: datetime | None = None
+    original_content: str | None = None
+    seed_chunk_ids: list[uuid.UUID] = Field(default_factory=list)
+    neighbor_chunk_ids: list[uuid.UUID] = Field(default_factory=list)
+    expanded_chunk_ids: list[uuid.UUID] = Field(default_factory=list)
 
 
 class ChatRequest(BaseModel):

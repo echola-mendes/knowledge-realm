@@ -64,4 +64,8 @@ def _to_out(session: Session, h: SearchHit) -> SearchHitOut:
         knowledge_base_name=doc_row[1] if doc_row else None,
         created_at=doc_row[0] if doc_row else None,
         tags=list(tag_names),
+        original_content=h.original_content or None,
+        seed_chunk_ids=list(h.seed_chunk_ids) or [h.chunk_id],
+        neighbor_chunk_ids=list(h.neighbor_chunk_ids),
+        expanded_chunk_ids=list(h.expanded_chunk_ids),
     )

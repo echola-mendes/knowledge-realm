@@ -36,9 +36,6 @@ def evidence_from_hit(
 
 
 def _dedup_key(item: dict[str, Any]) -> str:
-    parent_id = item.get("parent_id")
-    if parent_id:
-        return f"parent:{parent_id}"
     chunk_id = item.get("chunk_id") or item.get("id")
     return f"chunk:{chunk_id}"
 
@@ -77,7 +74,7 @@ def merge_evidence(
     max_evidence: int = MAX_EVIDENCE,
 ) -> dict[str, Any]:
     """
-    Dedup by parent_id (else chunk_id), keep highest score, merge related_questions,
+    Dedup by chunk_id, keep highest score, merge related_questions,
     then keep Top-N by score.
 
     Returns dict with merged, dropped, input_count, by_qi (pre-merge).

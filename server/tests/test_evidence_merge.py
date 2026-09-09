@@ -15,7 +15,6 @@ from app.rag.search import SearchHit
 
 
 def _hit(
-    *,
     chunk_id: uuid.UUID | None = None,
     parent_id: uuid.UUID | None = None,
     score: float = 0.5,
@@ -35,7 +34,7 @@ def _hit(
     )
 
 
-def test_merge_same_parent_id_keeps_best_and_merges_related_questions():
+def test_merge_same_parent_different_chunk_keeps_both():
     parent = uuid.uuid4()
     a = evidence_from_hit(
         _hit(parent_id=parent, score=0.4, content="low"),
@@ -48,16 +47,16 @@ def test_merge_same_parent_id_keeps_best_and_merges_related_questions():
         question="what is B",
     )
     result = merge_evidence([a, b])
-    assert len(result["merged"]) == 1
-    kept = result["merged"][0]
-    assert kept["content"] == "high"
-    assert kept["score"] == 0.9
-    assert kept["related_questions"] == ["what is A", "what is B"]
-    assert a["id"] in result["dropped"]
-    assert b["id"] not in result["dropped"]
+    assert len(result["merged"]) == 2
+    by_content = {m["content"]: m for m in result["merged"]}
+    assert set(by_content) == {"low", "high"}
+    assert by_content["high"]["score"] == 0.9
+    assert by_content["low"]["related_questions"] == ["what is A"]
+    assert by_content["high"]["related_questions"] == ["what is B"]
+    assert result["dropped"] == []
 
 
-def test_merge_same_chunk_id_without_parent():
+def test_merge_same_chunk_id_keeps_best_and_merges_related_questions():
     chunk = uuid.uuid4()
     a = evidence_from_hit(
         _hit(chunk_id=chunk, score=0.2, content="x"),
@@ -69,7 +68,6 @@ def test_merge_same_chunk_id_without_parent():
         qi_id="q2",
         question="Q2",
     )
-    # same chunk_id but evidence_from_hit uses chunk_id as id — rebuild second with same ids
     b["id"] = a["id"]
     b["chunk_id"] = a["chunk_id"]
     b["document_id"] = a["document_id"]
@@ -108,6 +106,7 @@ def test_merge_decision_span_input_output():
         evidence_from_hit(_hit(score=0.5), qi_id="q1", question="A"),
     ]
     result = merge_evidence(pool)
+    assert len(result["merged"]) == 3
     decision = merge_decision(result)
     assert decision["step"] == "merge"
     assert decision["input"]["count"] == 3
@@ -119,6 +118,5 @@ def test_merge_decision_span_input_output():
         decision["output"]["dropped"]
     ) or len(decision["output"]["dropped"]) >= 1
     refs = merge_evidence_refs(result["merged"])
-    assert refs
     assert "excerpt" in refs[0]
     assert "chunk_id" in refs[0]

@@ -1,126 +1,75 @@
 # Execution Plan
 
-> 子需求：知识 Agent 编排优化（Sufficiency V0）  
-> 栈约束：LangGraph 仅 knowledge/Master；检索只经现有 Tool → `search_chunks`；审计继续 `DecisionRecorder`
+> 子需求：局部邻居扩窗 + 双条件过滤（Chunk V3）  
+> 栈约束：FastAPI + 单表 `document_chunk`；组装只在 `search_chunks`；不改切块落库；DashScope Rerank/Embedding  
+> 已确认：heading 空仅约束「无 parent」；旧 V0/V1 组装函数删除
 
-## Step 1：Evidence Sufficiency V0 + 审计载荷约定
+## Step 1：配置 + SearchHit + 邻居双条件组装（替换旧路径）
 
 ### 目标
-落地 V0 充足性纯规则，并固定 knowledge span 的 `decision.step` / `input` / `output` / `evidence_refs` 写法（可单测，不依赖完整新图）。
+在 `search_chunks` 门槛后落地 V3 组装；删除旧 parent/V0 组装；配置双阈值。
 
 ### 方案
-- 在 `server/app/agent/`（或紧邻小模块）实现 `sufficiency_v0(hits) → SUFFICIENT|INSUFFICIENT`：`len(hits)>0` 即够。
-- 扩展/复用 `app/audit/evidence.py`：`evidence_refs` 单条含 `chunk_id`/`document_id`/`document_name`/`score`/`qi_id?`/`parent_id?`/`excerpt`（沿用现有 `search_hit_evidence_ref`，按需加 `qi_id`）。
-- 约定 `add_span` 的 `decision` 形状：`{step, input, output}`；`sufficiency` 的 `output` 含 `status` + `rule=len(hits)>0`。
-- 不改 `/api/chat`；本 Step 可不改图拓扑，或仅在现有 retrieve 后加可选 sufficiency span 试点——优先纯函数 + 单测，图内全面接线放到后续 Step。
+- `config.Settings` 增加 `expand_anchor_min`（默认 0.6）、`expand_query_min`（默认 0.3）；环境变量 `EXPAND_ANCHOR_MIN` / `EXPAND_QUERY_MIN`。
+- `SearchHit` 增加 `neighbor_chunk_ids: list[uuid.UUID]`、`expanded_chunk_ids: list[uuid.UUID]`（默认空列表）。
+- `_neighbor_expand`：按 `parent_id`（或无 parent 时 `doc+heading`）分组；组内 seeds ∪ 各 seed ±1 去重；非 seed 用 `cosine(nearest_seed, n)` ∧ query 分双条件；按 `chunk_index` 拼 **1** 条 `content`；代表锚点 = max score seed。无 parent 且 heading 空 → 不扩。
+- `search_chunks` 末尾调用 `_neighbor_expand(...)`；旧 parent/V0 组装已删。
+- `search_debug` 不调用组装。
 
 ### 验收
-- [✅] 单测：空 hits → INSUFFICIENT；非空 → SUFFICIENT（与 score 无关）
-- [✅] 单测：`decision` 含 `step`/`input`/`output`；`evidence_refs` 含 excerpt 与 id 字段
+- [✅] 单测：同父序列 A…F，命中 A、F → **1** 条 hit；C/D ∉ `neighbor_chunk_ids`（PRD§6.1 修订）
+- [✅] 单测：相邻双命中 → 1 条 content，不重复
+- [✅] 单测：仅锚点相似过 / 仅 query 过 → 均不进 `expanded_chunk_ids`（§6.2–3）
+- [✅] 单测：无 parent + heading 空 → 两列表 `[]`；有 parent + heading 空仍可 ±1（确认① B）
+- [✅] 单测或分支测：无 Rerank Key 时走余弦；有 Key 时调用批量 Rerank 路径（可 mock）（§6.5）
+- [✅] 源码断言：`search_chunks` 调用新组装；`search_debug` 源码不含邻居组装调用；旧函数名已删除
 
 ---
 
-## Step 2：Evidence Pool Merge + 入出对比 span
+## Step 2：审计 evidence 字段与 assembly
 
 ### 目标
-作答前统一 Merge：去重、预算、`related_questions`；审计可见 Merge 前后。
+retrieve / citations 可区分候选邻域与过线邻域；`assembly` 改为 V3 取值。
 
 ### 方案
-- 实现 `merge_evidence(pool) → merged`：去重键优先 `parent_id`，否则 `chunk_id`；同键留最高分并合并 `related_questions`；截断至 `MAX_EVIDENCE=10`。
-- State 侧引入 `evidence[]`（及 id 关联），替代无限平铺 `citations` 作为生成输入源（对外 citation 仍可由 merged evidence 映射）。
-- Merge 节点/`route` span：`step=merge`；`input` 含 count、`by_qi`；`output` 含 count、`ids`、`dropped`；`evidence_refs` 为合并后摘要。
+- `search_hit_evidence_ref`：写入 `neighbor_chunk_ids`、`expanded_chunk_ids`；`dropped = neighbor - expanded`；可选 `anchor_sim` / `query_score`（若 hit 或组装侧有缓存则带上，无则省略）。
+- `_assembly_kind` / `context_assembly_summary`：取值 `child_only` | `neighbor_expand`（去掉依赖 parent/heading_expand 作为默认语义；兼容旧测改断言）。
+- Chat / `node_retrieve_qi` 已用 `search_hit_evidence_ref` 则无需改编排；抽检调用链仍能拿到新字段。
 
 ### 验收
-- [✅] 单测：同 `parent_id` / 同 `chunk_id` 多条 → 一条 + `related_questions` 合并（AC-08）
-- [✅] 单测：超过 10 条按 score 保留 Top-N
-- [✅] 单测：merge span 的 input/output 含前后 count 与 dropped
+- [✅] 单测：`search_hit_evidence_ref` 含两 id 列表与 dropped；有扩窗时 `assembly=neighbor_expand`，无则为 `child_only`
+- [✅] `context_assembly_summary` 计数键与新 assembly 一致
+- [✅] 既有 audit 相关测通过（更新过时断言）
 
 ---
 
-## Step 3：Query Decomposition + 按 Qi 初始检索
+## Step 3：`merge_evidence` 按 chunk_id 去重
 
 ### 目标
-Complex 路径：分解 Qi（引导 ≤3、硬截断 5），每 Qi 初始各 `search_chunks` 1 次（不计入 `MAX_LOOPS`）；每 Qi 一条 retrieve span + sufficiency span。
+作答前 Merge 不再按 `parent_id` 压成 1 条，与 V3「同父多命中」一致。
 
 ### 方案
-- 扩展 `AgentState`：`query_type`、`sub_questions[]`、`evidence[]`、`searched_queries[]`、`knowledge_gaps[]` 等（对齐 design §10）；`loop_count` 语义改为仅补充检索（本 Step 先置 0，Rewrite 在 Step 4）。
-- 图节点：`decompose`（LLM 结构化输出 Qi）→ 串行 `retrieve_qi`（调用现有 `search_knowledge`/`search_chunks` Tool）→ `sufficiency`（V0）。
-- Decomposition 失败：降级为单 Qi=原 query（与 Simple 等价行为可在本 Step 暂用）。
-- 审计：`step=decompose`（route）；每 Qi `step=retrieve_qi`（retrieve）+ `step=sufficiency`（route）。
-- `web_search`/`search_graph` 不进本主流程；现网 allow_web 等旁路若保留须在计划外最小兼容，禁止塞进 Decomposition。
+- `_dedup_key` 改为仅 `chunk_id`（或等价 id）；更新 docstring。
+- 调整 `test_evidence_merge`：同 parent 不同 chunk → 两条都保留；同 chunk 仍去重并合并 `related_questions`。
 
 ### 验收
-- [✅] 单测或图测：>5 个子问题被截断为 5
-- [✅] 图/契约测：N 个 Qi → N 次初始检索；`loop_count` 仍为 0（AC-02 核心）
-- [✅] 审计：每 Qi 可见 retrieve 的 input/output 与 hit 摘要 + sufficiency 的 status/hit_count
+- [✅] 单测：同 `parent_id`、不同 `chunk_id` → Merge 后仍为 2 条（prd-sub §8.6）
+- [✅] 单测：同 `chunk_id` 仍去重并合并 related_questions / 留高分
+- [✅] `server/tests/test_evidence_merge.py`（及相关 sufficiency 若依赖旧语义）通过
 
 ---
 
-## Step 4：Query Rewrite + 再 Sufficiency + 补充检索预算
+## Step 4：文档与测试收口
 
 ### 目标
-仅对 INSUFFICIENT Qi Rewrite 再检；全局 `MAX_LOOPS=3`、每 Qi `MAX_REWRITE_PER_Q=2`；相同 query 跳过 Tool。
+TECH 描述与现网一致；旧扩窗测文件改为 V3 或删除后由 Step1 新测覆盖。
 
 ### 方案
-- 节点：`rewrite` → `retrieve_qi` → `sufficiency`；仅不足 Qi；禁止重搜已 SUFFICIENT。
-- `searched_queries` 去重：完全相同则跳过 Tool 并记 span/rationale。
-- 停止：全部够 / `loop_count >= MAX_LOOPS` / 该 Qi `rewrite_count` 达上限 → 进入 Merge（Gap 在 Step 5）。
-- 全部有 hit 时不得因 loop 额度未用尽而空转（AC-05）。
+- `docs/TECH.md`：检索组装改为「门槛后每 hit ±1 + 双条件」；注明不再默认 parent 全文 / V0 center-out。
+- 将 `test_expand_same_heading.py` 重写/替换为邻居扩窗测（若 Step1 已新建文件则删除旧文件避免双套）。
+- Phase 4 再同步 `docs/PRD.md`（本 Step 不强制改 PRD.md）。
 
 ### 验收
-- [✅] 测：无 hit Qi 才 Rewrite；有 hit 不重搜（AC-03/04）
-- [✅] 测：重复 query 不二次调用 Tool（AC-07）
-- [✅] 测：全部 SUFFICIENT 后不再补充检索（AC-05）
-- [✅] 审计：rewrite + 再 retrieve/sufficiency 的 input/output 齐全
-
----
-
-## Step 5：Knowledge Gap + Final Answer
-
-### 目标
-额度用尽仍不足时：有证据部分作答 + 列出缺口；Citation 仅来自 Evidence；禁止常识硬补缺口。
-
-### 方案
-- `gap` 节点：收集仍 INSUFFICIENT 的 Qi → `knowledge_gaps`；span `step=gap`。
-- `generate`：输入仅 Merge 后 evidence；prompt 明确区分可引用内容与缺口；`MAX_CITATIONS` 平铺砍尾改为基于 `MAX_EVIDENCE`。
-- generate span：`input`=evidence ids；`output`=answer 摘要；`evidence_refs`=最终引用。
-
-### 验收
-- [✅] 测：始终无 hit 且达 `MAX_LOOPS` → 回答含 Knowledge Gap（AC-06）
-- [✅] 测：有部分证据时 Gap 与 Answer 可并存；citation 不含无 evidence 项
-- [✅] 审计：gap / generate span 可对照
-
----
-
-## Step 6：Simple / Complex Query Analysis
-
-### 目标
-入口 Analysis：Simple 不分解、仅 1 次检索；Complex 走 Decomposition；失败降级 Simple。
-
-### 方案
-- 图入口节点 `analyze`（结构化 LLM 或轻量规则）：`query_type=simple|complex`；span `step=analyze`。
-- Simple：等价单 Qi 或短路「一次 retrieve → sufficiency → merge → generate」（无 decompose）。
-- Complex：进入 Step 3–5 路径。
-- 替换现网 `reason → run_tool` 主循环为上述 DAG/条件边；清理 `MAX_SUBTASKS`/`MAX_CITATIONS` 旧语义依赖（调用方兼容保留必要字段）。
-
-### 验收
-- [✅] 测：Simple → 不分解；`search_chunks`（或 search_knowledge）调用次数 = 1（AC-01）
-- [✅] 测：Complex → 走 decompose；Decomposition 解析失败 → 降级单次检索
-- [✅] 测：现有 knowledge Agent 入口（`initial_state` / Master 调用）仍可跑通
-
----
-
-## Step 7：Trace 收口（详情页 + 契约）
-
-### 目标
-审计详情不看服务日志即可定位卡在检索空 / Sufficiency / Merge / 生成；chat 模式不受影响。
-
-### 方案
-- `DecisionAuditView.vue`：展示 `decision.step`，并结构化或分区展示 `input`/`output`（在现有 `pretty(decision)` 上增强可读性即可，遵循 `docs/style.md`）。
-- 契约/集成测：Complex 跑完后 spans 顺序可串成 analyze→decompose→retrieve→sufficiency→…→merge→gap?→generate（AC-10）。
-- 回归：chat 路径审计口径不变；确认未改 `/api/chat`（AC-09）。
-
-### 验收
-- [✅] 前端详情可见 step，并能读到 retrieve/sufficiency/merge 的关键 input/output（路径或组件抽检）
-- [✅] 测：knowledge 一次 Complex 的 span 链可定位节点；chat 相关测仍通过（AC-09/10）
-- [✅] `docs/TECH.md` / `docs/PRD.md` 本 Step 不强制改（Phase 4 统一同步）
+- [✅] `docs/TECH.md` 已描述 V3 组装与两字段
+- [✅] 仓库无仍断言 `_assemble_parent_context` / parent 全文默认路径的过时测
+- [✅] 对本需求相关测文件跑通：`test_neighbor*`（或等价）+ `test_audit_evidence` + `test_evidence_merge`

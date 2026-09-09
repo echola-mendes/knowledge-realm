@@ -13,13 +13,9 @@ def _excerpt(text: str, max_len: int = _EXCERPT_LEN) -> str:
 
 def _assembly_kind(hit: SearchHit) -> str:
     original = hit.original_content or hit.content
-    if original == hit.content:
-        return "child_only"
-    if hit.parent_id is not None:
-        return "parent"
-    if hit.heading:
-        return "heading_expand"
-    return "expanded"
+    if hit.expanded_chunk_ids or hit.content != original:
+        return "neighbor_expand"
+    return "child_only"
 
 
 def search_hit_evidence_ref(
@@ -30,6 +26,11 @@ def search_hit_evidence_ref(
     """Map a post-assembly SearchHit to a decision-audit evidence ref."""
     original = hit.original_content or hit.content
     assembly = _assembly_kind(hit)
+    neighbor_ids = [str(cid) for cid in hit.neighbor_chunk_ids]
+    expanded_ids = [str(cid) for cid in hit.expanded_chunk_ids]
+    seed_ids = [str(cid) for cid in hit.seed_chunk_ids] or [str(hit.chunk_id)]
+    expanded_set = set(hit.expanded_chunk_ids)
+    dropped = [str(cid) for cid in hit.neighbor_chunk_ids if cid not in expanded_set]
     ref: dict[str, Any] = {
         "type": "chunk",
         "id": str(hit.chunk_id),
@@ -40,6 +41,10 @@ def search_hit_evidence_ref(
         "assembly": assembly,
         "excerpt": _excerpt(hit.content),
         "context_chars": len(hit.content),
+        "seed_chunk_ids": seed_ids,
+        "neighbor_chunk_ids": neighbor_ids,
+        "expanded_chunk_ids": expanded_ids,
+        "dropped": dropped,
     }
     if original != hit.content:
         ref["original_excerpt"] = _excerpt(original)
@@ -54,7 +59,7 @@ def search_hit_evidence_ref(
 
 
 def context_assembly_summary(hits: list[SearchHit]) -> dict[str, int]:
-    counts = {"child_only": 0, "parent": 0, "heading_expand": 0, "expanded": 0}
+    counts = {"child_only": 0, "neighbor_expand": 0}
     for hit in hits:
         counts[_assembly_kind(hit)] += 1
     return counts

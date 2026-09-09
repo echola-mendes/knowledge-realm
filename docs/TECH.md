@@ -46,7 +46,7 @@
 - FastAPI + Pydantic v2 + python-dotenv
 - 切块：Markdown 标题切分；长节 parent + children（`role` / `parent_id`）；parent 无 embedding、不进 ES
 - P0 问答：`ChatOpenAI` 单链；检索只用当前句
-- 检索（`search_chunks`）：pgvector +（可选）ES BM25 → RRF → Rerank → `RELEVANCE_MIN_SCORE`；仅 `role=child` 且有 embedding；组装见 Chunk PRD（V0/V1/V3）
+- 检索（`search_chunks`）：pgvector +（可选）ES BM25 → RRF → Rerank → `RELEVANCE_MIN_SCORE`；仅 `role=child` 且有 embedding；门槛后按 `parent_id`（或无 parent 时 `doc+heading`）分组：seeds ∪ 各 seed ±1 去重，非 seed 邻居过双条件（最近 seed 余弦 ≥ `EXPAND_ANCHOR_MIN` 且 query 分 ≥ `EXPAND_QUERY_MIN`）后按 `chunk_index` 拼成 **1** 条 `content`；代表锚点取组内最高分；`SearchHit` 带 `neighbor_chunk_ids` / `expanded_chunk_ids`；不再默认 parent 全文或 V0 center-out；`search_debug` 不组装
 - Agent：LangGraph；检索必须经 Tool 调现有 `search.py`，禁止第二套向量查询
 - Checkpoint：LangGraph PostgresSaver，同一 `DATABASE_URL`；不作 STM/聊天权威
 - URL 导入：`httpx` 超时 20s + `trafilatura`
@@ -91,6 +91,8 @@
 | `ELASTICSEARCH_URL` | P2 BM25；未配则关键词路不可用 |
 | `RERANK_API_KEY` / `RERANK_BASE_URL` / `RERANK_MODEL` | 重排；无 Key 则降级 |
 | `RELEVANCE_MIN_SCORE` | 逐条门槛，默认 0.5 |
+| `EXPAND_ANCHOR_MIN` | 邻居–锚点余弦门槛，默认 0.6 |
+| `EXPAND_QUERY_MIN` | 邻居–query 分门槛，默认 0.3（有 Rerank Key 用批量 Rerank，否则余弦） |
 | `SESSION_SECRET` | Session 签名，≥32 字符 |
 | `INITIAL_USERNAME` / `INITIAL_PASSWORD` | 空库引导用户（密码只放本机 `.env`） |
 | `REDIS_URL` | 任务队列，默认 `redis://127.0.0.1:6379/0` |

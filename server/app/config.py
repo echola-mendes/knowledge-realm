@@ -33,6 +33,8 @@ class Settings:
     rerank_base_url: str
     rerank_model: str
     relevance_min_score: float
+    expand_anchor_min: float
+    expand_query_min: float
     session_secret: str
     initial_username: str
     initial_password: str
@@ -125,6 +127,8 @@ def load_settings(environ: dict[str, str] | None = None, *, load_file: bool = Fa
         ).strip().rstrip("/"),
         rerank_model=(env.get("RERANK_MODEL") or "qwen3-rerank").strip(),
         relevance_min_score=_min_score("RELEVANCE_MIN_SCORE", env.get("RELEVANCE_MIN_SCORE"), 0.5),
+        expand_anchor_min=_min_score("EXPAND_ANCHOR_MIN", env.get("EXPAND_ANCHOR_MIN"), 0.6),
+        expand_query_min=_min_score("EXPAND_QUERY_MIN", env.get("EXPAND_QUERY_MIN"), 0.3),
         session_secret=(env.get("SESSION_SECRET") or "local-dev-session-secret-min-32-chars").strip(),
         initial_username=(env.get("INITIAL_USERNAME") or "echola").strip() or "echola",
         initial_password=(env.get("INITIAL_PASSWORD") or "").strip(),

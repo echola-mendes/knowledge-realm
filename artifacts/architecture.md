@@ -31,6 +31,7 @@
 - **Agent 负责决策编排**；**`search_chunks`（经 Tool）负责** Vector+BM25→RRF→Rerank→Context Expansion。禁止在 Agent 内自建第二套检索。
 - 主路径：`analyze`（simple|complex）→ Simple 单次检索 | Complex `decompose`→按 Qi 检索 → Sufficiency（V0：`len(hits)>0`）→ 仅不足 Qi `rewrite` 再检 → `merge` →（可选 `gap`）→ `generate`。
 - 预算：`MAX_LOOPS` **仅计补充检索**；每 Qi 初始检索 1 次不计入；`MAX_SUB_QUESTIONS` 硬上限 5（引导 ≤3）；`MAX_EVIDENCE=10`。
+- **Merge 去重键**：`chunk_id`（禁止再按 `parent_id` 压成 1 条）。
 - `web_search` / `search_graph`：**不进** Decomposition/Sufficiency 主流程。
 - 不改 `/api/chat`；Simple **不**强行改走 Chat API。
 
@@ -97,5 +98,5 @@
 - `role`：`parent` | `child`；存量默认 `child`
 - `parent_id`：child → parent；短 section 仅一行 `role=child` 且 `parent_id=null`（无空父）
 - **检索单位**：仅 child（向量 / BM25 / RRF / Rerank）；parent **无 embedding、不进 ES**
-- **生成上下文**：默认 `parent.content`；无 parent / 未 reindex → 降级 V0 同 heading 扩窗
-- 导入页切的是 child 策略，与「命中后组装 parent」分维；V1 不做组装 UI
+- **生成上下文（V3）**：门槛后每命中独立 ±1；邻居须过锚点余弦 + query 分双条件才并入 `content`；同父多命中保留多条。**禁止**默认 parent 全文 / V0 同 heading center-out 作为主路径。
+- 导入页切的是 child 策略，与「命中后邻居组装」分维；不做组装 UI

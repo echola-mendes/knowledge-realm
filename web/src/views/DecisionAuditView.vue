@@ -44,9 +44,7 @@ const STEP_LABELS: Record<string, string> = {
 };
 const ASSEMBLY_LABELS: Record<string, string> = {
   child_only: "单块",
-  parent: "父块",
-  heading_expand: "同节扩窗",
-  expanded: "扩窗",
+  neighbor_expand: "邻居扩窗",
 };
 
 function modeLabel(mode: string): string {
@@ -134,6 +132,36 @@ function contextExcerptOf(item: Record<string, unknown>): string {
     return item.excerpt;
   }
   return "";
+}
+
+function hasAssembledContext(item: Record<string, unknown>): boolean {
+  const ctx = typeof item.context_chars === "number" ? item.context_chars : null;
+  const orig = typeof item.original_chars === "number" ? item.original_chars : null;
+  if (ctx !== null && orig !== null && ctx > orig) return true;
+  const context = contextExcerptOf(item);
+  const hit = excerptOf(item);
+  return Boolean(context && hit && context !== hit);
+}
+
+function asIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((x): x is string => typeof x === "string" && x.length > 0);
+}
+
+function shortId(id: string): string {
+  return id.length > 8 ? `${id.slice(0, 8)}…` : id;
+}
+
+function formatIdList(ids: string[]): string {
+  return ids.map(shortId).join(", ");
+}
+
+function hasNeighborFields(item: Record<string, unknown>): boolean {
+  return (
+    "neighbor_chunk_ids" in item ||
+    "expanded_chunk_ids" in item ||
+    "dropped" in item
+  );
 }
 
 async function loadList() {
@@ -283,15 +311,46 @@ watch(runId, (id) => {
                     <span v-if="item.document_name" class="muted">{{ item.document_name }}</span>
                   </div>
                   <p v-if="excerptOf(item)" class="ev-excerpt"><strong>命中块：</strong>{{ excerptOf(item) }}</p>
-                  <p
-                    v-if="contextExcerptOf(item) && contextExcerptOf(item) !== excerptOf(item)"
-                    class="ev-excerpt"
-                  >
+                  <p v-if="hasAssembledContext(item)" class="ev-excerpt">
                     <strong>送入 LLM：</strong>{{ contextExcerptOf(item) }}
+                    <span
+                      v-if="typeof item.context_chars === 'number' && typeof item.original_chars === 'number'"
+                      class="muted"
+                    >
+                      （{{ item.original_chars }} → {{ item.context_chars }} 字）
+                    </span>
                   </p>
-                  <p v-if="typeof item.context_chars === 'number'" class="ev-meta muted">
+                  <p
+                    v-if="Array.isArray(item.seed_chunk_ids) && item.seed_chunk_ids.length > 1"
+                    class="ev-meta muted"
+                  >
+                    同组命中 {{ item.seed_chunk_ids.length }} 块 · 上下文 {{ item.context_chars }} 字
+                  </p>
+                  <p v-else-if="typeof item.context_chars === 'number'" class="ev-meta muted">
                     上下文 {{ item.context_chars }} 字
                   </p>
+                  <div v-if="hasNeighborFields(item)" class="ev-ids">
+                    <p class="ev-meta">
+                      <strong>neighbor</strong>
+                      <template v-if="asIdList(item.neighbor_chunk_ids).length">
+                        （{{ asIdList(item.neighbor_chunk_ids).length }}）
+                        <code>{{ formatIdList(asIdList(item.neighbor_chunk_ids)) }}</code>
+                      </template>
+                      <span v-else class="muted"> []</span>
+                    </p>
+                    <p class="ev-meta">
+                      <strong>expanded</strong>
+                      <template v-if="asIdList(item.expanded_chunk_ids).length">
+                        （{{ asIdList(item.expanded_chunk_ids).length }}）
+                        <code>{{ formatIdList(asIdList(item.expanded_chunk_ids)) }}</code>
+                      </template>
+                      <span v-else class="muted"> []</span>
+                    </p>
+                    <p v-if="asIdList(item.dropped).length" class="ev-meta muted">
+                      dropped（{{ asIdList(item.dropped).length }}）
+                      <code>{{ formatIdList(asIdList(item.dropped)) }}</code>
+                    </p>
+                  </div>
                 </li>
               </ul>
             </div>
@@ -661,6 +720,18 @@ watch(runId, (id) => {
   font-size: 0.72rem;
   color: var(--text);
   line-height: 1.35;
+}
+.ev-ids {
+  display: grid;
+  gap: 0.15rem;
+  margin-top: 0.25rem;
+}
+.ev-ids .ev-meta {
+  margin: 0;
+  word-break: break-all;
+}
+.ev-ids code {
+  font-size: 0.7rem;
 }
 .ev-meta {
   margin: 0;

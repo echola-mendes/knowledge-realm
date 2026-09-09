@@ -99,9 +99,9 @@
 
 #### 3.2.3 同节上下文扩窗 / 父子切块（需求文档）
 
-- **V0（已落地）**：[`PRD_Chunk_V0.md`](rag/PRD_Chunk_V0.md) — `search_chunks` 返回前按同 `heading` 扩窗，不改表；无 parent 时仍作降级路径。
-- **V1（已落地）**：[`PRD_Chunk_V1.md`](rag/PRD_Chunk_V1.md) — 索引落库 parent/child（`role` / `parent_id`）；检索仅 child；有 parent 则组装 parent 全文（超预算整块回退）。
-- **V3（已拍板，待开发）**：[`PRD_Chunk_V3.md`](rag/PRD_Chunk_V3.md) — 每命中独立 ±1；邻居双条件（`cosine(anchor,n)` ∧ `score(query,n)`，query 侧可二次 Rerank）；多 hit 不合并；`neighbor_chunk_ids` / `expanded_chunk_ids`。
+- **V0（历史）**：[`PRD_Chunk_V0.md`](rag/PRD_Chunk_V0.md) — 曾按同 `heading` center-out 扩窗；**检索组装已由 V3 替换**。
+- **V1（已落地）**：[`PRD_Chunk_V1.md`](rag/PRD_Chunk_V1.md) — 索引落库 parent/child（`role` / `parent_id`）；检索仅 child；**组装侧不再默认 parent 全文**（见 V3）。
+- **V3（已落地）**：[`PRD_Chunk_V3.md`](rag/PRD_Chunk_V3.md) — 门槛后按同父 / 同 heading 分组：seeds ∪ ±1 去重 → 非 seed 双条件（`cosine(nearest_seed,n)` ∧ `score(query,n)`）→ 按 index 拼 **1** 条 context；代表锚点取最高分；`neighbor_chunk_ids` / `expanded_chunk_ids`；审计 `assembly=child_only|neighbor_expand`；Merge 按 `chunk_id` 去重。
 
 ---
 
@@ -311,9 +311,10 @@
 - 知识库自动更新与定时轮询。
 - 知识去重增强与元数据管理。
 - **父子切块 V1**（[`PRD_Chunk_V1.md`](rag/PRD_Chunk_V1.md)）：索引层落库 parent/child（已落地）。
-- **父子组装 V3**（[`PRD_Chunk_V3.md`](rag/PRD_Chunk_V3.md)）：±1 + 双条件过滤；`neighbor_chunk_ids` / `expanded_chunk_ids`（已拍板，待开发）。
+- **邻居组装 V3**（[`PRD_Chunk_V3.md`](rag/PRD_Chunk_V3.md)）：同组合并 + ±1 + 双条件；`neighbor_chunk_ids` / `expanded_chunk_ids`（已落地）。
 
 ### 4.4 可观测与评估增强
 
 - **决策审计（极简，已上线）**（[`Trace.md`](Trace.md) / [`PRD-DECISIONS.md`](PRD-DECISIONS.md)）：每轮 assistant 落库决策链（route / retrieve / generate + 证据），绑 `message_id`；监控列表与详情。本期不做 LangSmith、自建 Trace 平台、Explain/Judge。Master / plan / booking 全路径埋点下一期接入。
 [… truncated at ~4102 of 4698 tokens — use ctx_read with lines= parameter to see specific sections]
+[… truncated at ~4109 of 4109 tokens — use ctx_read with lines= parameter to see specific sections]

@@ -76,6 +76,10 @@ export type SearchHit = {
   knowledge_base_name?: string | null;
   tags?: string[];
   created_at?: string | null;
+  original_content?: string | null;
+  seed_chunk_ids?: string[];
+  neighbor_chunk_ids?: string[];
+  expanded_chunk_ids?: string[];
 };
 
 export type Citation = {

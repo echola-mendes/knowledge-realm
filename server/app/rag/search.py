@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from sqlalchemy import and_, or_, select
@@ -40,6 +40,9 @@ class SearchHit:
     kind: str
     original_content: str = ""
     parent_id: uuid.UUID | None = None
+    neighbor_chunk_ids: list[uuid.UUID] = field(default_factory=list)
+    expanded_chunk_ids: list[uuid.UUID] = field(default_factory=list)
+    seed_chunk_ids: list[uuid.UUID] = field(default_factory=list)
 
 
 def normalize_query(query: str) -> str:
@@ -219,7 +222,7 @@ def search_chunks(
     by_id.update(_hits_for_ids(session, query_vec, kb_ids, user_id, missing))
     ordered_ids = sorted(fused.keys(), key=lambda cid: fused[cid], reverse=True)
     hits = [by_id[cid] for cid in ordered_ids if cid in by_id][:k]
-    return _assemble_parent_context(session, _keep_relevant(_rerank(query, hits)))
+    return _neighbor_expand(session, query, query_vec, _keep_relevant(_rerank(query, hits)))
 
 
 def _keep_relevant(hits: list[SearchHit]) -> list[SearchHit]:
@@ -241,45 +244,77 @@ def _heading_blank(heading: str | None) -> bool:
     return heading is None or heading == ""
 
 
-def _center_out_chunks(
-    siblings: list[DocumentChunk],
-    center_id: uuid.UUID,
-    max_chars: int = SECTION_EXPAND_MAX_CHARS,
-) -> list[DocumentChunk]:
-    """Pick center + neighbors by chunk_index distance; whole-child budget only."""
+def _cosine(a, b) -> float:
+    if a is None or b is None:
+        return 0.0
+    try:
+        va = [float(x) for x in a]
+        vb = [float(x) for x in b]
+    except (TypeError, ValueError):
+        return 0.0
+    if not va or not vb or len(va) != len(vb):
+        return 0.0
+    dot = sum(x * y for x, y in zip(va, vb))
+    na = sum(x * x for x in va) ** 0.5
+    nb = sum(y * y for y in vb) ** 0.5
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def _adjacent_chunks(siblings: list[DocumentChunk], center_id: uuid.UUID) -> list[DocumentChunk]:
     if not siblings:
         return []
     ordered = sorted(siblings, key=lambda c: c.chunk_index)
     try:
-        center_pos = next(i for i, c in enumerate(ordered) if c.id == center_id)
+        pos = next(i for i, c in enumerate(ordered) if c.id == center_id)
     except StopIteration:
         return []
-    center = ordered[center_pos]
-    selected = {center_pos}
-    total = len(center.content)
-    if total > max_chars:
-        return [center]
-    max_dist = max(center_pos, len(ordered) - 1 - center_pos)
-    for dist in range(1, max_dist + 1):
-        left_added = False
-        right_added = False
-        left_i = center_pos - dist
-        right_i = center_pos + dist
-        if left_i >= 0:
-            left = ordered[left_i]
-            if total + len(left.content) <= max_chars:
-                selected.add(left_i)
-                total += len(left.content)
-                left_added = True
-        if right_i < len(ordered):
-            right = ordered[right_i]
-            if total + len(right.content) <= max_chars:
-                selected.add(right_i)
-                total += len(right.content)
-                right_added = True
-        if not left_added and not right_added:
-            break
-    return [ordered[i] for i in sorted(selected)]
+    out: list[DocumentChunk] = []
+    if pos > 0:
+        out.append(ordered[pos - 1])
+    if pos + 1 < len(ordered):
+        out.append(ordered[pos + 1])
+    return out
+
+
+def _join_chunks(
+    must: list[DocumentChunk],
+    optional: list[DocumentChunk],
+    max_chars: int = SECTION_EXPAND_MAX_CHARS,
+) -> str:
+    selected = list(must)
+    seen = {c.id for c in selected}
+    total = sum(len(c.content) for c in selected)
+    for chunk in sorted(optional, key=lambda c: c.chunk_index):
+        if chunk.id in seen:
+            continue
+        if total + len(chunk.content) <= max_chars:
+            selected.append(chunk)
+            seen.add(chunk.id)
+            total += len(chunk.content)
+    selected.sort(key=lambda c: c.chunk_index)
+    return "\n\n".join(c.content for c in selected)
+
+
+def _join_anchor_expanded(
+    anchor: DocumentChunk,
+    expanded: list[DocumentChunk],
+    max_chars: int = SECTION_EXPAND_MAX_CHARS,
+) -> str:
+    return _join_chunks([anchor], expanded, max_chars=max_chars)
+
+
+def _expand_group_key(hit: SearchHit) -> tuple:
+    if hit.parent_id is not None:
+        return ("parent", hit.parent_id)
+    if _heading_blank(hit.heading):
+        return ("alone", hit.chunk_id)
+    return ("heading", hit.document_id, hit.heading or "")
+
+
+def _nearest_seed(neighbor: DocumentChunk, seeds: list[DocumentChunk]) -> DocumentChunk:
+    return min(seeds, key=lambda s: abs(s.chunk_index - neighbor.chunk_index))
 
 
 def _section_siblings(
@@ -304,36 +339,6 @@ def _section_siblings(
     for key in out:
         out[key].sort(key=lambda c: c.chunk_index)
     return out
-
-
-def _expand_same_heading(session: Session, hits: list[SearchHit]) -> list[SearchHit]:
-    if not hits:
-        return []
-    passthrough: list[SearchHit] = []
-    best: dict[tuple[uuid.UUID, str], SearchHit] = {}
-    for hit in hits:
-        if _heading_blank(hit.heading):
-            passthrough.append(replace(hit, original_content=hit.content))
-            continue
-        key = (hit.document_id, hit.heading or "")
-        prev = best.get(key)
-        if prev is None or hit.score > prev.score:
-            best[key] = hit
-    winners = list(best.values())
-    siblings_by_key = _section_siblings(session, list(best.keys()))
-    expanded: list[SearchHit] = []
-    for hit in winners:
-        key = (hit.document_id, hit.heading or "")
-        siblings = siblings_by_key.get(key, [])
-        chosen = _center_out_chunks(siblings, hit.chunk_id)
-        if not chosen:
-            expanded.append(replace(hit, original_content=hit.content))
-            continue
-        content = "\n\n".join(c.content for c in chosen)
-        expanded.append(replace(hit, content=content, original_content=hit.content))
-    merged = passthrough + expanded
-    merged.sort(key=lambda h: h.score, reverse=True)
-    return merged
 
 
 def _chunks_by_ids(session: Session, ids: list[uuid.UUID]) -> dict[uuid.UUID, DocumentChunk]:
@@ -366,57 +371,154 @@ def _children_of_parents(
     return out
 
 
-def _assemble_with_parent(session: Session, hits: list[SearchHit]) -> list[SearchHit]:
-    best: dict[uuid.UUID, SearchHit] = {}
-    for hit in hits:
-        pid = hit.parent_id
-        if pid is None:
-            continue
-        prev = best.get(pid)
-        if prev is None or hit.score > prev.score:
-            best[pid] = hit
-    parents = _chunks_by_ids(session, list(best.keys()))
-    over_budget: list[tuple[uuid.UUID, SearchHit]] = []
-    out: list[SearchHit] = []
-    for pid, hit in best.items():
-        parent = parents.get(pid)
-        if parent is None:
-            out.append(replace(hit, original_content=hit.content))
-            continue
-        if len(parent.content) <= SECTION_EXPAND_MAX_CHARS:
-            out.append(replace(hit, content=parent.content, original_content=hit.content))
-        else:
-            over_budget.append((pid, hit))
-    if over_budget:
-        children_by_parent = _children_of_parents(session, [pid for pid, _ in over_budget])
-        for pid, hit in over_budget:
-            siblings = children_by_parent.get(pid, [])
-            chosen = _center_out_chunks(siblings, hit.chunk_id)
-            if not chosen:
-                out.append(replace(hit, original_content=hit.content))
-                continue
-            content = "\n\n".join(c.content for c in chosen)
-            out.append(replace(hit, content=content, original_content=hit.content))
-    return out
+def _neighbor_query_scores(
+    query: str,
+    query_vec,
+    neighbor_ids: list[uuid.UUID],
+    chunk_by_id: dict[uuid.UUID, DocumentChunk],
+) -> dict[uuid.UUID, float]:
+    if not neighbor_ids:
+        return {}
+    if rerank_keys_ready():
+        docs = [chunk_by_id[nid].content for nid in neighbor_ids]
+        scores = score_documents(query, docs)
+        if scores is not None:
+            return {nid: float(sc) for nid, sc in zip(neighbor_ids, scores)}
+    return {nid: _cosine(query_vec, chunk_by_id[nid].embedding) for nid in neighbor_ids}
 
 
-def _assemble_parent_context(session: Session, hits: list[SearchHit]) -> list[SearchHit]:
+def _neighbor_expand(
+    session: Session,
+    query: str,
+    query_vec,
+    hits: list[SearchHit],
+) -> list[SearchHit]:
+    """Group same-parent / same-heading hits, union ±1 neighbors, dual-filter, one hit."""
     if not hits:
         return []
-    with_parent: list[SearchHit] = []
-    without: list[SearchHit] = []
+    settings = get_settings()
+    anchor_min = settings.expand_anchor_min
+    query_min = settings.expand_query_min
+
+    groups: dict[tuple, list[SearchHit]] = {}
     for hit in hits:
-        if hit.parent_id is not None:
-            with_parent.append(hit)
+        groups.setdefault(_expand_group_key(hit), []).append(hit)
+
+    parent_ids: list[uuid.UUID] = []
+    heading_keys: list[tuple[uuid.UUID, str]] = []
+    for key, group in groups.items():
+        kind = key[0]
+        if kind == "parent":
+            parent_ids.append(key[1])  # type: ignore[arg-type]
+        elif kind == "heading":
+            heading_keys.append((key[1], key[2]))  # type: ignore[arg-type]
+
+    children_by_parent = _children_of_parents(session, list(dict.fromkeys(parent_ids)))
+    siblings_by_heading = _section_siblings(session, list(dict.fromkeys(heading_keys)))
+
+    chunk_by_id: dict[uuid.UUID, DocumentChunk] = {}
+    for siblings in list(children_by_parent.values()) + list(siblings_by_heading.values()):
+        for chunk in siblings:
+            chunk_by_id[chunk.id] = chunk
+
+    missing_seeds = [
+        h.chunk_id
+        for key, group in groups.items()
+        if key[0] != "alone"
+        for h in group
+        if h.chunk_id not in chunk_by_id
+    ]
+    if missing_seeds:
+        chunk_by_id.update(_chunks_by_ids(session, list(dict.fromkeys(missing_seeds))))
+
+    # Collect group-level neighbor candidates (seeds ∪ ±1, then non-seeds only).
+    group_neighbors: dict[tuple, list[DocumentChunk]] = {}
+    all_neighbor_ids: list[uuid.UUID] = []
+    for key, group in groups.items():
+        kind = key[0]
+        if kind == "alone":
+            group_neighbors[key] = []
+            continue
+        if kind == "parent":
+            siblings = children_by_parent.get(key[1], [])  # type: ignore[arg-type]
         else:
-            without.append(hit)
-    assembled: list[SearchHit] = []
-    if without:
-        assembled.extend(_expand_same_heading(session, without))
-    if with_parent:
-        assembled.extend(_assemble_with_parent(session, with_parent))
-    assembled.sort(key=lambda h: h.score, reverse=True)
-    return assembled
+            siblings = siblings_by_heading.get((key[1], key[2]), [])  # type: ignore[arg-type]
+        seed_ids = {h.chunk_id for h in group}
+        neighbors: dict[uuid.UUID, DocumentChunk] = {}
+        for seed_id in seed_ids:
+            for n in _adjacent_chunks(siblings, seed_id):
+                if n.id not in seed_ids:
+                    neighbors[n.id] = n
+        ordered = sorted(neighbors.values(), key=lambda c: c.chunk_index)
+        group_neighbors[key] = ordered
+        all_neighbor_ids.extend(n.id for n in ordered)
+
+    unique_neighbor_ids = list(dict.fromkeys(all_neighbor_ids))
+    query_scores = _neighbor_query_scores(query, query_vec, unique_neighbor_ids, chunk_by_id)
+
+    out: list[SearchHit] = []
+    for key, group in groups.items():
+        primary = max(group, key=lambda h: h.score)
+        seed_chunks: list[DocumentChunk] = []
+        for h in group:
+            chunk = chunk_by_id.get(h.chunk_id)
+            if chunk is not None:
+                seed_chunks.append(chunk)
+        seed_chunks.sort(key=lambda c: c.chunk_index)
+        primary_chunk = chunk_by_id.get(primary.chunk_id)
+        original = (
+            primary_chunk.content
+            if primary_chunk is not None
+            else (primary.original_content or primary.content)
+        )
+
+        if key[0] == "alone" or not seed_chunks:
+            out.append(
+                replace(
+                    primary,
+                    content=original if primary_chunk is not None else primary.content,
+                    original_content=original,
+                    neighbor_chunk_ids=[],
+                    expanded_chunk_ids=[],
+                    seed_chunk_ids=[primary.chunk_id],
+                )
+            )
+            continue
+
+        # Deduplicate seeds by id while keeping chunk_index order.
+        seen_seed: set[uuid.UUID] = set()
+        unique_seeds: list[DocumentChunk] = []
+        for chunk in seed_chunks:
+            if chunk.id in seen_seed:
+                continue
+            seen_seed.add(chunk.id)
+            unique_seeds.append(chunk)
+        seed_chunks = unique_seeds
+
+        neighbors = group_neighbors.get(key, [])
+        neighbor_ids = [n.id for n in neighbors]
+        expanded: list[DocumentChunk] = []
+        for neighbor in neighbors:
+            nearest = _nearest_seed(neighbor, seed_chunks)
+            anchor_sim = _cosine(nearest.embedding, neighbor.embedding)
+            q_score = query_scores.get(neighbor.id, 0.0)
+            if anchor_sim >= anchor_min and q_score >= query_min:
+                expanded.append(neighbor)
+        expanded_ids = [c.id for c in expanded]
+        seed_ids = [c.id for c in seed_chunks]
+        content = _join_chunks(seed_chunks, expanded)
+        out.append(
+            replace(
+                primary,
+                content=content,
+                original_content=original,
+                neighbor_chunk_ids=neighbor_ids,
+                expanded_chunk_ids=expanded_ids,
+                seed_chunk_ids=seed_ids,
+            )
+        )
+    out.sort(key=lambda h: h.score, reverse=True)
+    return out
 
 
 def _rerank_model_name() -> str:
