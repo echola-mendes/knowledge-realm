@@ -99,8 +99,9 @@
 
 #### 3.2.3 同节上下文扩窗 / 父子切块（需求文档）
 
-- **V0（已落地）**：[`PRD_Chunk_V0.md`](PRD_Chunk_V0.md) — `search_chunks` 返回前按同 `heading` 扩窗，不改表；无 parent 时仍作降级路径。
-- **V1（已落地）**：[`PRD_Chunk_V1.md`](PRD_Chunk_V1.md) — 索引落库 parent/child（`role` / `parent_id`）；检索仅 child；有 parent 则组装 parent 全文（超预算整块回退）。
+- **V0（已落地）**：[`PRD_Chunk_V0.md`](rag/PRD_Chunk_V0.md) — `search_chunks` 返回前按同 `heading` 扩窗，不改表；无 parent 时仍作降级路径。
+- **V1（已落地）**：[`PRD_Chunk_V1.md`](rag/PRD_Chunk_V1.md) — 索引落库 parent/child（`role` / `parent_id`）；检索仅 child；有 parent 则组装 parent 全文（超预算整块回退）。
+- **V3（已拍板，待开发）**：[`PRD_Chunk_V3.md`](rag/PRD_Chunk_V3.md) — 有/无 parent 统一：多锚点 ±1 邻域 + Expansion Rerank；同组命中不去重为单赢家；`chunk_id` 并集去重后合成 1 条 hit（无 parent 按同 heading 分组，不再 V0 center-out）；决策审计 `retrieve` span 增加邻域组装复盘字段。
 
 ---
 
@@ -309,7 +310,8 @@
 - 自动知识整理与主动知识推荐增强。
 - 知识库自动更新与定时轮询。
 - 知识去重增强与元数据管理。
-- **父子切块 V1**（[`PRD_Chunk_V1.md`](PRD_Chunk_V1.md)）：在 V0 同节扩窗验证后，索引层落库 parent/child。
+- **父子切块 V1**（[`PRD_Chunk_V1.md`](rag/PRD_Chunk_V1.md)）：索引层落库 parent/child（已落地）。
+- **父子组装 V3**（[`PRD_Chunk_V3.md`](rag/PRD_Chunk_V3.md)）：±1 邻域 + Expansion Rerank；有/无 parent 同一套；retrieve 审计可复盘邻居过滤（已拍板，待开发）。
 
 ### 4.4 可观测与评估增强
 

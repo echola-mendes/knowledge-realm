@@ -178,7 +178,7 @@ MinerU、LlamaIndex、Ollama、Milvus、Celery、Kafka、Kubernetes、Meilisearc
 | `server/alembic/` | 迁移；含 `20260908_0025`（`document_chunk.role` / `parent_id`，`embedding` 可空） |
 | `web/src/styles.css` | 全局设计 token 与顶栏/页面自适应容器（不锁 1440×900） |
 | `server/app/routers/tags.py` | 标签创建/列表/删除 |
-| `server/app/rag/search.py` | Hybrid + RRF + Rerank；经 `search_kb_ids` 定库；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤；可选 `created_after`/`created_before`（文档 `created_at`）。召回保险：`role=child` 且 `embedding IS NOT NULL`。V1：`_assemble_parent_context`——有 `parent_id` 用 parent 全文（同父去重；超 `SECTION_EXPAND_MAX_CHARS` 则对该父下 children center-out 整块回退）；无 parent 降级 V0 `_expand_same_heading`。`search_debug` 不组装。见 [`PRD_Chunk_V1.md`](PRD_Chunk_V1.md) / V0 [`PRD_Chunk_V0.md`](PRD_Chunk_V0.md) |
+| `server/app/rag/search.py` | Hybrid + RRF + Rerank；经 `search_kb_ids` 定库；0.30 仍看向量第一名；再按 `RELEVANCE_MIN_SCORE` 逐条过滤；可选 `created_after`/`created_before`（文档 `created_at`）。召回保险：`role=child` 且 `embedding IS NOT NULL`。V1：`_assemble_parent_context`——有 `parent_id` 用 parent 全文（同父去重；超 `SECTION_EXPAND_MAX_CHARS` 则对该父下 children center-out 整块回退）；无 parent 降级 V0 `_expand_same_heading`。`search_debug` 不组装。见 [`PRD_Chunk_V1.md`](rag/PRD_Chunk_V1.md) / V0 [`PRD_Chunk_V0.md`](rag/PRD_Chunk_V0.md)；V3（邻域+Expansion Rerank，待开发）见 [`PRD_Chunk_V3.md`](rag/PRD_Chunk_V3.md) |
 | `server/app/rag/rerank.py` | DashScope 兼容 `/reranks`；无 Key 则 LLM 打分；都没有则保持 RRF 顺序 |
 | `server/app/rag/es_bm25.py` | BM25 索引与检索；chunk 与 PG 同步 upsert/删除；测试可替换为内存实现 |
 | `server/app/routers/search.py` | `POST /api/search`（可选 kind / 时间窗） |
