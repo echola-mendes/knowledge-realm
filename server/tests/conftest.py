@@ -21,15 +21,8 @@ def _render(url) -> str:
 
 
 def _alembic_upgrade() -> None:
-    candidates = [
-        Path(sys.executable).parent / "alembic",
-        _SERVER_DIR / ".venv" / "bin" / "alembic",
-    ]
-    for cli in candidates:
-        if cli.is_file():
-            subprocess.run([str(cli), "upgrade", "head"], cwd=str(_SERVER_DIR), check=True)
-            return
-    raise RuntimeError("alembic CLI not found; run: pip install -r requirements.txt")
+    script = _SERVER_DIR / "scripts" / "alembic_upgrade.py"
+    subprocess.run([sys.executable, str(script)], cwd=str(_SERVER_DIR), check=True)
 
 
 @pytest.fixture(scope="session", autouse=True)

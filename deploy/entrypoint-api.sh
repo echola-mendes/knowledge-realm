@@ -24,6 +24,6 @@ PY
 
 echo "Running migrations..."
 cd /app/server
-alembic upgrade head
+python scripts/alembic_upgrade.py
 
 exec "$@"
