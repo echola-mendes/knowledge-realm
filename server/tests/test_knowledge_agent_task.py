@@ -1,10 +1,10 @@
-"""task=knowledge 直连 graph.py，不经 Master 意图路由。"""
+"""task=knowledge 直连 knowledge_flow，不经 Master 意图路由。"""
 from __future__ import annotations
 
 import json
 import uuid
 
-from app.agent import graph as graph_mod
+from app.agent import knowledge_flow as kf
 from app.agent import master as master_mod
 from app.config import get_settings
 from app.main import reset_app_state
@@ -34,13 +34,12 @@ def test_knowledge_task_uses_graph_not_master(monkeypatch):
         raise AssertionError("task=knowledge must not call Master")
 
     monkeypatch.setattr(master_mod, "build_master_graph", boom_master)
-
-    def fake_reason(state):
-        if int(state.get("loop_count") or 0) == 0:
-            return {"next_action": "search", "search_query": "苹果"}
-        return {"next_action": "generate"}
-
-    monkeypatch.setattr(graph_mod, "reason_decide", fake_reason)
+    monkeypatch.setattr(kf, "analyze_query", lambda query: {"query_type": "simple"})
+    monkeypatch.setattr(
+        kf,
+        "rewrite_query",
+        lambda qi_question, *, user_query="": {"query": qi_question},
+    )
 
     def fake_search(session, query, **kwargs):
         return [
@@ -56,8 +55,9 @@ def test_knowledge_task_uses_graph_not_master(monkeypatch):
             )
         ]
 
-    monkeypatch.setattr(graph_mod, "search_knowledge", fake_search)
-    monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "知识Agent答案")
+    monkeypatch.setattr(kf, "search_knowledge", fake_search)
+    monkeypatch.setattr("app.llm.chat", lambda *a, **k: "知识Agent答案")
+    kf.reset_knowledge_flow_graph()
 
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"KB-{uuid.uuid4().hex[:8]}"}).json()

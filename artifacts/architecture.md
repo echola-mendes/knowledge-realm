@@ -16,7 +16,7 @@
 /api/agent(/stream)
   → thin_intent（一次结构化：knowledge | plan | booking | chat）
   → MasterAgent（按 intent 调度 + 整合回复）
-       ├── knowledge   ← app/agent/graph.py（Analysis→检索编排→Merge→Answer）
+       ├── knowledge   ← Master 意图仍挂 graph.py；`task=knowledge` 入口直连 knowledge_flow（analyze→…→generate）
        ├── plan        ← itinerary_plan_agent（ReAct + travel tools）
        └── booking     ← booking_agent（ReAct + HITL 写工具）
 ```

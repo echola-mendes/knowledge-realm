@@ -9,6 +9,7 @@
 | AI决策审计（Trace.md V1.1） | 2026-09-06 | decision_run/span 表 + DecisionRecorder(app/audit/) + chat/knowledge 埋点 + 3 查询 API + 决策审计前端页 | 全 ✅ |
 | 检索同节扩窗（PRD_Chunk_V0） | 2026-09-08 | search_chunks 返回前同 heading 扩窗 + original_content；不改表/debug | 全 ✅ |
 | 父子切块落库（PRD_Chunk_V1） | 2026-09-08 | document_chunk role/parent_id；索引写 parent+child；检索仅 child + parent 组装/V0 降级 | 全 ✅ |
+| 知识 Agent 编排优化（Sufficiency V0） | 2026-09-09 | knowledge_flow：analyze/Simple·Complex/decompose/sufficiency/rewrite/merge/gap/generate；审计 step+IO；详情页可读 | 全 ✅ |
 
 ## 经验
 
@@ -145,3 +146,26 @@
 
 解法：长节才写 `role=parent`（无 embedding、不进 ES）+ children；短节仅一行 `role=child`/`parent_id=null`。召回 `role=child AND embedding IS NOT NULL`；`search_chunks` 门槛后 `_assemble_parent_context`（同父去重、超预算整块回退），无 parent → V0 扩窗；`search_debug` 不组装。增量对齐键含 `role`/parent 结构。
 
+### knowledge_flow：MAX_LOOPS 只计补充检索
+
+日期：2026-09-09　来源：知识 Agent 编排优化（Sufficiency V0）
+
+问题：若把每 Qi 初始检索也算进 `MAX_LOOPS`，与多 Qi 分解冲突。
+
+解法：初始每 Qi 各检 1 次不计入；仅 Rewrite 后再检递增 `loop_count`；Simple 跳过 decompose，成功时 `search_knowledge`=1。
+
+### task=knowledge 与 Master knowledge 分流
+
+日期：2026-09-09　来源：知识 Agent 编排优化（Sufficiency V0）
+
+问题：Design 要求不改 Master，但要替换知识 Agent 的 reason→run_tool。
+
+解法：`_invoke_knowledge_graph` 改 `build_knowledge_flow_graph()`；Master `node_knowledge` 仍挂旧 `graph.py`。
+
+### 审计详情：step + input/output 与 chat 双形态
+
+日期：2026-09-09　来源：知识 Agent 编排优化（Sufficiency V0）
+
+问题：knowledge 用 `decision.step/input/output`，chat 仍是 tool/summary。
+
+解法：`DecisionAuditView` 有 step 时标题用 STEP_LABELS 并分区展示输入/输出；否则整段 pretty，chat 口径不变。

@@ -1,4 +1,4 @@
-"""决策审计：task=knowledge 路径落 decision_run + route/retrieve/generate spans。"""
+"""决策审计：task=knowledge 路径落 decision_run + analyze/retrieve/…/generate spans。"""
 from __future__ import annotations
 
 import json
@@ -6,7 +6,7 @@ import uuid
 
 from sqlalchemy import select
 
-from app.agent import graph as graph_mod
+from app.agent import knowledge_flow as kf
 from app.agent import master as master_mod
 from app.config import get_settings
 from app.db import session_scope
@@ -31,20 +31,19 @@ def _sse_events(text: str) -> list[dict]:
     return events
 
 
-def _stub_graph(monkeypatch, chunk_id: uuid.UUID):
+def _stub_knowledge_flow(monkeypatch, chunk_id: uuid.UUID):
     monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
 
     def boom_master(*args, **kwargs):
         raise AssertionError("task=knowledge must not call Master")
 
     monkeypatch.setattr(master_mod, "build_master_graph", boom_master)
-
-    def fake_reason(state):
-        if int(state.get("loop_count") or 0) == 0:
-            return {"next_action": "search", "search_query": "苹果", "rationale": "需要知识库证据"}
-        return {"next_action": "generate", "rationale": "资料足够"}
-
-    monkeypatch.setattr(graph_mod, "reason_decide", fake_reason)
+    monkeypatch.setattr(kf, "analyze_query", lambda query: {"query_type": "simple"})
+    monkeypatch.setattr(
+        kf,
+        "rewrite_query",
+        lambda qi_question, *, user_query="": {"query": qi_question},
+    )
 
     def fake_search(session, query, **kwargs):
         return [
@@ -60,13 +59,14 @@ def _stub_graph(monkeypatch, chunk_id: uuid.UUID):
             )
         ]
 
-    monkeypatch.setattr(graph_mod, "search_knowledge", fake_search)
-    monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "知识Agent答案")
+    monkeypatch.setattr(kf, "search_knowledge", fake_search)
+    monkeypatch.setattr("app.llm.chat", lambda *a, **k: "知识Agent答案")
+    kf.reset_knowledge_flow_graph()
 
 
 def test_knowledge_agent_creates_decision_run_with_ordered_spans(monkeypatch):
     chunk_id = uuid.uuid4()
-    _stub_graph(monkeypatch, chunk_id)
+    _stub_knowledge_flow(monkeypatch, chunk_id)
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"KB-{uuid.uuid4().hex[:8]}"}).json()
         res = client.post(
@@ -88,22 +88,24 @@ def test_knowledge_agent_creates_decision_run_with_ordered_spans(monkeypatch):
             spans = session.scalars(
                 select(DecisionSpan).where(DecisionSpan.run_id == run.id).order_by(DecisionSpan.seq)
             ).all()
-            assert [s.node_type for s in spans] == ["route", "retrieve", "route", "generate"]
+            steps = [(s.node_type, (s.decision or {}).get("step")) for s in spans]
+            assert steps == [
+                ("route", "analyze"),
+                ("retrieve", "retrieve_qi"),
+                ("route", "sufficiency"),
+                ("route", "merge"),
+                ("route", "gap"),
+                ("generate", "generate"),
+            ]
             assert all(spans[i].seq < spans[i + 1].seq for i in range(len(spans) - 1))
-            # route span：action + rationale
-            assert spans[0].decision["action"] == "search"
-            assert spans[0].rationale == "需要知识库证据"
-            assert spans[2].decision["action"] == "generate"
-            # retrieve span：证据 chunk id 可溯源
-            assert spans[1].decision["tool"] == "search_knowledge"
-            assert spans[1].evidence_refs[0]["id"] == str(chunk_id)
-            # generate span：结论摘要
-            assert "知识Agent答案" in spans[3].decision["summary"]
+            assert spans[0].decision["output"]["query_type"] == "simple"
+            assert spans[1].evidence_refs[0]["chunk_id"] == str(chunk_id)
+            assert "知识Agent答案" in spans[-1].decision["output"]["answer"]
 
 
 def test_knowledge_agent_stream_also_audits(monkeypatch):
     chunk_id = uuid.uuid4()
-    _stub_graph(monkeypatch, chunk_id)
+    _stub_knowledge_flow(monkeypatch, chunk_id)
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"KB-{uuid.uuid4().hex[:8]}"}).json()
         res = client.post(
@@ -120,4 +122,4 @@ def test_knowledge_agent_stream_also_audits(monkeypatch):
             span_count = len(
                 session.scalars(select(DecisionSpan).where(DecisionSpan.run_id == run.id)).all()
             )
-            assert span_count == 4
+            assert span_count == 6

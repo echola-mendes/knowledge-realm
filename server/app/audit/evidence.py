@@ -22,13 +22,18 @@ def _assembly_kind(hit: SearchHit) -> str:
     return "expanded"
 
 
-def search_hit_evidence_ref(hit: SearchHit) -> dict[str, Any]:
+def search_hit_evidence_ref(
+    hit: SearchHit,
+    *,
+    qi_id: str | None = None,
+) -> dict[str, Any]:
     """Map a post-assembly SearchHit to a decision-audit evidence ref."""
     original = hit.original_content or hit.content
     assembly = _assembly_kind(hit)
     ref: dict[str, Any] = {
         "type": "chunk",
         "id": str(hit.chunk_id),
+        "chunk_id": str(hit.chunk_id),
         "document_id": str(hit.document_id),
         "document_name": hit.document_name,
         "score": hit.score,
@@ -43,6 +48,8 @@ def search_hit_evidence_ref(hit: SearchHit) -> dict[str, Any]:
         ref["parent_id"] = str(hit.parent_id)
     if hit.heading:
         ref["heading"] = hit.heading
+    if qi_id is not None:
+        ref["qi_id"] = qi_id
     return ref
 
 

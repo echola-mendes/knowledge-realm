@@ -154,7 +154,7 @@
 
 对话页模式：
 - **Chat**：`/api/chat` 单链 RAG。
-- **知识 Agent**：旧版单 Agent（`graph.py`），只做知识库多步检索与回答，不经差旅意图路由。
+- **知识 Agent**：`task=knowledge` 走 `knowledge_flow`（analyze→Simple 单次检索 | Complex 分解 Qi→Sufficiency V0→Rewrite→Merge→Gap→Generate）；只做知识库编排与回答，不经差旅意图路由；`/api/chat` 不变。
 - **Multi Agent**：Master 多 Agent（知识 / 闲聊 / 行程规划 / 预订）。
 - **Report**：研究报告（经 Master，强制 knowledge 路径）。
 

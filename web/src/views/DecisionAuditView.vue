@@ -32,6 +32,16 @@ const runId = computed(() => {
 
 const MODE_LABELS: Record<string, string> = { chat: "Chat", knowledge: "知识 Agent" };
 const NODE_LABELS: Record<string, string> = { route: "路由", retrieve: "检索", generate: "生成" };
+const STEP_LABELS: Record<string, string> = {
+  analyze: "问题分析",
+  decompose: "问题分解",
+  retrieve_qi: "按子问题检索",
+  sufficiency: "证据充足性",
+  rewrite: "查询改写",
+  merge: "证据合并",
+  gap: "知识缺口",
+  generate: "生成回答",
+};
 const ASSEMBLY_LABELS: Record<string, string> = {
   child_only: "单块",
   parent: "父块",
@@ -45,6 +55,41 @@ function modeLabel(mode: string): string {
 
 function nodeLabel(nodeType: string): string {
   return NODE_LABELS[nodeType] ?? nodeType;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function decisionStep(decision: unknown): string {
+  const rec = asRecord(decision);
+  const step = rec?.step;
+  return typeof step === "string" ? step : "";
+}
+
+function stepLabel(step: string): string {
+  return STEP_LABELS[step] ?? step;
+}
+
+function hasIoDecision(decision: unknown): boolean {
+  const rec = asRecord(decision);
+  return Boolean(rec && typeof rec.step === "string" && ("input" in rec || "output" in rec));
+}
+
+function decisionInput(decision: unknown): unknown {
+  return asRecord(decision)?.input;
+}
+
+function decisionOutput(decision: unknown): unknown {
+  return asRecord(decision)?.output;
+}
+
+function spanHeading(span: { node_type: string; decision: unknown }): string {
+  const step = decisionStep(span.decision);
+  if (step) return stepLabel(step);
+  return nodeLabel(span.node_type);
 }
 
 function assemblyLabel(kind: unknown): string {
@@ -202,12 +247,23 @@ watch(runId, (id) => {
         >
           <button class="span-head" type="button" @click="toggle(span.id)">
             <span class="seq">{{ span.seq }}</span>
-            <strong>{{ nodeLabel(span.node_type) }}</strong>
+            <strong>{{ spanHeading(span) }}</strong>
+            <span v-if="decisionStep(span.decision)" class="step-pill">{{ decisionStep(span.decision) }}</span>
             <span class="muted">{{ span.rationale || "—" }}</span>
             <span class="arrow">{{ expanded.has(span.id) ? "▾" : "▸" }}</span>
           </button>
           <div v-if="expanded.has(span.id)" class="span-body">
-            <div v-if="span.decision" class="span-block">
+            <div v-if="hasIoDecision(span.decision)" class="span-io">
+              <div v-if="decisionInput(span.decision) !== undefined" class="span-block">
+                <h4>输入</h4>
+                <pre>{{ pretty(decisionInput(span.decision)) }}</pre>
+              </div>
+              <div v-if="decisionOutput(span.decision) !== undefined" class="span-block">
+                <h4>输出</h4>
+                <pre>{{ pretty(decisionOutput(span.decision)) }}</pre>
+              </div>
+            </div>
+            <div v-else-if="span.decision" class="span-block">
               <h4>决策</h4>
               <pre>{{ pretty(span.decision) }}</pre>
             </div>
@@ -504,12 +560,25 @@ watch(runId, (id) => {
   place-items: center;
   flex-shrink: 0;
 }
+.span-head .step-pill {
+  flex-shrink: 0;
+  background: var(--teal-soft);
+  color: var(--teal);
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
 .span-head .muted {
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+}
+.span-io {
+  display: grid;
+  gap: 0.6rem;
 }
 .span-head .arrow {
   color: #94a3b8;

@@ -27,6 +27,7 @@ class AgentState(TypedDict, total=False):
     summary: str
     ltm_hits: list[dict[str, Any]]
     citations: list[dict[str, Any]]
+    evidence: list[dict[str, Any]]
     web_hits: list[dict[str, Any]]
     loop_count: int
     max_loops: int
@@ -38,6 +39,16 @@ class AgentState(TypedDict, total=False):
     subtask_index: int
     allow_web: bool
     usage: dict[str, int]
+    # Sufficiency V0 / knowledge flow (Steps 3+)
+    query_type: Literal["simple", "complex"]
+    sub_questions: list[dict[str, Any]]
+    searched_queries: list[str]
+    knowledge_gaps: list[str]
+    current_qi_index: int
+    last_qi_hits: int
+    retrieve_phase: Literal["initial", "rewrite"]
+    skip_retrieve: bool
+    next_flow: str
 
 
 def clip_subtasks(raw: Any) -> list[str]:
@@ -416,6 +427,7 @@ def initial_state(
         "summary": (summary or "").strip(),
         "ltm_hits": list(ltm_hits or []),
         "citations": [],
+        "evidence": [],
         "web_hits": [],
         "loop_count": 0,
         "max_loops": MAX_LOOPS,
@@ -425,4 +437,10 @@ def initial_state(
         "subtasks": [],
         "subtask_index": 0,
         "allow_web": bool(allow_web),
+        "query_type": "complex",
+        "sub_questions": [],
+        "searched_queries": [],
+        "knowledge_gaps": [],
+        "current_qi_index": 0,
+        "last_qi_hits": 0,
     }

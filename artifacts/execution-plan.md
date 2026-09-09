@@ -15,8 +15,8 @@
 - 不改 `/api/chat`；本 Step 可不改图拓扑，或仅在现有 retrieve 后加可选 sufficiency span 试点——优先纯函数 + 单测，图内全面接线放到后续 Step。
 
 ### 验收
-- [ ] 单测：空 hits → INSUFFICIENT；非空 → SUFFICIENT（与 score 无关）
-- [ ] 单测：`decision` 含 `step`/`input`/`output`；`evidence_refs` 含 excerpt 与 id 字段
+- [✅] 单测：空 hits → INSUFFICIENT；非空 → SUFFICIENT（与 score 无关）
+- [✅] 单测：`decision` 含 `step`/`input`/`output`；`evidence_refs` 含 excerpt 与 id 字段
 
 ---
 
@@ -31,9 +31,9 @@
 - Merge 节点/`route` span：`step=merge`；`input` 含 count、`by_qi`；`output` 含 count、`ids`、`dropped`；`evidence_refs` 为合并后摘要。
 
 ### 验收
-- [ ] 单测：同 `parent_id` / 同 `chunk_id` 多条 → 一条 + `related_questions` 合并（AC-08）
-- [ ] 单测：超过 10 条按 score 保留 Top-N
-- [ ] 单测：merge span 的 input/output 含前后 count 与 dropped
+- [✅] 单测：同 `parent_id` / 同 `chunk_id` 多条 → 一条 + `related_questions` 合并（AC-08）
+- [✅] 单测：超过 10 条按 score 保留 Top-N
+- [✅] 单测：merge span 的 input/output 含前后 count 与 dropped
 
 ---
 
@@ -50,9 +50,9 @@ Complex 路径：分解 Qi（引导 ≤3、硬截断 5），每 Qi 初始各 `se
 - `web_search`/`search_graph` 不进本主流程；现网 allow_web 等旁路若保留须在计划外最小兼容，禁止塞进 Decomposition。
 
 ### 验收
-- [ ] 单测或图测：>5 个子问题被截断为 5
-- [ ] 图/契约测：N 个 Qi → N 次初始检索；`loop_count` 仍为 0（AC-02 核心）
-- [ ] 审计：每 Qi 可见 retrieve 的 input/output 与 hit 摘要 + sufficiency 的 status/hit_count
+- [✅] 单测或图测：>5 个子问题被截断为 5
+- [✅] 图/契约测：N 个 Qi → N 次初始检索；`loop_count` 仍为 0（AC-02 核心）
+- [✅] 审计：每 Qi 可见 retrieve 的 input/output 与 hit 摘要 + sufficiency 的 status/hit_count
 
 ---
 
@@ -68,10 +68,10 @@ Complex 路径：分解 Qi（引导 ≤3、硬截断 5），每 Qi 初始各 `se
 - 全部有 hit 时不得因 loop 额度未用尽而空转（AC-05）。
 
 ### 验收
-- [ ] 测：无 hit Qi 才 Rewrite；有 hit 不重搜（AC-03/04）
-- [ ] 测：重复 query 不二次调用 Tool（AC-07）
-- [ ] 测：全部 SUFFICIENT 后不再补充检索（AC-05）
-- [ ] 审计：rewrite + 再 retrieve/sufficiency 的 input/output 齐全
+- [✅] 测：无 hit Qi 才 Rewrite；有 hit 不重搜（AC-03/04）
+- [✅] 测：重复 query 不二次调用 Tool（AC-07）
+- [✅] 测：全部 SUFFICIENT 后不再补充检索（AC-05）
+- [✅] 审计：rewrite + 再 retrieve/sufficiency 的 input/output 齐全
 
 ---
 
@@ -86,9 +86,9 @@ Complex 路径：分解 Qi（引导 ≤3、硬截断 5），每 Qi 初始各 `se
 - generate span：`input`=evidence ids；`output`=answer 摘要；`evidence_refs`=最终引用。
 
 ### 验收
-- [ ] 测：始终无 hit 且达 `MAX_LOOPS` → 回答含 Knowledge Gap（AC-06）
-- [ ] 测：有部分证据时 Gap 与 Answer 可并存；citation 不含无 evidence 项
-- [ ] 审计：gap / generate span 可对照
+- [✅] 测：始终无 hit 且达 `MAX_LOOPS` → 回答含 Knowledge Gap（AC-06）
+- [✅] 测：有部分证据时 Gap 与 Answer 可并存；citation 不含无 evidence 项
+- [✅] 审计：gap / generate span 可对照
 
 ---
 
@@ -104,9 +104,9 @@ Complex 路径：分解 Qi（引导 ≤3、硬截断 5），每 Qi 初始各 `se
 - 替换现网 `reason → run_tool` 主循环为上述 DAG/条件边；清理 `MAX_SUBTASKS`/`MAX_CITATIONS` 旧语义依赖（调用方兼容保留必要字段）。
 
 ### 验收
-- [ ] 测：Simple → 不分解；`search_chunks`（或 search_knowledge）调用次数 = 1（AC-01）
-- [ ] 测：Complex → 走 decompose；Decomposition 解析失败 → 降级单次检索
-- [ ] 测：现有 knowledge Agent 入口（`initial_state` / Master 调用）仍可跑通
+- [✅] 测：Simple → 不分解；`search_chunks`（或 search_knowledge）调用次数 = 1（AC-01）
+- [✅] 测：Complex → 走 decompose；Decomposition 解析失败 → 降级单次检索
+- [✅] 测：现有 knowledge Agent 入口（`initial_state` / Master 调用）仍可跑通
 
 ---
 
@@ -121,6 +121,6 @@ Complex 路径：分解 Qi（引导 ≤3、硬截断 5），每 Qi 初始各 `se
 - 回归：chat 路径审计口径不变；确认未改 `/api/chat`（AC-09）。
 
 ### 验收
-- [ ] 前端详情可见 step，并能读到 retrieve/sufficiency/merge 的关键 input/output（路径或组件抽检）
-- [ ] 测：knowledge 一次 Complex 的 span 链可定位节点；chat 相关测仍通过（AC-09/10）
-- [ ] `docs/TECH.md` / `docs/PRD.md` 本 Step 不强制改（Phase 4 统一同步）
+- [✅] 前端详情可见 step，并能读到 retrieve/sufficiency/merge 的关键 input/output（路径或组件抽检）
+- [✅] 测：knowledge 一次 Complex 的 span 链可定位节点；chat 相关测仍通过（AC-09/10）
+- [✅] `docs/TECH.md` / `docs/PRD.md` 本 Step 不强制改（Phase 4 统一同步）
