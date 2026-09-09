@@ -101,7 +101,7 @@
 
 - **V0（已落地）**：[`PRD_Chunk_V0.md`](rag/PRD_Chunk_V0.md) — `search_chunks` 返回前按同 `heading` 扩窗，不改表；无 parent 时仍作降级路径。
 - **V1（已落地）**：[`PRD_Chunk_V1.md`](rag/PRD_Chunk_V1.md) — 索引落库 parent/child（`role` / `parent_id`）；检索仅 child；有 parent 则组装 parent 全文（超预算整块回退）。
-- **V3（已拍板，待开发）**：[`PRD_Chunk_V3.md`](rag/PRD_Chunk_V3.md) — 有/无 parent 统一：多锚点 ±1 邻域 + Expansion Rerank；同组命中不去重为单赢家；`chunk_id` 并集去重后合成 1 条 hit（无 parent 按同 heading 分组，不再 V0 center-out）；决策审计 `retrieve` span 增加邻域组装复盘字段。
+- **V3（已拍板，待开发）**：[`PRD_Chunk_V3.md`](rag/PRD_Chunk_V3.md) — 每命中独立 ±1；邻居双条件（`cosine(anchor,n)` ∧ `score(query,n)`，query 侧可二次 Rerank）；多 hit 不合并；`neighbor_chunk_ids` / `expanded_chunk_ids`。
 
 ---
 
@@ -311,53 +311,9 @@
 - 知识库自动更新与定时轮询。
 - 知识去重增强与元数据管理。
 - **父子切块 V1**（[`PRD_Chunk_V1.md`](rag/PRD_Chunk_V1.md)）：索引层落库 parent/child（已落地）。
-- **父子组装 V3**（[`PRD_Chunk_V3.md`](rag/PRD_Chunk_V3.md)）：±1 邻域 + Expansion Rerank；有/无 parent 同一套；retrieve 审计可复盘邻居过滤（已拍板，待开发）。
+- **父子组装 V3**（[`PRD_Chunk_V3.md`](rag/PRD_Chunk_V3.md)）：±1 + 双条件过滤；`neighbor_chunk_ids` / `expanded_chunk_ids`（已拍板，待开发）。
 
 ### 4.4 可观测与评估增强
 
 - **决策审计（极简，已上线）**（[`Trace.md`](Trace.md) / [`PRD-DECISIONS.md`](PRD-DECISIONS.md)）：每轮 assistant 落库决策链（route / retrieve / generate + 证据），绑 `message_id`；监控列表与详情。本期不做 LangSmith、自建 Trace 平台、Explain/Judge。Master / plan / booking 全路径埋点下一期接入。
-- **链路追踪下一版**（[`Trace_LangSmith.md`](Trace_LangSmith.md)）：V1.1 之后接 LangSmith 基础 Trace；技术 IO/Token/延迟交给 LangSmith，Decision 仍负责业务审计与 message 绑定。
-- **操作审计**（[`PRD-OPERATIONS.md`](PRD-OPERATIONS.md)）：文档流水线、登录/敏感变更、与 `task_execution` 聚合；监控 → 操作审计（排在决策审计之后）。
-- Agent 执行效果评估；RAG 检索与回答质量的系统级评估（调试页已有部分能力）。
-- Token / 延迟：写入 span `metrics` 即可；不做独立监控看板。
-
----
-
-## 5. 非功能需求
-
-### 5.1 易用性
-
-用户应能无门槛完成：
-
-> **上传资料 → 等待处理 → 直接提问**
-
-无需理解复杂的 AI 概念。
-
-### 5.2 可追溯
-
-AI 回答尽可能提供知识来源，方便用户核对。
-
-### 5.3 数据私有
-
-个人知识数据以本地存储为主；AI 服务仅发送完成任务所需的最少数据。
-
-### 5.4 身份与安全
-
-- 用户身份只来自 Session，禁止通过请求参数指定用户身份。
-- 不做 RBAC、OAuth、JWT。
-- 数据按用户隔离。
-
-### 5.5 可扩展
-
-后续可扩展更多知识来源、AI 模型、Agent 能力、搜索能力、多人协作与团队知识库。
-
----
-
-## 6. 版本说明
-
-- **V1.0 / P0**：基础知识库，支持文档导入、向量检索、RAG 问答、标签、收藏、Web 界面。
-- **P1.1–P1.4**：智能摘要、自动标签、知识图谱数据落库、文档对比、知识关联、Agent、研究报告。
-- **P2**：检索增强（混合检索、重排序、关键词与时间/来源筛选）、Agent 记忆与工具路由、网页搜索。
-- **P3 第一批**：知识洞察（冲突检测、缺口分析、自动整理）、版本与增量更新、URL 刷新、主动推荐、Token 与回答质量可观测。
-- **P3 第二批（规划中）**：知识图谱可视化、`search_graph` 图谱检索。
-- **P4（已实现）**：个人出行 Agent（TRAVEL-PLAN-1 规划 + TRAVEL-BOOK-1 预订 HITL）。
+[… truncated at ~4102 of 4698 tokens — use ctx_read with lines= parameter to see specific sections]
