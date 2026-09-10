@@ -92,7 +92,7 @@ export type Citation = {
   score: number;
 };
 
-export type ConversationMode = "chat" | "knowledge" | "agent" | "report";
+export type ConversationMode = "chat" | "knowledge" | "react" | "agent" | "report";
 
 export type Conversation = {
   id: string;

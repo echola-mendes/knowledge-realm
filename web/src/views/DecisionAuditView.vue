@@ -30,8 +30,8 @@ const runId = computed(() => {
   return typeof id === "string" ? id : "";
 });
 
-const MODE_LABELS: Record<string, string> = { chat: "Chat", knowledge: "知识 Agent" };
-const NODE_LABELS: Record<string, string> = { route: "路由", retrieve: "检索", generate: "生成" };
+const MODE_LABELS: Record<string, string> = { chat: "Chat", knowledge: "知识 Agent", react: "ReAct" };
+const NODE_LABELS: Record<string, string> = { route: "路由", retrieve: "检索", generate: "生成", tool_call: "工具调用", tool_result: "工具结果" };
 const STEP_LABELS: Record<string, string> = {
   analyze: "问题分析",
   decompose: "问题分解",
@@ -382,6 +382,7 @@ watch(runId, (id) => {
             <option value="">全部</option>
             <option value="chat">Chat</option>
             <option value="knowledge">知识 Agent</option>
+            <option value="react">ReAct</option>
           </select>
         </label>
         <label>

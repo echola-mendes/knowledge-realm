@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from typing import Any
+from typing import Any, Generator
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -88,8 +88,8 @@ def _agent_prepare(
     body: AgentRequest, session: Session, user_id: uuid.UUID
 ) -> tuple[str, uuid.UUID, Conversation, list[dict[str, str]], str, list]:
     """解析/创建会话与上下文；stream 与非 stream 共用。"""
-    if body.task not in ("agent", "report", "knowledge"):
-        raise HTTPException(status_code=400, detail="task 须为 agent、report 或 knowledge")
+    if body.task not in ("agent", "report", "knowledge", "react"):
+        raise HTTPException(status_code=400, detail="task 须为 agent、report、knowledge 或 react")
     if not llm_keys_ready():
         raise HTTPException(status_code=503, detail="未配置 LLM API Key")
     try:
@@ -159,6 +159,166 @@ def _invoke_knowledge_graph(
     }
     final["_decision_recorder"] = recorder
     return final
+
+
+def _invoke_react_graph(
+    body: AgentRequest,
+    session: Session,
+    user_id: uuid.UUID,
+    kb_id: uuid.UUID,
+    convo: Conversation,
+    history_msgs: list[dict[str, str]],
+    summary_text: str,
+    ltm_hits: list,
+) -> dict[str, Any]:
+    """task=react：直连 graph.py（reason→tool ReAct），不经 Master / knowledge_flow。
+
+    A1：会话可用 kb_id（prepare 解析的默认/显式库）；检索用的 knowledge_base_id
+    仅取请求显式值，未指定则为 None（多库 search_kb_ids）。
+    """
+    _ = kb_id  # 会话默认库已由 prepare 写入 Conversation；检索不强制沿用
+    retrieval_kb = body.knowledge_base_id  # 显式才检索单库；None → 多库
+    recorder = DecisionRecorder(session=session)
+    recorder.start_run(user_id=user_id, conversation_id=convo.id, mode="react", query=body.query)
+    state = initial_state(
+        body.query,
+        knowledge_base_id=retrieval_kb,
+        task="agent",
+        history=history_msgs,
+        summary=summary_text,
+        ltm_hits=ltm_hits,
+        allow_web=bool(body.allow_web),
+    )
+    try:
+        out = build_graph().invoke(
+            state,
+            config={
+                "configurable": {
+                    "thread_id": str(convo.id),
+                    "session": session,
+                    "user_id": user_id,
+                    "knowledge_base_id": retrieval_kb,
+                    "decision_recorder": recorder,
+                }
+            },
+        )
+    except Exception:
+        recorder.finish_run("failed")
+        raise
+    final = {
+        "answer": out.get("answer") or "",
+        "citations": list(out.get("citations") or []),
+        "loop_count": int(out.get("loop_count") or 0),
+        "usage": out.get("usage"),
+        "intent": "react",
+    }
+    final["_decision_recorder"] = recorder
+    return final
+
+
+
+def _stream_react_graph(
+    body: AgentRequest,
+    session: Session,
+    user_id: uuid.UUID,
+    kb_id: uuid.UUID,
+    convo: Conversation,
+    history_msgs: list[dict[str, str]],
+    summary_text: str,
+    ltm_hits: list,
+) -> Generator[dict[str, Any], None, dict[str, Any]]:
+    """task=react stream：与 invoke 共用 build_graph；边跑边 yield SSE 事件，return 终态。
+
+    终答出现时立刻 yield `answer_delta` + `token`（兼容现 ChatView），persist 由调用方在消费完事件后做。
+    """
+    _ = kb_id
+    retrieval_kb = body.knowledge_base_id
+    recorder = DecisionRecorder(session=session)
+    recorder.start_run(user_id=user_id, conversation_id=convo.id, mode="react", query=body.query)
+    state = initial_state(
+        body.query,
+        knowledge_base_id=retrieval_kb,
+        task="agent",
+        history=history_msgs,
+        summary=summary_text,
+        ltm_hits=ltm_hits,
+        allow_web=bool(body.allow_web),
+    )
+    config = {
+        "configurable": {
+            "thread_id": str(convo.id),
+            "session": session,
+            "user_id": user_id,
+            "knowledge_base_id": retrieval_kb,
+            "decision_recorder": recorder,
+        }
+    }
+    yield {"type": "agent_start", "task": "react"}
+    final: dict[str, Any] = dict(state)
+    streamed_text = False
+    try:
+        for item in build_graph().stream(
+            state, config=config, stream_mode=["updates", "custom"]
+        ):
+            # multi-mode: ("updates"|"custom", payload)
+            if not (isinstance(item, tuple) and len(item) == 2):
+                continue
+            mode, payload = item
+            if mode == "custom" and isinstance(payload, dict):
+                if payload.get("type") == "token" and payload.get("text"):
+                    streamed_text = True
+                yield payload
+                continue
+            if mode != "updates" or not isinstance(payload, dict):
+                continue
+            for node, updates in payload.items():
+                if not isinstance(updates, dict):
+                    continue
+                final.update(updates)
+                if node == "agent":
+                    msgs = updates.get("agent_messages") or []
+                    last = msgs[-1] if msgs else None
+                    tool_calls = list(getattr(last, "tool_calls", None) or []) if last is not None else []
+                    if tool_calls:
+                        yield {
+                            "type": "tool_call",
+                            "tool_calls": [
+                                {
+                                    "name": tc.get("name"),
+                                    "args": tc.get("args") or {},
+                                    "id": tc.get("id"),
+                                }
+                                for tc in tool_calls
+                            ],
+                        }
+                    elif updates.get("answer") is not None:
+                        answer = str(updates.get("answer") or "")
+                        if answer:
+                            yield {"type": "answer_delta", "text": answer}
+                            # 未走过 model.stream 时兜底推 token（兼容旧 mock）
+                            if not streamed_text:
+                                for char in answer:
+                                    yield {"type": "token", "text": char}
+                elif node == "tools":
+                    yield {
+                        "type": "tool_result",
+                        "hits": len(updates.get("citations") or [])
+                        + len(updates.get("web_hits") or []),
+                        "loop_count": int(updates.get("loop_count") or 0),
+                    }
+    except Exception:
+        recorder.finish_run("failed")
+        raise
+    out = {
+        "answer": final.get("answer") or "",
+        "citations": list(final.get("citations") or []),
+        "loop_count": int(final.get("loop_count") or 0),
+        "usage": final.get("usage"),
+        "intent": "react",
+    }
+    out["_decision_recorder"] = recorder
+    yield {"type": "agent_end", "task": "react", "loop_count": out["loop_count"]}
+    return out
 
 
 def _agent_persist(
@@ -252,9 +412,15 @@ def _master_state_config(body, task, convo, history_msgs, summary_text, ltm_hits
 
 def _agent_out(body: AgentRequest, session: Session, user_id: uuid.UUID) -> AgentOut:
     task, kb_id, convo, history_msgs, summary_text, ltm_hits = _agent_prepare(body, session, user_id)
-    if task == "knowledge":
-        out = _invoke_knowledge_graph(
-            body, session, user_id, kb_id, convo, history_msgs, summary_text, ltm_hits
+    if task in ("knowledge", "react"):
+        out = (
+            _invoke_knowledge_graph(
+                body, session, user_id, kb_id, convo, history_msgs, summary_text, ltm_hits
+            )
+            if task == "knowledge"
+            else _invoke_react_graph(
+                body, session, user_id, kb_id, convo, history_msgs, summary_text, ltm_hits
+            )
         )
         recorder = out.pop("_decision_recorder", None)
         try:
@@ -288,18 +454,62 @@ def agent_stream(
 ):
     """事件序列：intent →（progress / travel_data / plan_html，plan 路径）→ token 逐字 → citations 终态。
 
-    伪流式：图在响应前同步跑完（沿用既有设计），但事件顺序与真实 Hook 一致；
-    plan 子 Agent 执行中的 progress/travel_data/plan_html 经 emit 回调按发生顺序收集。
+    task=react：图迭代中实时 yield（含 tool_* / answer_delta / token），persist 在出字之后。
+    其他 task：仍为伪流式（图跑完再吐事件）；plan 子 Agent 的 progress 等经 emit 收集。
     必须用 def 而非 async def：同步图跑在 FastAPI 线程池，避免占满事件循环导致侧栏 /me 卡住。
     """
     task, kb_id, convo, history_msgs, summary_text, ltm_hits = _agent_prepare(body, session, user.id)
+
+    if task == "react":
+        def react_events():
+            yield f"data: {json.dumps({'type': 'intent', 'intent': 'react'}, ensure_ascii=False)}\n\n"
+            gen = _stream_react_graph(
+                body, session, user.id, kb_id, convo, history_msgs, summary_text, ltm_hits
+            )
+            final: dict[str, Any] | None = None
+            try:
+                while True:
+                    try:
+                        event = next(gen)
+                    except StopIteration as stop:
+                        final = stop.value if isinstance(stop.value, dict) else None
+                        break
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            except Exception:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'react graph failed'}, ensure_ascii=False)}\n\n"
+                return
+            if final is None:
+                return
+            recorder = final.pop("_decision_recorder", None)
+            try:
+                result = _agent_persist(session, task, kb_id, convo, body, final)
+            except Exception:
+                if recorder:
+                    recorder.finish_run("failed")
+                yield f"data: {json.dumps({'type': 'error', 'message': 'react persist failed'}, ensure_ascii=False)}\n\n"
+                return
+            if recorder:
+                recorder.finish_run("success", message_id=final.get("_assistant_message_id"))
+            payload = {"type": "citations", **result.model_dump(mode="json")}
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            react_events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
     hook_events: list[dict] = []
 
     def emit(event: dict) -> None:
         hook_events.append(event)
 
     if task == "knowledge":
-        emit({"type": "intent", "intent": "knowledge"})
+        emit({"type": "intent", "intent": task})
         final = _invoke_knowledge_graph(
             body, session, user.id, kb_id, convo, history_msgs, summary_text, ltm_hits
         )
@@ -381,6 +591,7 @@ async def agent_trace(
             "thread_id": f"trace-{uuid.uuid4()}",
             "session": session,
             "user_id": user.id,
+            "knowledge_base_id": kb_id,
         }
     }
 
@@ -402,25 +613,21 @@ async def agent_trace(
                     event["tokens"] = usage
                     for key in token_sum:
                         token_sum[key] += int(usage.get(key) or 0)
-                if node == "reason":
-                    event["action"] = str(updates.get("next_action") or "")
-                    event["query"] = str(updates.get("search_query") or "")
-                    if updates.get("subtasks"):
-                        event["subtasks"] = list(updates["subtasks"])
-                elif node == "run_tool":
-                    action = final.get("next_action")
-                    if action == "web" or "web_hits" in updates:
-                        event["tool"] = "web_search"
-                        event["hits"] = len(updates.get("web_hits") or [])
-                    elif action == "graph":
-                        event["tool"] = "search_graph"
-                        event["hits"] = len(updates.get("citations") or [])
-                    else:
-                        event["tool"] = "search_knowledge"
-                        event["hits"] = len(updates.get("citations") or [])
-                    event["query"] = str(final.get("search_query") or "")
-                elif node == "generate":
-                    event["answer_len"] = len(str(updates.get("answer") or ""))
+                if node == "agent":
+                    msgs = updates.get("agent_messages") or []
+                    last = msgs[-1] if msgs else None
+                    tool_calls = list(getattr(last, "tool_calls", None) or []) if last is not None else []
+                    if tool_calls:
+                        event["action"] = "tools"
+                        event["tool_calls"] = [tc.get("name") for tc in tool_calls]
+                        event["query"] = str((tool_calls[0].get("args") or {}).get("query") or "")
+                    elif updates.get("answer") is not None:
+                        event["action"] = "final"
+                        event["answer_len"] = len(str(updates.get("answer") or ""))
+                elif node == "tools":
+                    event["tool"] = "tools"
+                    event["hits"] = len(updates.get("citations") or []) + len(updates.get("web_hits") or [])
+                    event["loop_count"] = int(updates.get("loop_count") or 0)
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         cites = [CitationOut.model_validate(item) for item in (final.get("citations") or [])]
         payload = {

@@ -18,7 +18,7 @@ from app.models import DecisionRun, DecisionSpan
 
 logger = logging.getLogger(__name__)
 
-NODE_TYPES = ("route", "retrieve", "generate")
+NODE_TYPES = ("route", "retrieve", "generate", "tool_call", "tool_result")
 RUN_STATUSES = ("running", "success", "failed")
 
 

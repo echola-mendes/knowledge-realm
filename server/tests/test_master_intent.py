@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.config import get_settings
 from app.main import create_app, reset_app_state
 from app.agent import graph as graph_mod
+from app.agent.graph import reset_graph
 from app.agent import master as master_mod
 from app.agent.intent import classify_intent
 import app.agent.intent as intent_mod
@@ -186,10 +187,18 @@ def test_master_booking_routes_to_booking_agent(monkeypatch):
 
 
 def test_agent_router_contract_knowledge(monkeypatch):
+    reset_graph()
     monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
     monkeypatch.setattr(master_mod, "classify_intent", _intent_of("knowledge"))
-    monkeypatch.setattr(graph_mod, "reason_decide", lambda state: {"next_action": "generate"})
-    monkeypatch.setattr("app.llm.chat", lambda question, context, history=None, *, summary=None, ltm=None: "Router答案")
+    def fake_agent(state, config=None):
+        from langchain_core.messages import AIMessage
+
+        answer = "Router答案"
+        messages = list(state.get("messages") or [])
+        messages.append({"role": "assistant", "content": answer})
+        return {"answer": answer, "messages": messages, "agent_messages": [AIMessage(content=answer)]}
+
+    monkeypatch.setattr(graph_mod, "node_agent", fake_agent)
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"Master-{uuid.uuid4().hex[:8]}"}).json()
         res = client.post("/api/agent", json={"task": "agent", "query": "苹果", "knowledge_base_id": kb["id"]})
@@ -203,10 +212,18 @@ def test_agent_router_contract_knowledge(monkeypatch):
 
 
 def test_agent_router_stream_first_event_is_intent(monkeypatch):
+    reset_graph()
     monkeypatch.setattr("app.routers.master.llm_keys_ready", lambda: True)
     monkeypatch.setattr(master_mod, "classify_intent", _intent_of("knowledge"))
-    monkeypatch.setattr(graph_mod, "reason_decide", lambda state: {"next_action": "generate"})
-    monkeypatch.setattr("app.llm.chat", lambda question, context, history=None, *, summary=None, ltm=None: "流式答案")
+    def fake_agent(state, config=None):
+        from langchain_core.messages import AIMessage
+
+        answer = "流式答案"
+        messages = list(state.get("messages") or [])
+        messages.append({"role": "assistant", "content": answer})
+        return {"answer": answer, "messages": messages, "agent_messages": [AIMessage(content=answer)]}
+
+    monkeypatch.setattr(graph_mod, "node_agent", fake_agent)
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"Stream-{uuid.uuid4().hex[:8]}"}).json()
         plain = client.post("/api/agent", json={"task": "agent", "query": "苹果", "knowledge_base_id": kb["id"]})

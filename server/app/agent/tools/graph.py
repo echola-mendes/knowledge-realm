@@ -3,109 +3,16 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-import httpx
-from langchain_core.tools import BaseTool, tool
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agent.text2sql import rows_preview
-from app.agent.text2sql import text2sql as run_text2sql
-from app.config import get_settings
+from app.agent.tools._context import tool_runtime
+from app.agent.tools.formatters import format_search_hits
 from app.models import Document, DocumentChunk, Entity, EntityLink, KnowledgeBase
-from app.rag.search import SearchHit, search_chunks
+from app.rag.search import SearchHit
 
-AGENT_TOOL_NAMES = ("search_knowledge", "search_graph", "web_search", "text2sql")
-
-
-def text2sql(
-    session: Session,
-    question: str,
-    user_id: uuid.UUID,
-    *,
-    sql: str | None = None,
-) -> dict[str, Any]:
-    """自然语言查询 customers/products/orders/order_items（仅 SELECT）。"""
-    return run_text2sql(session, question, user_id, sql=sql)
-
-
-def search_knowledge(
-    session: Session,
-    query: str,
-    user_id: uuid.UUID,
-    knowledge_base_id: uuid.UUID | None = None,
-    tag_id: uuid.UUID | None = None,
-    kind: str | None = None,
-    document_id: uuid.UUID | None = None,
-    k: int = 5,
-) -> list[SearchHit]:
-    return search_chunks(
-        session,
-        query,
-        user_id=user_id,
-        knowledge_base_id=knowledge_base_id,
-        tag_id=tag_id,
-        kind=kind,
-        document_id=document_id,
-        k=k,
-    )
-
-
-def _web_hit(row: Any) -> dict[str, str] | None:
-    if not isinstance(row, dict):
-        return None
-    title = str(row.get("title") or "").strip()
-    url = str(row.get("url") or row.get("link") or "").strip()
-    snippet = str(row.get("snippet") or row.get("content") or row.get("body") or "").strip()
-    if not title and not url and not snippet:
-        return None
-    return {"title": title, "url": url, "snippet": snippet}
-
-
-def _normalize_web_hits(payload: Any, *, k: int) -> list[dict[str, str]]:
-    if k <= 0:
-        return []
-    if isinstance(payload, list):
-        rows = payload
-    elif isinstance(payload, dict):
-        raw = payload.get("results") or payload.get("items") or payload.get("data") or []
-        rows = raw if isinstance(raw, list) else []
-    else:
-        rows = []
-    out: list[dict[str, str]] = []
-    for row in rows:
-        hit = _web_hit(row)
-        if hit is None:
-            continue
-        out.append(hit)
-        if len(out) >= k:
-            break
-    return out
-
-
-def web_search(query: str, *, k: int = 5) -> list[dict[str, str]]:
-    q = (query or "").strip()
-    if not q:
-        return []
-    settings = get_settings()
-    endpoint = settings.web_search_url.strip()
-    if not endpoint:
-        return []
-    headers = {"User-Agent": "knowledge-realm/1.0"}
-    key = settings.web_search_api_key.strip()
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-    try:
-        response = httpx.post(
-            endpoint,
-            json={"query": q},
-            headers=headers,
-            timeout=float(settings.web_search_timeout),
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except (httpx.HTTPError, ValueError, TypeError):
-        return []
-    return _normalize_web_hits(payload, k=k)
 
 def _normalize(text: str) -> str:
     return " ".join(text.strip().split()).casefold()
@@ -167,7 +74,6 @@ def _documents_for_entities(session: Session, entity_distances: dict[uuid.UUID, 
     for doc_id, from_id, to_id in rows:
         if doc_id is None:
             continue
-        # distance = min distance of connected entity
         d = min(entity_distances.get(from_id, 99), entity_distances.get(to_id, 99))
         if doc_id not in doc_dist or d < doc_dist[doc_id]:
             doc_dist[doc_id] = d
@@ -193,7 +99,6 @@ def search_graph(
     if not doc_dist:
         return []
     doc_ids = list(doc_dist.keys())
-    # 取每个文档的前几个 chunk 作为代表（按 chunk_index）
     rows = session.execute(
         select(Document, DocumentChunk)
         .join(DocumentChunk, DocumentChunk.document_id == Document.id)
@@ -226,107 +131,6 @@ def search_graph(
         if len(hits) >= k:
             break
     return hits
-
-
-def _format_search_hits(hits: list[SearchHit]) -> str:
-    if not hits:
-        return "未找到相关文档。"
-    return "\n\n".join(f"[{h.document_name}]\n{h.content}" for h in hits)
-
-
-def _format_web_hits(hits: list[dict[str, str]]) -> str:
-    if not hits:
-        return "未找到相关网页。"
-    return "\n\n".join(
-        f"[{h.get('title') or h.get('url')}]\n{h.get('url') or ''}\n{h.get('snippet') or ''}".strip()
-        for h in hits
-    )
-
-
-def _format_sql_result(result: dict[str, Any]) -> str:
-    parts = [f"SQL: {result.get('sql') or ''}"]
-    if result.get("error"):
-        parts.append(f"错误: {result['error']}")
-    parts.append(rows_preview(list(result.get("rows") or [])))
-    return "\n".join(parts)
-
-
-def build_agent_tools(
-    *,
-    allow_web: bool = False,
-    has_kb: bool = False,
-    session: Session | None = None,
-    user_id: uuid.UUID | None = None,
-    knowledge_base_id: uuid.UUID | None = None,
-    k: int = 5,
-) -> list[BaseTool]:
-    """官方 @tool 列表，供 model.bind_tools；门控靠是否纳入列表。
-
-    传入 session/user_id 时工具可直接 invoke；ReAct 的 node_run_tool 仍可调用同名实现函数拿结构化结果。
-    """
-
-    @tool("search_knowledge")
-    def search_knowledge_tool(query: str) -> str:
-        """在用户知识库中检索相关文档片段。
-
-        Args:
-            query: 检索关键词
-        """
-        if session is None or user_id is None:
-            return query
-        hits = search_knowledge(
-            session,
-            query,
-            user_id,
-            knowledge_base_id=knowledge_base_id,
-            k=k,
-        )
-        return _format_search_hits(hits)
-
-    @tool("text2sql")
-    def text2sql_tool(query: str) -> str:
-        """查询商品、订单等结构化业务数据（Text2SQL）。
-
-        Args:
-            query: 自然语言问题
-        """
-        if session is None or user_id is None:
-            return query
-        return _format_sql_result(text2sql(session, query, user_id))
-
-    @tool("search_graph")
-    def search_graph_tool(query: str) -> str:
-        """按知识图谱实体关系检索相关文档。
-
-        Args:
-            query: 检索关键词
-        """
-        if session is None or user_id is None or knowledge_base_id is None:
-            return query
-        hits = search_graph(
-            session,
-            query,
-            user_id=user_id,
-            knowledge_base_id=knowledge_base_id,
-            k=k,
-        )
-        return _format_search_hits(hits)
-
-    @tool("web_search")
-    def web_search_tool(query: str) -> str:
-        """在互联网上搜索信息。当用户询问实时信息、新闻或不确定的知识时使用。
-
-        Args:
-            query: 搜索关键词
-        """
-        return _format_web_hits(web_search(query, k=k))
-
-    tools: list[BaseTool] = [search_knowledge_tool, text2sql_tool]
-    if has_kb:
-        tools.append(search_graph_tool)
-    if allow_web:
-        tools.append(web_search_tool)
-    return tools
 
 
 def _links_for_entities(
@@ -403,7 +207,6 @@ def search_graph_details(
     entity_ids = set(expanded.keys())
     links = _links_for_entities(session, entity_ids, rel=rel)
 
-    # 文档命中：复用 search_graph 的文档收集逻辑
     doc_dist = _documents_for_entities(session, expanded)
     doc_ids = sorted(doc_dist.keys(), key=lambda d: doc_dist[d])[: max(k, 20)]
 
@@ -439,7 +242,6 @@ def search_graph_details(
             if len(documents) >= k:
                 break
 
-    # 路径：从 seed 到文档关联实体的最短链路
     paths: list[list[EntityLink]] = []
     if links and documents:
         paths_map = _bfs_paths(seeds, links, max_hops)
@@ -463,3 +265,46 @@ def search_graph_details(
         "documents": documents,
         "paths": paths,
     }
+
+
+def _hit_citation(hit: SearchHit) -> dict:
+    return {
+        "document_id": str(hit.document_id),
+        "document_name": hit.document_name,
+        "chunk_id": str(hit.chunk_id),
+        "page_start": hit.page,
+        "page_end": hit.page,
+        "content": hit.content,
+        "score": hit.score,
+    }
+
+
+@tool("search_graph")
+def search_graph_tool(query: str, config: RunnableConfig) -> str:
+    """按知识图谱实体关系检索相关文档。
+
+    Args:
+        query: 检索关键词
+    """
+    import json
+
+    session, user_id, knowledge_base_id, k = tool_runtime(config)
+    if session is None or user_id is None or knowledge_base_id is None:
+        return json.dumps(
+            {"text": "图谱检索失败：缺少运行时上下文或知识库。", "citations": []},
+            ensure_ascii=False,
+        )
+    hits = search_graph(
+        session,
+        query,
+        user_id=user_id,
+        knowledge_base_id=knowledge_base_id,
+        k=k,
+    )
+    return json.dumps(
+        {
+            "text": format_search_hits(hits),
+            "citations": [_hit_citation(h) for h in hits],
+        },
+        ensure_ascii=False,
+    )

@@ -48,6 +48,11 @@
 - P0 问答：`ChatOpenAI` 单链；检索只用当前句
 - 检索（`search_chunks`）：pgvector +（可选）ES BM25 → RRF → Rerank → `RELEVANCE_MIN_SCORE`；仅 `role=child` 且有 embedding；门槛后按 `parent_id`（或无 parent 时 `doc+heading`）分组：seeds ∪ 各 seed ±1 去重，非 seed 邻居过双条件（最近 seed 余弦 ≥ `EXPAND_ANCHOR_MIN` 且 query 分 ≥ `EXPAND_QUERY_MIN`）后按 `chunk_index` 拼成 **1** 条 `content`；代表锚点取组内最高分；`SearchHit` 带 `neighbor_chunk_ids` / `expanded_chunk_ids`；不再默认 parent 全文或 V0 center-out；`search_debug` 不组装
 - Agent：LangGraph；检索必须经 Tool 调现有 `search.py`，禁止第二套向量查询
+  - `task=knowledge` → `knowledge_flow`（Workflow Agentic RAG）
+  - `task=react` → `graph.py`（标准 Tool Calling：`bind_tools` + `ToolNode` + `tools_condition`；工具在 `app/agent/tools/` + registry；runtime 经 `configurable`）
+  - `task=react` 检索：请求未显式传 `knowledge_base_id` 时为 `None`（多库）；决策审计 span 为 `tool_call` / `tool_result`（Master knowledge 共用图但不接审计）
+  - `task=react` stream：`stream_mode=["updates","custom"]`；`node_agent` 用 `model.stream` + `get_stream_writer` 边生成边推 `token`；persist 在出字之后；`citations` 收尾。knowledge/agent 路径仍伪流式
+  - `task=agent|report` → Master（意图路由；知识分支仍用 `graph.py`）
 - Checkpoint：LangGraph PostgresSaver，同一 `DATABASE_URL`；不作 STM/聊天权威
 - URL 导入：`httpx` 超时 20s + `trafilatura`
 - 内容哈希：SHA-256

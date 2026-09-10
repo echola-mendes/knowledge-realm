@@ -157,6 +157,7 @@
 对话页模式：
 - **Chat**：`/api/chat` 单链 RAG。
 - **知识 Agent**：`task=knowledge` 走 `knowledge_flow`（analyze→Simple 单次检索 | Complex 分解 Qi→Sufficiency V0→Rewrite→Merge→Gap→Generate）；只做知识库编排与回答，不经差旅意图路由；`/api/chat` 不变。
+- **ReAct**：`task=react` 直连 `graph.py` 标准 Tool Calling（`agent ⇄ tools`，无手写 JSON action），不经 Master / `knowledge_flow`；工具包 `app/agent/tools/`；未指定知识库时多库检索；stream 推送 tool 中间事件且兼容现有 `token`/`citations`；决策审计 `mode=react` 记 `tool_call`/`tool_result`（`task=agent` 经 Master knowledge 调同一图时本期不接审计）。
 - **Multi Agent**：Master 多 Agent（知识 / 闲聊 / 行程规划 / 预订）。
 - **Report**：研究报告（经 Master，强制 knowledge 路径）。
 
@@ -209,7 +210,7 @@
 
 #### 3.7.2 监控与审计
 
-- **决策审计（极简，已上线）**：[`PRD-DECISIONS.md`](PRD-DECISIONS.md) / [`Trace.md`](Trace.md) — Chat 与知识 Agent 每轮 assistant 回答落 `decision_run` + 线性 `decision_span`（route / retrieve / generate + 证据与指标），绑 `message_id`；`app/audit/recorder.py` 统一埋点；API：`/api/decisions`、`/api/decisions/{id}`、`/api/messages/{id}/decision`；监控 → 决策审计列表 + 详情。
+- **决策审计（极简，已上线）**：[`PRD-DECISIONS.md`](PRD-DECISIONS.md) / [`Trace.md`](Trace.md) — Chat、知识 Agent（`mode=knowledge`）与 ReAct（`mode=react`）每轮 assistant 回答落 `decision_run` + 线性 `decision_span`（Chat/knowledge 仍为 route/retrieve/generate；react 为 tool_call/tool_result + 必要终答），绑 `message_id`；`app/audit/recorder.py` 统一埋点；API：`/api/decisions`、`/api/decisions/{id}`、`/api/messages/{id}/decision`；监控 → 决策审计列表 + 详情。
 - **操作审计**：[`PRD-OPERATIONS.md`](PRD-OPERATIONS.md) — 监控 → 操作审计（占位页）。
 
 #### 3.7.3 回答质量评估

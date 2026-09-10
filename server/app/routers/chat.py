@@ -123,7 +123,7 @@ def delete_conversation(
     return {"ok": True}
 
 
-_CONVERSATION_MODES = frozenset({"chat", "knowledge", "agent", "report"})
+_CONVERSATION_MODES = frozenset({"chat", "knowledge", "react", "agent", "report"})
 
 
 @router.patch("/conversations/{conversation_id}", response_model=ConversationOut)

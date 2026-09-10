@@ -67,7 +67,8 @@
 | 模式 | 路径 | 本期 |
 | --- | --- | --- |
 | Chat | `/api/chat/stream` | ✅ retrieve + generate |
-| 知识 Agent | `task=knowledge` → `graph.py` | ✅ reason / tool / generate |
+| 知识 Agent | `task=knowledge` → `knowledge_flow` | ✅ analyze / retrieve / sufficiency / … / generate |
+| ReAct | `task=react` → `graph.py`（Tool Calling） | ✅ tool_call / tool_result（+ 终答 span）；Master knowledge 共用图本期不接审计 |
 | Multi Agent / Report | `master.py` | ⏳ 下一期再接 |
 | plan / booking | 子图 | ⏳ 下一期再接 |
 
@@ -83,7 +84,7 @@
 | `message_id` | assistant 消息，流式失败可空 |
 | `conversation_id` | 会话 |
 | `user_id` | 隔离 |
-| `mode` | `chat` / `knowledge` |
+| `mode` | `chat` / `knowledge` / `react` |
 | `query` | 当轮用户问题 |
 | `status` | `running` / `success` / `failed` |
 | `created_at` | |
@@ -97,7 +98,7 @@
 | `id` | UUID |
 | `run_id` | FK |
 | `seq` | 顺序 |
-| `node_type` | `route` \| `retrieve` \| `generate`（本期够用；以后可扩 `hitl` 等） |
+| `node_type` | `route` / `retrieve` / `generate` / `tool_call` / `tool_result`（≤ `String(20)`；react 用后两者） |
 | `decision` | JSONB，最终选择（如 `{"action":"rag"}`） |
 | `rationale` | 选型摘要（短文本，非 CoT） |
 | `evidence_refs` | JSONB，如 `[{type, id, score, excerpt?}]` |

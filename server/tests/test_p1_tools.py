@@ -2,7 +2,7 @@ import inspect
 import uuid
 
 from app.agent import tools
-from app.agent.tools import search_knowledge, web_search
+from app.agent.tools import search_knowledge, tools_for, web_search
 
 
 def test_search_knowledge_wraps_search_chunks_not_http(monkeypatch):
@@ -22,7 +22,7 @@ def test_search_knowledge_wraps_search_chunks_not_http(monkeypatch):
         called["kwargs"] = kwargs
         return []
 
-    monkeypatch.setattr("app.agent.tools.search_chunks", fake_search)
+    monkeypatch.setattr("app.agent.tools.knowledge.search_chunks", fake_search)
     marker = object()
     uid = uuid.UUID("00000000-0000-0000-0000-000000000001")
     hits = search_knowledge(marker, "苹果", user_id=uid, knowledge_base_id=None, k=5)
@@ -54,8 +54,8 @@ def test_web_search_posts_httpx(monkeypatch):
         posted["timeout"] = timeout
         return FakeResp()
 
-    monkeypatch.setattr("app.agent.tools.get_settings", lambda: FakeSettings())
-    monkeypatch.setattr("app.agent.tools.httpx.post", fake_post)
+    monkeypatch.setattr("app.agent.tools.web.get_settings", lambda: FakeSettings())
+    monkeypatch.setattr("app.agent.tools.web.httpx.post", fake_post)
     hits = web_search("苹果")
     assert hits == [{"title": "T", "url": "https://e", "snippet": "S"}]
     assert posted["url"] == "https://search.example/q"
@@ -73,6 +73,25 @@ def test_web_search_skips_http_when_unconfigured(monkeypatch):
     def boom(*args, **kwargs):
         raise AssertionError("unconfigured web_search must not call httpx")
 
-    monkeypatch.setattr("app.agent.tools.get_settings", lambda: FakeSettings())
-    monkeypatch.setattr("app.agent.tools.httpx.post", boom)
+    monkeypatch.setattr("app.agent.tools.web.get_settings", lambda: FakeSettings())
+    monkeypatch.setattr("app.agent.tools.web.httpx.post", boom)
     assert web_search("苹果") == []
+
+
+def test_tools_for_gating():
+    names_off = {t.name for t in tools_for(allow_web=False, enable_graph=False)}
+    assert "web_search" not in names_off
+    assert "search_graph" not in names_off
+    assert "search_knowledge" in names_off
+    assert "text2sql" in names_off
+
+    names_on = {t.name for t in tools_for(allow_web=True, enable_graph=True)}
+    assert "web_search" in names_on
+    assert "search_graph" in names_on
+
+
+def test_tool_schema_excludes_runtime_fields():
+    forbidden = {"session", "user_id", "conversation_id", "knowledge_base_id", "config"}
+    for t in tools_for(allow_web=True, enable_graph=True):
+        props = set((t.args_schema.model_json_schema().get("properties") or {}).keys())
+        assert not (props & forbidden), f"{t.name} schema has runtime fields: {props & forbidden}"

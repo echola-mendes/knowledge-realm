@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter, RouterLink } from "vue-router";
 import {
   deleteConversation,
@@ -30,8 +30,24 @@ type ChatMode = ConversationMode;
 const MODE_BADGE: Record<ChatMode, string> = {
   chat: "c",
   knowledge: "a",
+  react: "e",
   agent: "m",
   report: "r",
+};
+
+type ToolStep = {
+  id: string;
+  name: string;
+  detail: string;
+  status: "running" | "done";
+  result?: string;
+};
+
+const TOOL_LABELS: Record<string, string> = {
+  search_knowledge: "检索知识库",
+  web_search: "联网搜索",
+  search_graph: "图谱检索",
+  text2sql: "查询数据",
 };
 
 type AgentMessage = ChatMessage & {
@@ -39,6 +55,8 @@ type AgentMessage = ChatMessage & {
   planHtml?: PlanHtmlEvent | null;
   pendingAction?: PendingAction | null;
   bookings?: BookingItem[];
+  /** react 流式过程：仅本轮会话内展示，不落库 */
+  toolSteps?: ToolStep[];
 };
 
 const vFocus = { mounted: (el: HTMLInputElement) => el.focus() };
@@ -53,14 +71,16 @@ const error = ref("");
 const pendingAction = ref<PendingAction | null>(null);
 const streaming = ref(false);
 const streamAbort = ref<AbortController | null>(null);
-const mode = ref<"chat" | "knowledge" | "agent" | "report">(
+const mode = ref<"chat" | "knowledge" | "react" | "agent" | "report">(
   route.query.mode === "report"
     ? "report"
     : route.query.mode === "agent"
       ? "agent"
-      : route.query.mode === "knowledge"
-        ? "knowledge"
-        : "chat",
+      : route.query.mode === "react"
+        ? "react"
+        : route.query.mode === "knowledge"
+          ? "knowledge"
+          : "chat",
 );
 const smartSearch = ref(false);
 const CHAT_KEY = "zhiyu-chat-id";
@@ -73,6 +93,7 @@ function syncRouteQuery() {
   if (conversationId.value) query.c = conversationId.value;
   if (mode.value === "report") query.mode = "report";
   else if (mode.value === "agent") query.mode = "agent";
+  else if (mode.value === "react") query.mode = "react";
   else if (mode.value === "knowledge") query.mode = "knowledge";
   router.replace({ path: "/chat", query });
 }
@@ -200,7 +221,7 @@ function formatConvTime(iso?: string | null) {
 
 function conversationMode(c: Conversation | undefined): ChatMode {
   const m = c?.mode;
-  if (m === "report" || m === "agent" || m === "knowledge") return m;
+  if (m === "report" || m === "agent" || m === "react" || m === "knowledge") return m;
   return "chat";
 }
 
@@ -343,9 +364,22 @@ function visibleDocs(m: ChatMessage) {
   return rows.slice(0, CITE_LIMIT);
 }
 
+function toolLabel(name: string) {
+  return TOOL_LABELS[name] || name;
+}
+
+function toolDetail(args: Record<string, unknown> | undefined): string {
+  if (!args) return "";
+  const q = args.query ?? args.q ?? args.question;
+  if (typeof q !== "string" || !q.trim()) return "";
+  const text = q.trim().replace(/\s+/g, " ");
+  return text.length > 48 ? `${text.slice(0, 48)}…` : text;
+}
+
 function isThinking(m: AgentMessage) {
   const last = messages.value[messages.value.length - 1];
   if (hasPlanPage(m)) return false;
+  if (m.toolSteps?.length) return false;
   return m.role === "assistant" && !m.content.trim() && streaming.value && last === m;
 }
 
@@ -422,6 +456,7 @@ function showAssistantText(m: AgentMessage): boolean {
 function showMsgBubble(m: AgentMessage): boolean {
   if (m.role === "user") return true;
   if (isThinking(m)) return true;
+  if (m.toolSteps?.length) return true;
   if (showTravelAux(m)) return true;
   if (showAssistantText(m)) return true;
   if (m.bookings?.length) return true;
@@ -449,7 +484,13 @@ async function ask() {
   if (!q || streaming.value) return;
   error.value = "";
   messages.value.push({ id: "u-" + Date.now(), role: "user", content: q });
-  const assistant: AgentMessage = { id: "a-" + Date.now(), role: "assistant", content: "" };
+  // reactive：直接改 raw 对象不会触发视图，流式 token 会一直停在「思考中」
+  const assistant = reactive<AgentMessage>({
+    id: "a-" + Date.now(),
+    role: "assistant",
+    content: "",
+    toolSteps: [],
+  });
   messages.value.push(assistant);
   draft.value = "";
   streaming.value = true;
@@ -460,7 +501,13 @@ async function ask() {
   const useGraph = mode.value !== "chat";
   try {
     const agentTask =
-      mode.value === "report" ? "report" : mode.value === "knowledge" ? "knowledge" : "agent";
+      mode.value === "report"
+        ? "report"
+        : mode.value === "knowledge"
+          ? "knowledge"
+          : mode.value === "react"
+            ? "react"
+            : "agent";
     const res = await fetch(useGraph ? "/api/agent/stream" : "/api/chat/stream", {
       method: "POST",
       credentials: "include",
@@ -515,7 +562,26 @@ async function ask() {
           pending_action?: PendingAction | null;
           bookings?: BookingItem[];
           items?: BookingItem[];
+          tool_calls?: Array<{ name?: string; args?: Record<string, unknown>; id?: string }>;
+          hits?: number;
+          loop_count?: number;
         };
+        if (payload.type === "tool_call" && Array.isArray(payload.tool_calls)) {
+          const added: ToolStep[] = payload.tool_calls.map((tc, i) => ({
+            id: tc.id || `tc-${Date.now()}-${i}`,
+            name: String(tc.name || "tool"),
+            detail: toolDetail(tc.args),
+            status: "running",
+          }));
+          assistant.toolSteps = [...(assistant.toolSteps || []), ...added];
+        }
+        if (payload.type === "tool_result") {
+          const hits = typeof payload.hits === "number" ? payload.hits : 0;
+          const result = hits > 0 ? `命中 ${hits} 条` : "完成";
+          assistant.toolSteps = (assistant.toolSteps || []).map((s) =>
+            s.status === "running" ? { ...s, status: "done", result } : s,
+          );
+        }
         if (payload.type === "token" && payload.text) assistant.content += payload.text;
         if (payload.type === "progress" && payload.text) {
           assistant.travel = assistant.travel || {};
@@ -581,7 +647,11 @@ async function ask() {
   } catch (e) {
     if (ac.signal.aborted) {
       // 中止时若尚未产出任何内容，移除空的助手占位气泡
-      if (!assistant.content.trim() && !assistant.citations?.length) {
+      if (
+        !assistant.content.trim() &&
+        !assistant.citations?.length &&
+        !(assistant.toolSteps && assistant.toolSteps.length)
+      ) {
         const i = messages.value.indexOf(assistant);
         if (i >= 0) messages.value.splice(i, 1);
       }
@@ -670,6 +740,7 @@ watch(
   (m) => {
     if (m === "report") mode.value = "report";
     else if (m === "agent") mode.value = "agent";
+    else if (m === "react") mode.value = "react";
     else if (m === "knowledge") mode.value = "knowledge";
     else if (route.path === "/chat") mode.value = "chat";
   },
@@ -848,6 +919,7 @@ function pickDoc(id: string) {
               <div class="mode-switch" role="group" aria-label="Question mode">
                 <button type="button" :class="{ on: mode === 'chat' }" :disabled="streaming" @click="setMode('chat')">Chat</button>
                 <button type="button" :class="{ on: mode === 'knowledge' }" :disabled="streaming" @click="setMode('knowledge')">Agent</button>
+                <button type="button" :class="{ on: mode === 'react' }" :disabled="streaming" @click="setMode('react')">ReAct</button>
                 <button type="button" :class="{ on: mode === 'agent' }" :disabled="streaming" @click="setMode('agent')">Multi Agent</button>
                 <button type="button" :class="{ on: mode === 'report' }" :disabled="streaming" @click="setMode('report')">Report</button>
               </div>
@@ -882,6 +954,20 @@ function pickDoc(id: string) {
                 <div v-if="isThinking(m)" class="thinking">
                   <span class="spin" aria-hidden="true"></span>
                   思考中……
+                </div>
+                <div v-if="m.role === 'assistant' && m.toolSteps?.length" class="tool-steps">
+                  <p
+                    v-for="step in m.toolSteps"
+                    :key="step.id"
+                    class="tool-step"
+                    :class="step.status"
+                  >
+                    <span v-if="step.status === 'running'" class="spin" aria-hidden="true"></span>
+                    <span v-else class="tool-done" aria-hidden="true">✓</span>
+                    <span class="tool-label">{{ toolLabel(step.name) }}</span>
+                    <span v-if="step.detail" class="tool-detail">{{ step.detail }}</span>
+                    <span v-if="step.result" class="tool-result">{{ step.result }}</span>
+                  </p>
                 </div>
                 <template v-if="m.role === 'assistant' && showTravelAux(m)">
                   <div v-if="travelProgress(m).length" class="travel-progress">
@@ -970,9 +1056,11 @@ function pickDoc(id: string) {
                   ? '按主题生成研究报告…'
                   : mode === 'agent'
                     ? 'Multi Agent：知识 / 行程规划 / 预订…'
-                    : mode === 'knowledge'
-                      ? 'Agent 可多步检索后再回答…'
-                      : '继续追问，或输入新问题...'
+                    : mode === 'react'
+                      ? 'ReAct：多步工具调用后再回答…'
+                      : mode === 'knowledge'
+                        ? 'Agent 可多步检索后再回答…'
+                        : '继续追问，或输入新问题...'
               "
               @keydown="onKey"
             ></textarea>
@@ -1118,6 +1206,52 @@ function pickDoc(id: string) {
   font-size: 0.68rem;
   color: var(--muted);
   margin: 0.1rem 0;
+}
+.tool-steps {
+  margin: 0 0 0.45rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.tool-step {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  font-size: 0.68rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.tool-step.running {
+  color: var(--text);
+}
+.tool-done {
+  display: inline-grid;
+  place-items: center;
+  width: 0.85rem;
+  height: 0.85rem;
+  font-size: 0.62rem;
+  color: var(--teal);
+}
+.tool-label {
+  font-weight: 550;
+}
+.tool-detail {
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 18rem;
+}
+.tool-detail::before {
+  content: "· ";
+}
+.tool-result {
+  opacity: 0.75;
+}
+.tool-result::before {
+  content: "→ ";
 }
 .hitl-card {
   margin: 0.5rem 0 0;

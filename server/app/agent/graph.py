@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 import json
-import time
 import uuid
-from typing import Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, Sequence, TypedDict
 
+from langchain_core.messages import AIMessage, AIMessageChunk, AnyMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode, tools_condition
 
-from app.audit.evidence import context_assembly_summary, search_hit_evidence_ref
+from app.agent.tools import tools_for
+from app.agent.tools.registry import AGENT_TOOLS
 from app.audit.recorder import recorder_from_config
-from app.agent.tools import search_graph, search_knowledge, web_search
-from app.rag.search import SearchHit
 
 MAX_LOOPS = 3
-MAX_SUBTASKS = 3
+MAX_TOOL_CALLS = 6
 MAX_CITATIONS = 20
 
 _compiled = None
@@ -24,6 +26,7 @@ class AgentState(TypedDict, total=False):
     knowledge_base_id: str | None
     task: Literal["agent", "report"]
     messages: list[dict[str, str]]
+    agent_messages: Annotated[Sequence[AnyMessage], add_messages]
     summary: str
     ltm_hits: list[dict[str, Any]]
     citations: list[dict[str, Any]]
@@ -31,15 +34,13 @@ class AgentState(TypedDict, total=False):
     web_hits: list[dict[str, Any]]
     loop_count: int
     max_loops: int
-    next_action: Literal["search", "web", "generate"]
-    search_query: str
-    rationale: str
+    tool_call_count: int
     answer: str
-    subtasks: list[str]
-    subtask_index: int
     allow_web: bool
     usage: dict[str, int]
-    # Sufficiency V0 / knowledge flow (Steps 3+)
+    # knowledge_flow rewrite 检索词（共享 AgentState 通道）
+    search_query: str
+    # Sufficiency V0 / knowledge flow (shared AgentState)
     query_type: Literal["simple", "complex"]
     sub_questions: list[dict[str, Any]]
     searched_queries: list[str]
@@ -51,57 +52,288 @@ class AgentState(TypedDict, total=False):
     next_flow: str
 
 
-def clip_subtasks(raw: Any) -> list[str]:
-    if not isinstance(raw, list):
-        return []
-    out: list[str] = []
-    for item in raw:
-        text = str(item).strip()
-        if not text:
-            continue
-        out.append(text)
-        if len(out) >= MAX_SUBTASKS:
-            break
-    return out
-
-
-def _current_subtask(state: AgentState, extra_tasks: list[str] | None = None) -> str:
-    tasks = extra_tasks if extra_tasks is not None else clip_subtasks(state.get("subtasks") or [])
-    if not tasks:
-        return ""
-    idx = int(state.get("subtask_index") or 0)
-    if idx < 0 or idx >= len(tasks):
-        return ""
-    return tasks[idx]
-
-
-def _plan_preview(state: AgentState) -> str:
-    tasks = clip_subtasks(state.get("subtasks") or [])
-    if not tasks:
-        return "（无拆分）"
-    idx = int(state.get("subtask_index") or 0)
-    idx = min(max(idx, 0), len(tasks) - 1)
-    lines = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(tasks))
-    return f"{lines}\n当前子任务：{tasks[idx]}"
-
-
 def _user_question(state: AgentState) -> str:
     for item in reversed(state.get("messages") or []):
-        if item.get("role") == "user":
+        if isinstance(item, dict) and item.get("role") == "user":
             return item.get("content") or ""
+    for item in reversed(list(state.get("agent_messages") or [])):
+        if isinstance(item, HumanMessage):
+            content = item.content
+            return content if isinstance(content, str) else str(content)
     return ""
 
 
-def _hit_to_citation(hit: SearchHit) -> dict[str, Any]:
+def _history_to_lc(history: list[dict[str, str]] | None) -> list[BaseMessage]:
+    out: list[BaseMessage] = []
+    for item in history or []:
+        role = str(item.get("role") or "")
+        content = str(item.get("content") or "")
+        if not content:
+            continue
+        if role == "user":
+            out.append(HumanMessage(content=content))
+        elif role == "assistant":
+            out.append(AIMessage(content=content))
+    return out
+
+
+def _message_text(message: BaseMessage | None) -> str:
+    if message is None:
+        return ""
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    return str(content or "")
+
+
+def _parse_tool_payload(content: str) -> dict[str, Any]:
+    text = (content or "").strip()
+    if not text:
+        return {}
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return {"text": text}
+    return data if isinstance(data, dict) else {"text": text}
+
+
+def _aggregate_from_tool_messages(messages: Sequence[AnyMessage]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    citations: list[dict[str, Any]] = []
+    web_hits: list[dict[str, Any]] = []
+    for msg in messages:
+        if not isinstance(msg, ToolMessage):
+            continue
+        payload = _parse_tool_payload(_message_text(msg))
+        for cite in payload.get("citations") or []:
+            if isinstance(cite, dict):
+                citations.append(cite)
+        for hit in payload.get("web_hits") or []:
+            if isinstance(hit, dict):
+                web_hits.append(hit)
+    if len(citations) > MAX_CITATIONS:
+        citations = citations[-MAX_CITATIONS:]
+    if len(web_hits) > MAX_CITATIONS:
+        web_hits = web_hits[-MAX_CITATIONS:]
+    return citations, web_hits
+
+
+def _system_prompt(state: AgentState) -> str:
+    parts = [
+        "你是知识库助手。需要资料时调用工具；信息足够时直接用自然语言作答，不要输出 JSON 协议。",
+        "不要编造检索结果。禁止因为知识库无结果就擅自假设已联网。",
+    ]
+    if state.get("task") == "report":
+        parts.append(
+            "当前任务是研究报告：先列简短大纲，再按「摘要 / 要点 / 依据 / 结论」分节撰写；只使用资料中的事实。"
+        )
+    summary = (state.get("summary") or "").strip()
+    if summary:
+        parts.append(f"会话摘要：{summary}")
+    ltm = state.get("ltm_hits") or []
+    if ltm:
+        lines = "\n".join(f"- {item.get('kind')}: {item.get('content')}" for item in ltm[:8])
+        parts.append(f"长期记忆：\n{lines}")
+    return "\n".join(parts)
+
+
+def _chat_model():
+    from langchain_openai import ChatOpenAI
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    return ChatOpenAI(
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        temperature=0,
+    )
+
+
+def _bound_tools(state: AgentState, config: RunnableConfig | None):
+    loop_count = int(state.get("loop_count") or 0)
+    tool_call_count = int(state.get("tool_call_count") or 0)
+    max_loops = int(state.get("max_loops") or MAX_LOOPS)
+    if loop_count >= max_loops or tool_call_count >= MAX_TOOL_CALLS:
+        return []
+    allow_web = bool(state.get("allow_web"))
+    cfg = (config or {}).get("configurable") or {}
+    kb = state.get("knowledge_base_id") or cfg.get("knowledge_base_id")
+    enable_graph = bool(kb)
+    return tools_for(allow_web=allow_web, enable_graph=enable_graph)
+
+
+def _merge_runtime_config(state: AgentState, config: RunnableConfig | None) -> RunnableConfig:
+    base = dict(config or {})
+    cfg = dict(base.get("configurable") or {})
+    if "knowledge_base_id" not in cfg and state.get("knowledge_base_id"):
+        try:
+            cfg["knowledge_base_id"] = uuid.UUID(str(state["knowledge_base_id"]))
+        except (ValueError, TypeError):
+            cfg["knowledge_base_id"] = state.get("knowledge_base_id")
+    if "allow_web" not in cfg:
+        cfg["allow_web"] = bool(state.get("allow_web"))
+    base["configurable"] = cfg
+    return base  # type: ignore[return-value]
+
+
+def _merge_ai_chunks(chunks: list[AIMessageChunk]) -> AIMessage:
+    merged: AIMessageChunk = chunks[0]
+    for part in chunks[1:]:
+        merged = merged + part
+    tool_calls = list(getattr(merged, "tool_calls", None) or [])
+    return AIMessage(
+        content=merged.content,
+        tool_calls=tool_calls,
+        id=getattr(merged, "id", None),
+        additional_kwargs=dict(getattr(merged, "additional_kwargs", None) or {}),
+        response_metadata=dict(getattr(merged, "response_metadata", None) or {}),
+        usage_metadata=getattr(merged, "usage_metadata", None),
+    )
+
+
+def _stream_model_response(runnable, messages: list[BaseMessage], config: RunnableConfig) -> AIMessage:
+    """Stream model tokens; push custom SSE tokens when not a tool-call round."""
+    try:
+        writer = get_stream_writer()
+    except Exception:
+        writer = None
+
+    stream_fn = getattr(runnable, "stream", None)
+    if stream_fn is None:
+        response = runnable.invoke(messages, config=config)
+        return response if isinstance(response, AIMessage) else AIMessage(content=_message_text(response))
+
+    chunks: list[AIMessageChunk] = []
+    saw_tool_chunks = False
+    for chunk in stream_fn(messages, config=config):
+        if isinstance(chunk, AIMessageChunk):
+            chunks.append(chunk)
+            if chunk.tool_call_chunks or getattr(chunk, "tool_calls", None):
+                saw_tool_chunks = True
+            text = chunk.content if isinstance(chunk.content, str) else ""
+            if writer and text and not saw_tool_chunks:
+                writer({"type": "token", "text": text})
+            continue
+        if isinstance(chunk, AIMessage):
+            return chunk
+        return AIMessage(content=_message_text(chunk))
+
+    if not chunks:
+        return AIMessage(content="")
+    return _merge_ai_chunks(chunks)
+
+
+def node_agent(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]:
+    tools = _bound_tools(state, config)
+    model = _chat_model()
+    runnable = model.bind_tools(tools) if tools else model
+    prior = list(state.get("agent_messages") or [])
+    invoke_messages: list[BaseMessage] = [SystemMessage(content=_system_prompt(state)), *prior]
+    response = _stream_model_response(runnable, invoke_messages, _merge_runtime_config(state, config))
+    if not isinstance(response, AIMessage):
+        response = AIMessage(content=_message_text(response))
+
+    usage = None
+    try:
+        from app.llm import _usage_of
+
+        usage = _usage_of(response)
+    except Exception:
+        usage = None
+
+    updates: dict[str, Any] = {"agent_messages": [response]}
+    if usage:
+        updates["usage"] = usage
+
+    tool_calls = list(getattr(response, "tool_calls", None) or [])
+    recorder = recorder_from_config(config)
+    if tool_calls:
+        if recorder:
+            recorder.add_span(
+                "tool_call",
+                decision={
+                    "tool_calls": [
+                        {"name": tc.get("name"), "args": tc.get("args") or {}, "id": tc.get("id")}
+                        for tc in tool_calls
+                    ]
+                },
+                rationale="model tool_calls",
+                metrics=usage,
+            )
+        return updates
+
+    answer = _message_text(response).strip()
+    cites, web_hits = _aggregate_from_tool_messages(prior)
+    if cites:
+        updates["citations"] = cites
+    if web_hits:
+        updates["web_hits"] = web_hits
+    messages = list(state.get("messages") or [])
+    messages.append({"role": "assistant", "content": answer})
+    updates["answer"] = answer
+    updates["messages"] = messages
+    if recorder:
+        recorder.add_span(
+            "generate",
+            decision={"summary": answer[:120]},
+            metrics=usage,
+        )
+    return updates
+
+
+_tool_node = ToolNode(AGENT_TOOLS, messages_key="agent_messages")
+
+
+def node_tools(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]:
+    runtime = _merge_runtime_config(state, config)
+    result = _tool_node.invoke(state, runtime)
+    tool_messages = list(result.get("agent_messages") or [])
+    new_cites, new_web = _aggregate_from_tool_messages(tool_messages)
+    cites = list(state.get("citations") or [])
+    cites.extend(new_cites)
+    if len(cites) > MAX_CITATIONS:
+        cites = cites[-MAX_CITATIONS:]
+    web_hits = list(state.get("web_hits") or [])
+    web_hits.extend(new_web)
+    if len(web_hits) > MAX_CITATIONS:
+        web_hits = web_hits[-MAX_CITATIONS:]
+
+    n_calls = 0
+    prior = list(state.get("agent_messages") or [])
+    if prior and isinstance(prior[-1], AIMessage):
+        n_calls = len(list(getattr(prior[-1], "tool_calls", None) or []))
+
+    loop_count = int(state.get("loop_count") or 0) + 1
+    tool_call_count = int(state.get("tool_call_count") or 0) + n_calls
+
+    recorder = recorder_from_config(config)
+    if recorder:
+        for msg in tool_messages:
+            if not isinstance(msg, ToolMessage):
+                continue
+            payload = _parse_tool_payload(_message_text(msg))
+            recorder.add_span(
+                "tool_result",
+                decision={
+                    "tool": getattr(msg, "name", None) or "tool",
+                    "tool_call_id": getattr(msg, "tool_call_id", None),
+                    "preview": str(payload.get("text") or "")[:120],
+                },
+                metrics={"hits": len(payload.get("citations") or payload.get("web_hits") or [])},
+            )
+
     return {
-        "document_id": str(hit.document_id),
-        "document_name": hit.document_name,
-        "chunk_id": str(hit.chunk_id),
-        "page_start": hit.page,
-        "page_end": hit.page,
-        "content": hit.content,
-        "score": hit.score,
+        "agent_messages": tool_messages,
+        "citations": cites,
+        "web_hits": web_hits,
+        "loop_count": loop_count,
+        "tool_call_count": tool_call_count,
     }
+
+
+def route_after_agent(state: AgentState) -> Literal["tools", "__end__"]:
+    return tools_condition(state, messages_key="agent_messages")
 
 
 def plan_agent_search(
@@ -109,277 +341,27 @@ def plan_agent_search(
     *,
     citations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """首轮 Agent reason：决定是否检索及 search_query（与 node_reason 第一次调用一致）。"""
-    state: AgentState = {
-        "messages": [{"role": "user", "content": question}],
-        "citations": citations or [],
-        "loop_count": 0,
-        "max_loops": MAX_LOOPS,
-    }
-    return reason_decide(state)
-
-
-def _usage_extra(usage: dict[str, int] | None) -> dict[str, Any]:
-    return {"usage": usage} if usage else {}
-
-
-def reason_decide(state: AgentState) -> dict[str, Any]:
-    from langchain_core.prompts import ChatPromptTemplate
-    from langchain_openai import ChatOpenAI
-
-    from app.config import get_settings
-
-    settings = get_settings()
-    model = ChatOpenAI(
-        model=settings.llm_model,
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        temperature=0,
-    )
-    cites = state.get("citations") or []
-    preview = "\n".join(f"- {c.get('document_name')}: {str(c.get('content') or '')[:200]}" for c in cites[:8])
-    web_hits = state.get("web_hits") or []
-    if web_hits:
-        web_preview = "\n".join(
-            f"- 网页 {h.get('title') or h.get('url')}: {str(h.get('snippet') or '')[:200]}" for h in web_hits[:8]
-        )
-        preview = f"{preview}\n{web_preview}".strip() if preview else web_preview
-    prompt = ChatPromptTemplate.from_messages(
+    """retrieval_debug：单次 bind_tools 探测是否应检索；兼容 next_action/search_query。"""
+    _ = citations
+    model = _chat_model().bind_tools(tools_for(allow_web=False, enable_graph=False))
+    response = model.invoke(
         [
-            (
-                "system",
-                "你在决定下一步。只输出 JSON。"
-                '不调用工具、直接生成：{{"action":"direct"}}。'
-                '检索知识库：{{"action":"rag","query":"检索词"}}。'
-                + (
-                    '按知识图谱检索：{{"action":"graph","query":"检索词"}}。'
-                    if state.get("knowledge_base_id")
-                    else ""
+            SystemMessage(
+                content=(
+                    "判断是否需要检索知识库。需要则调用 search_knowledge；"
+                    "不需要则直接简短说明原因，不要调用工具。"
                 )
-                + (
-                    '检索互联网：{{"action":"web","query":"检索词"}}。'
-                    if state.get("allow_web")
-                    else "禁止检索互联网，不得输出 action=web。"
-                )
-                + '复杂问题仅当尚无子任务时，可加 {{"subtasks":["步骤1","步骤2"]}}（最多3条）。'
-                "每个 JSON 可加 {{\"why\":\"一句话理由\"}}。"
-                "之后每圈只选 action，禁止再写 subtasks。"
-                "不要编造检索结果。禁止因为知识库无结果就自动改为联网。",
             ),
-            ("human", "问题：{question}\n子任务：\n{plan}\n已有资料：\n{preview}"),
+            HumanMessage(content=question),
         ]
     )
-    raw_resp = (prompt | model).invoke(
-        {
-            "question": _user_question(state),
-            "plan": _plan_preview(state),
-            "preview": preview or "（无）",
-        }
-    )
-    raw = str(raw_resp.content)
-    from app.llm import _usage_of
-
-    usage = _usage_of(raw_resp)
-    try:
-        start = raw.find("{")
-        end = raw.rfind("}")
-        parsed = json.loads(raw[start : end + 1] if start >= 0 and end >= start else raw)
-    except json.JSONDecodeError:
-        return {"next_action": "generate", "rationale": "未给出理由", **_usage_extra(usage)}
-    if not isinstance(parsed, dict):
-        return {"next_action": "generate", "rationale": "未给出理由", **_usage_extra(usage)}
-    rationale = str(parsed.get("why") or "").strip() or "未给出理由"
-    extra: dict[str, Any] = {}
-    can_write_plan = int(state.get("loop_count") or 0) == 0 and not clip_subtasks(state.get("subtasks") or [])
-    if can_write_plan:
-        planned = clip_subtasks(parsed.get("subtasks"))
-        if planned:
-            extra["subtasks"] = planned
-    action = str(parsed.get("action") or "")
-    query = str(parsed.get("query") or "").strip() or _current_subtask(state, extra.get("subtasks"))
-    if action in ("rag", "search") and query:
-        return {"next_action": "search", "search_query": query, "rationale": rationale, **extra, **_usage_extra(usage)}
-    if action == "graph" and query and state.get("knowledge_base_id"):
-        return {"next_action": "graph", "search_query": query, "rationale": rationale, **extra, **_usage_extra(usage)}
-    if action == "web" and query and state.get("allow_web"):
-        return {"next_action": "web", "search_query": query, "rationale": rationale, **extra, **_usage_extra(usage)}
-    return {"next_action": "generate", "rationale": rationale, **extra, **_usage_extra(usage)}
-
-
-def node_reason(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]:
-    recorder = recorder_from_config(config)
-    if int(state.get("loop_count") or 0) >= int(state.get("max_loops") or MAX_LOOPS):
-        if recorder:
-            recorder.add_span(
-                "route", decision={"action": "generate"}, rationale="已达循环上限，直接生成"
-            )
-        return {"next_action": "generate"}
-    existing = clip_subtasks(state.get("subtasks") or [])
-    idx = int(state.get("subtask_index") or 0)
-    if existing and idx >= len(existing):
-        if recorder:
-            recorder.add_span(
-                "route", decision={"action": "generate"}, rationale="子任务已完成，直接生成"
-            )
-        return {"next_action": "generate"}
-    updates = reason_decide(state)
-    if recorder:
-        recorder.add_span(
-            "route",
-            decision={
-                "action": str(updates.get("next_action") or ""),
-                "query": str(updates.get("search_query") or ""),
-            },
-            rationale=str(updates.get("rationale") or "未给出理由"),
-            metrics=_usage_extra(updates.get("usage")).get("usage"),
-        )
-    if existing or int(state.get("loop_count") or 0) != 0:
-        updates.pop("subtasks", None)
-        return updates
-    planned = clip_subtasks(updates.get("subtasks"))
-    if planned:
-        updates["subtasks"] = planned
-    else:
-        updates.pop("subtasks", None)
-    return updates
-
-
-def node_run_tool(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
-    session = (config.get("configurable") or {}).get("session")
-    user_id = (config.get("configurable") or {}).get("user_id")
-    kb_raw = state.get("knowledge_base_id")
-    kb_id = uuid.UUID(kb_raw) if kb_raw else None
-    query = state.get("search_query") or ""
-    loop_count = int(state.get("loop_count") or 0) + 1
-    tasks = clip_subtasks(state.get("subtasks") or [])
-    idx = int(state.get("subtask_index") or 0)
-    if tasks and idx < len(tasks):
-        idx += 1
-    if state.get("next_action") == "web":
-        if not state.get("allow_web"):
-            return {"loop_count": loop_count, "subtask_index": idx}
-        web_started = time.monotonic()
-        web_hits = list(state.get("web_hits") or [])
-        web_hits.extend(web_search(query))
-        if len(web_hits) > MAX_CITATIONS:
-            web_hits = web_hits[-MAX_CITATIONS:]
-        recorder = recorder_from_config(config)
-        if recorder:
-            recorder.add_span(
-                "retrieve",
-                decision={"tool": "web_search", "query": query},
-                evidence_refs=[
-                    {
-                        "type": "web",
-                        "id": str(h.get("url") or ""),
-                        "title": str(h.get("title") or ""),
-                    }
-                    for h in web_hits
-                ],
-                metrics={
-                    "elapsed_ms": int((time.monotonic() - web_started) * 1000),
-                    "hits": len(web_hits),
-                },
-            )
-        return {"web_hits": web_hits, "loop_count": loop_count, "subtask_index": idx}
-    tool_started = time.monotonic()
-    if state.get("next_action") == "graph" and kb_id:
-        hits = search_graph(session, query, user_id=user_id, knowledge_base_id=kb_id)
-        tool_name = "search_graph"
-    else:
-        hits = search_knowledge(session, query, user_id=user_id, knowledge_base_id=kb_id)
-        tool_name = "search_knowledge"
-    recorder = recorder_from_config(config)
-    if recorder:
-        recorder.add_span(
-            "retrieve",
-            decision={
-                "tool": tool_name,
-                "query": query,
-                "context_assembly": context_assembly_summary(hits),
-            },
-            evidence_refs=[search_hit_evidence_ref(hit) for hit in hits],
-            metrics={
-                "elapsed_ms": int((time.monotonic() - tool_started) * 1000),
-                "hits": len(hits),
-            },
-        )
-    cites = list(state.get("citations") or [])
-    cites.extend(_hit_to_citation(hit) for hit in hits)
-    if len(cites) > MAX_CITATIONS:
-        cites = cites[-MAX_CITATIONS:]
-    return {"citations": cites, "loop_count": loop_count, "subtask_index": idx}
-
-
-def generate_answer(state: AgentState) -> tuple[str, dict[str, int] | None]:
-    """生成回答并返回 (文本, token 用量)。经 app.llm.chat 晚绑定调用，兼容测试替换。"""
-    from app import llm as llm_mod
-
-    llm_mod.LAST_USAGE = None
-    messages = list(state.get("messages") or [])
-    question = _user_question(state)
-    subtasks = clip_subtasks(state.get("subtasks") or [])
-    if subtasks:
-        listed = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(subtasks))
-        question = f"请综合下列子任务的资料汇总作答。\n{listed}\n\n原问题：{question}"
-    prior = messages[:-1] if messages and messages[-1].get("role") == "user" else messages
-    history = [
-        (str(item.get("role") or ""), str(item.get("content") or ""))
-        for item in prior
-        if item.get("role") in ("user", "assistant") and item.get("content")
-    ]
-    cites = state.get("citations") or []
-    context = "\n\n".join(f"[{c.get('document_name')}]\n{c.get('content')}" for c in cites)
-    web_hits = state.get("web_hits") or []
-    if web_hits:
-        web_block = "\n\n".join(
-            f"[{h.get('title') or h.get('url')}]\n{h.get('url') or ''}\n{h.get('snippet') or ''}".strip()
-            for h in web_hits
-        )
-        context = f"{context}\n\n{web_block}".strip() if context else web_block
-    if state.get("task") == "report":
-        question = (
-            "请根据资料写成研究报告：先列简短大纲，再按「摘要 / 要点 / 依据 / 结论」分节撰写。"
-            "只使用资料中的事实，不要编造出处。\n\n"
-            f"主题：{question}"
-        )
-    answer = llm_mod.chat(
-        question,
-        context,
-        history,
-        summary=(state.get("summary") or "").strip() or None,
-        ltm=state.get("ltm_hits") or None,
-    )
-    return answer, getattr(llm_mod, "LAST_USAGE", None)
-
-
-def node_generate(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]:
-    generate_started = time.monotonic()
-    result = generate_answer(state)
-    answer, usage = result if isinstance(result, tuple) else (result, None)
-    recorder = recorder_from_config(config)
-    if recorder:
-        metrics: dict[str, Any] = {"elapsed_ms": int((time.monotonic() - generate_started) * 1000)}
-        if usage:
-            metrics["tokens"] = usage
-        recorder.add_span("generate", decision={"summary": answer[:120]}, metrics=metrics)
-    messages = list(state.get("messages") or [])
-    messages.append({"role": "assistant", "content": answer})
-    updates: dict[str, Any] = {"answer": answer, "messages": messages}
-    if usage:
-        updates["usage"] = usage
-    return updates
-
-
-def route_after_reason(state: AgentState) -> Literal["run_tool", "generate"]:
-    action = state.get("next_action")
-    if action == "web" and not state.get("allow_web"):
-        return "generate"
-    if action in ("search", "rag", "web", "graph") and int(state.get("loop_count") or 0) < int(
-        state.get("max_loops") or MAX_LOOPS
-    ):
-        return "run_tool"
-    return "generate"
+    tool_calls = list(getattr(response, "tool_calls", None) or [])
+    for tc in tool_calls:
+        if tc.get("name") == "search_knowledge":
+            args = tc.get("args") or {}
+            query = str(args.get("query") or "").strip() or question
+            return {"next_action": "search", "search_query": query}
+    return {"next_action": "generate", "search_query": ""}
 
 
 def build_graph():
@@ -389,13 +371,11 @@ def build_graph():
     from app.agent.checkpoint import get_checkpointer
 
     graph = StateGraph(AgentState)
-    graph.add_node("reason", node_reason)
-    graph.add_node("run_tool", node_run_tool)
-    graph.add_node("generate", node_generate)
-    graph.add_edge(START, "reason")
-    graph.add_conditional_edges("reason", route_after_reason, {"run_tool": "run_tool", "generate": "generate"})
-    graph.add_edge("run_tool", "reason")
-    graph.add_edge("generate", END)
+    graph.add_node("agent", node_agent)
+    graph.add_node("tools", node_tools)
+    graph.add_edge(START, "agent")
+    graph.add_conditional_edges("agent", route_after_agent, {"tools": "tools", "__end__": END})
+    graph.add_edge("tools", "agent")
     _compiled = graph.compile(checkpointer=get_checkpointer())
     return _compiled
 
@@ -420,10 +400,13 @@ def initial_state(
 ) -> AgentState:
     messages = list(history or [])
     messages.append({"role": "user", "content": query})
+    agent_messages = _history_to_lc(history)
+    agent_messages.append(HumanMessage(content=query))
     return {
         "knowledge_base_id": str(knowledge_base_id) if knowledge_base_id else None,
         "task": task,
         "messages": messages,
+        "agent_messages": agent_messages,
         "summary": (summary or "").strip(),
         "ltm_hits": list(ltm_hits or []),
         "citations": [],
@@ -431,11 +414,9 @@ def initial_state(
         "web_hits": [],
         "loop_count": 0,
         "max_loops": MAX_LOOPS,
-        "next_action": "generate",
-        "search_query": "",
+        "tool_call_count": 0,
         "answer": "",
-        "subtasks": [],
-        "subtask_index": 0,
+        "search_query": "",
         "allow_web": bool(allow_web),
         "query_type": "complex",
         "sub_questions": [],

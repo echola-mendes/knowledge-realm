@@ -11,6 +11,7 @@
 | 父子切块落库（PRD_Chunk_V1） | 2026-09-08 | document_chunk role/parent_id；索引写 parent+child；检索仅 child + parent 组装/V0 降级 | 全 ✅ |
 | 知识 Agent 编排优化（Sufficiency V0） | 2026-09-09 | knowledge_flow：analyze/Simple·Complex/decompose/sufficiency/rewrite/merge/gap/generate；审计 step+IO；详情页可读 | 全 ✅ |
 | 局部邻居扩窗 + 双条件过滤（Chunk V3） | 2026-09-09 | search_chunks 门槛后 ±1 + 双条件；SearchHit 两字段；审计 assembly；Merge 按 chunk_id；TECH/PRD 同步 | 全 ✅ |
+| ReAct graph.py 标准 Tool Calling 重构 | 2026-09-10 | tools 包+registry+configurable；graph=agent⇄tools；task=react 审计/SSE；agent knowledge 不接审计 | 全 ✅ |
 
 ## 经验
 
@@ -178,3 +179,29 @@
 问题：未命中邻居没有「原 Rerank 分」；若用全局 0.5 门槛会把邻居几乎全灭。
 
 解法：仅锚点过 `RELEVANCE_MIN_SCORE`；邻居用更低的 `EXPAND_QUERY_MIN`（默认 0.3）+ `EXPAND_ANCHOR_MIN`（0.6）双条件；有 Rerank Key 时对去重邻居批量二次 `score_documents`，无 Key / 失败则 query–chunk 余弦。Merge 去重键改为 `chunk_id`，与「同父多命中保留多条」一致。
+
+### Agent Tool：禁止闭包，用 configurable
+
+日期：2026-09-10　来源：ReAct Tool Calling 重构
+
+问题：闭包捕获 `session`/`user_id` 使 Tool Schema 污染、难测、与 knowledge_flow 复用冲突。
+
+解法：`@tool` 仅业务参数；执行时从 LangGraph `configurable` 读 runtime；`tools_for(allow_web, enable_graph)` 门控 bind 子集。
+
+### task=react 审计/SSE 与共用图解耦
+
+日期：2026-09-10　来源：ReAct Tool Calling 重构
+
+问题：`graph.py` 同时被 `task=react` 与 Master knowledge 调用，不能把审计/新 SSE 绑死在图内。
+
+解法：审计 `decision_recorder` 与 react 专用 SSE（`_stream_react_graph`）仅在 react 路由注入；Master knowledge 共用图但不传 recorder；stream 另保留 `token`/`citations` 兼容旧前端。
+
+---
+
+## 2026-09-10：ReAct graph.py 标准 Tool Calling 重构完成
+
+- `app/agent/tools/`：knowledge/graph/web/text2sql + registry；旧 import 薄 re-export
+- `graph.py`：`bind_tools` + `ToolNode` + `tools_condition`；无手写 JSON action
+- `task=react`：多库检索 A1；`mode=react` + tool_call/tool_result span；SSE 中间事件 + token/citations 兼容
+- Master knowledge / knowledge_flow / booking / plan 边界未改；文档已同步 architecture/PRD/TECH/Trace
+- 契约：`test_react_sse.py` 等；临时文件 prd-sub / execution-plan 保留待下轮清空

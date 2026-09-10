@@ -1,33 +1,37 @@
 import inspect
 import uuid
 
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
 from app.agent import graph as graph_mod
-from app.agent.graph import build_graph, initial_state
+from app.agent.graph import build_graph, initial_state, reset_graph
 from app.rag.search import SearchHit
 import app.rag.chat as chat_mod
 import app.chains as chains_mod
 
 
-def test_graph_searches_then_generates_and_caps_loops(monkeypatch):
+def _config(thread: str, **extra):
+    cfg = {"thread_id": thread, "session": object(), "user_id": uuid.uuid4(), **extra}
+    return {"configurable": cfg}
+
+
+def test_graph_no_json_action_routing():
     src = inspect.getsource(graph_mod)
-    assert "search_knowledge" in src
-    assert "web_search" in src
-    assert '{{"action":"rag"' in inspect.getsource(graph_mod.reason_decide)
-    assert '{{"action":"web"' in inspect.getsource(graph_mod.reason_decide)
-    assert '{{"action":"direct"' in inspect.getsource(graph_mod.reason_decide)
-    assert inspect.getsource(graph_mod.node_reason).count("search_knowledge") == 0
-    assert inspect.getsource(graph_mod.node_reason).count("web_search") == 0
+    assert "ToolNode" in src
+    assert "tools_condition" in src
+    assert "bind_tools" in src
+    assert '{{"action":"rag"' not in src
+    # 工具路由不得依赖 next_action / 手写 JSON action（plan_agent_search 兼容字段除外）
+    assert "state.get(\"next_action\")" not in src
+    assert 'state.get("next_action")' not in src
+    assert 'parsed.get("action")' not in src
     assert "langgraph" not in inspect.getsource(chat_mod)
     assert "langgraph" not in inspect.getsource(chains_mod)
-    assert "playwright" not in inspect.getsource(graph_mod).lower()
+    assert "playwright" not in src.lower()
 
-    decisions = iter(
-        [
-            {"next_action": "search", "search_query": "苹果"},
-            {"next_action": "generate"},
-        ]
-    )
-    monkeypatch.setattr(graph_mod, "reason_decide", lambda state: next(decisions))
+
+def test_graph_tool_calls_then_final(monkeypatch):
+    reset_graph()
     calls: list[str] = []
 
     def fake_search(session, query, **kwargs):
@@ -45,234 +49,177 @@ def test_graph_searches_then_generates_and_caps_loops(monkeypatch):
             )
         ]
 
-    monkeypatch.setattr(graph_mod, "search_knowledge", fake_search)
-    monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "根据资料回答")
-    compiled = build_graph()
-    out = compiled.invoke(
-        initial_state("苹果是什么"),
-        config={"configurable": {"thread_id": f"graph-loop-{uuid.uuid4()}", "session": object()}},
+    monkeypatch.setattr("app.agent.tools.knowledge.search_chunks", fake_search)
+
+    responses = iter(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "search_knowledge", "args": {"query": "苹果"}, "id": "c1"}],
+            ),
+            AIMessage(content="根据资料回答"),
+        ]
     )
+
+    class FakeRunnable:
+        def invoke(self, messages, config=None):
+            return next(responses)
+
+    class FakeModel:
+        def bind_tools(self, tools):
+            return FakeRunnable()
+
+        def invoke(self, messages, config=None):
+            return next(responses)
+
+    monkeypatch.setattr(graph_mod, "_chat_model", lambda: FakeModel())
+    compiled = build_graph()
+    out = compiled.invoke(initial_state("苹果是什么"), config=_config(f"graph-loop-{uuid.uuid4()}"))
     assert calls == ["苹果"]
     assert out["answer"] == "根据资料回答"
     assert out["loop_count"] == 1
     assert out["citations"][0]["document_name"] == "apple.md"
 
 
-def test_graph_max_loops_forces_generate(monkeypatch):
-    monkeypatch.setattr(
-        graph_mod,
-        "reason_decide",
-        lambda state: {"next_action": "search", "search_query": "再搜"},
-    )
+def test_graph_max_loops_forces_final_without_tools(monkeypatch):
+    reset_graph()
     n = {"search": 0}
 
     def fake_search(session, query, **kwargs):
         n["search"] += 1
         return []
 
-    monkeypatch.setattr(graph_mod, "search_knowledge", fake_search)
-    monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "停")
+    monkeypatch.setattr("app.agent.tools.knowledge.search_chunks", fake_search)
+
+    def always_tool(*a, **k):
+        return AIMessage(
+            content="",
+            tool_calls=[{"name": "search_knowledge", "args": {"query": "再搜"}, "id": f"c{n['search']}"}],
+        )
+
+    class FakeRunnable:
+        def invoke(self, messages, config=None):
+            # after tools rebound empty, final answer path uses model.invoke without bind
+            # Detect: if last message is ToolMessage and loop would exceed, node_agent binds []
+            tool_msgs = [m for m in messages if isinstance(m, ToolMessage)]
+            if len(tool_msgs) >= graph_mod.MAX_LOOPS:
+                return AIMessage(content="停")
+            return always_tool()
+
+    class FakeModel:
+        def bind_tools(self, tools):
+            self._tools = tools
+            return FakeRunnable()
+
+        def invoke(self, messages, config=None):
+            return FakeRunnable().invoke(messages, config)
+
+    monkeypatch.setattr(graph_mod, "_chat_model", lambda: FakeModel())
     compiled = build_graph()
-    out = compiled.invoke(
-        initial_state("一直搜"),
-        config={"configurable": {"thread_id": f"graph-cap-{uuid.uuid4()}", "session": object()}},
-    )
-    assert n["search"] == 3
-    assert out["loop_count"] == 3
+    out = compiled.invoke(initial_state("一直搜"), config=_config(f"graph-cap-{uuid.uuid4()}"))
+    assert n["search"] == graph_mod.MAX_LOOPS
+    assert out["loop_count"] == graph_mod.MAX_LOOPS
     assert out["answer"] == "停"
-    assert out["next_action"] == "generate"
 
 
 def test_agent_and_report_share_one_graph(monkeypatch):
+    reset_graph()
     assert "StateGraph" in inspect.getsource(graph_mod)
     assert "checkpointer" in inspect.getsource(graph_mod.build_graph)
     assert "StateGraph" not in inspect.getsource(chat_mod)
     assert "StateGraph" not in inspect.getsource(chains_mod)
-    monkeypatch.setattr(graph_mod, "reason_decide", lambda state: {"next_action": "generate"})
-    questions: list[str] = []
 
-    def fake_chat(question, context, history=None, *, summary=None, ltm=None):
-        questions.append(question)
-        return "成文"
+    seen: list[str] = []
 
-    monkeypatch.setattr("app.llm.chat", fake_chat)
+    class FakeRunnable:
+        def invoke(self, messages, config=None):
+            sys = messages[0].content if messages else ""
+            seen.append(sys)
+            return AIMessage(content="成文")
+
+    class FakeModel:
+        def bind_tools(self, tools):
+            return FakeRunnable()
+
+        def invoke(self, messages, config=None):
+            return FakeRunnable().invoke(messages, config)
+
+    monkeypatch.setattr(graph_mod, "_chat_model", lambda: FakeModel())
     compiled = build_graph()
     tid = f"graph-share-{uuid.uuid4()}"
-    agent_out = compiled.invoke(
-        initial_state("苹果", task="agent"),
-        config={"configurable": {"thread_id": tid + "-a", "session": object()}},
-    )
-    report_out = compiled.invoke(
-        initial_state("苹果", task="report"),
-        config={"configurable": {"thread_id": tid + "-r", "session": object()}},
-    )
+    agent_out = compiled.invoke(initial_state("苹果", task="agent"), config=_config(tid + "-a"))
+    report_out = compiled.invoke(initial_state("苹果", task="report"), config=_config(tid + "-r"))
     assert agent_out["task"] == "agent"
     assert report_out["task"] == "report"
-    assert questions[0] == "苹果"
-    assert "研究报告" in questions[1]
-    assert "大纲" in questions[1]
-    assert questions[1].endswith("主题：苹果")
+    assert "研究报告" not in seen[0]
+    assert "研究报告" in seen[1]
     assert agent_out["answer"] == "成文"
     assert report_out["answer"] == "成文"
 
 
-def test_graph_web_reason_calls_web_search(monkeypatch):
-    decisions = iter(
-        [
-            {"next_action": "web", "search_query": "今日新闻"},
-            {"next_action": "generate"},
-        ]
-    )
-    monkeypatch.setattr(graph_mod, "reason_decide", lambda state: next(decisions))
-    web_calls: list[str] = []
-
-    def fake_web(query, **kwargs):
-        web_calls.append(query)
-        return [{"title": "新闻", "url": "https://example.com", "snippet": "摘要"}]
-
-    def boom_search(*args, **kwargs):
-        raise AssertionError("RAG must not run when reason is WEB")
-
-    monkeypatch.setattr(graph_mod, "web_search", fake_web)
-    monkeypatch.setattr(graph_mod, "search_knowledge", boom_search)
-    monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "根据网页回答")
-    compiled = build_graph()
-    out = compiled.invoke(
-        initial_state("今天有什么新闻", allow_web=True),
-        config={"configurable": {"thread_id": f"graph-web-{uuid.uuid4()}", "session": object()}},
-    )
-    assert web_calls == ["今日新闻"]
-    assert out["answer"] == "根据网页回答"
-    assert out["loop_count"] == 1
-    assert out["web_hits"][0]["url"] == "https://example.com"
-    assert out["citations"] == []
-
-
-def test_graph_allow_web_false_blocks_web_search(monkeypatch):
-    decisions = iter(
-        [
-            {"next_action": "web", "search_query": "今日新闻"},
-            {"next_action": "generate"},
-        ]
-    )
-    monkeypatch.setattr(graph_mod, "reason_decide", lambda state: next(decisions))
-
-    def boom_web(*args, **kwargs):
-        raise AssertionError("allow_web=false must not call web_search")
-
-    def boom_search(*args, **kwargs):
-        raise AssertionError("WEB path must not call search_knowledge")
-
-    monkeypatch.setattr(graph_mod, "web_search", boom_web)
-    monkeypatch.setattr(graph_mod, "search_knowledge", boom_search)
-    monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "未联网直答")
-    compiled = build_graph()
-    out = compiled.invoke(
-        initial_state("今天有什么新闻", allow_web=False),
-        config={"configurable": {"thread_id": f"graph-no-allow-web-{uuid.uuid4()}", "session": object()}},
-    )
-    assert out["answer"] == "未联网直答"
-    assert out["web_hits"] == []
-    assert out["loop_count"] == 0
-
-
-def test_graph_empty_rag_does_not_force_web(monkeypatch):
-    decisions = iter(
-        [
-            {"next_action": "search", "search_query": "库内没有的东西"},
-            {"next_action": "generate"},
-        ]
-    )
-    monkeypatch.setattr(graph_mod, "reason_decide", lambda state: next(decisions))
-
-    def fake_search(session, query, **kwargs):
-        return []
-
-    def boom_web(*args, **kwargs):
-        raise AssertionError("empty citations must not force web_search")
-
-    monkeypatch.setattr(graph_mod, "search_knowledge", fake_search)
-    monkeypatch.setattr(graph_mod, "web_search", boom_web)
-    monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "无资料直答")
-    compiled = build_graph()
-    out = compiled.invoke(
-        initial_state("库里没有的问题"),
-        config={"configurable": {"thread_id": f"graph-no-web-{uuid.uuid4()}", "session": object()}},
-    )
-    assert out["citations"] == []
-    assert out["web_hits"] == []
-    assert out["answer"] == "无资料直答"
-
-
-def test_graph_direct_does_not_call_web_search(monkeypatch):
-    monkeypatch.setattr(graph_mod, "reason_decide", lambda state: {"next_action": "generate"})
-
-    def boom_web(*args, **kwargs):
-        raise AssertionError("DIRECT must not call web_search")
-
-    def boom_search(*args, **kwargs):
-        raise AssertionError("DIRECT must not call search_knowledge")
-
-    monkeypatch.setattr(graph_mod, "web_search", boom_web)
-    monkeypatch.setattr(graph_mod, "search_knowledge", boom_search)
-    monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "直答")
-    compiled = build_graph()
-    out = compiled.invoke(
-        initial_state("你好"),
-        config={"configurable": {"thread_id": f"graph-direct-{uuid.uuid4()}", "session": object()}},
-    )
-    assert out["answer"] == "直答"
-    assert out["loop_count"] == 0
-
-
-def test_graph_plan_subtasks_capped_at_three_one_graph(monkeypatch):
-    from pathlib import Path
-
-    p1_dir = Path(graph_mod.__file__).resolve().parent
-    graph_files = sorted(p.name for p in p1_dir.glob("*.py") if "graph" in p.name.lower())
-    assert graph_files == ["graph.py"]
-    assert inspect.getsource(graph_mod).count("StateGraph(") == 1
-    assert "MAX_SUBTASKS = 3" in inspect.getsource(graph_mod)
-    assert graph_mod.MAX_SUBTASKS == graph_mod.MAX_LOOPS == 3
-    assert graph_mod.clip_subtasks(["一", "二", "三", "四", "五"]) == ["一", "二", "三"]
-    assert graph_mod.clip_subtasks(["", "  ", "甲"]) == ["甲"]
-
-    n = {"i": 0}
-
-    def fake_reason(state):
-        n["i"] += 1
-        if n["i"] == 1:
-            return {
-                "next_action": "search",
-                "search_query": "一",
-                "subtasks": ["一", "二", "三", "四"],
-            }
-        if n["i"] == 2:
-            return {
-                "next_action": "search",
-                "search_query": "二",
-                "subtasks": ["应忽略1", "应忽略2", "应忽略3", "应忽略4"],
-            }
-        return {"next_action": "generate", "subtasks": ["再写也不行"]}
-
+def test_graph_multiple_tool_calls_in_one_round(monkeypatch):
+    reset_graph()
     queries: list[str] = []
 
     def fake_search(session, query, **kwargs):
         queries.append(query)
         return []
 
-    monkeypatch.setattr(graph_mod, "reason_decide", fake_reason)
-    monkeypatch.setattr(graph_mod, "search_knowledge", fake_search)
-    monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "汇总")
-    compiled = build_graph()
-    out = compiled.invoke(
-        initial_state("复杂问题请分步"),
-        config={"configurable": {"thread_id": f"graph-plan-{uuid.uuid4()}", "session": object()}},
+    monkeypatch.setattr("app.agent.tools.knowledge.search_chunks", fake_search)
+
+    responses = iter(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "search_knowledge", "args": {"query": "A"}, "id": "1"},
+                    {"name": "search_knowledge", "args": {"query": "B"}, "id": "2"},
+                ],
+            ),
+            AIMessage(content="双工具答"),
+        ]
     )
-    assert out["subtasks"] == ["一", "二", "三"]
-    assert len(out["subtasks"]) <= 3
-    assert queries == ["一", "二"]
-    assert out["answer"] == "汇总"
-    assert out["subtask_index"] == 2
-    assert "langgraph" not in inspect.getsource(chat_mod)
-    assert "StateGraph" not in inspect.getsource(chains_mod)
+
+    class FakeRunnable:
+        def invoke(self, messages, config=None):
+            return next(responses)
+
+    class FakeModel:
+        def bind_tools(self, tools):
+            return FakeRunnable()
+
+        def invoke(self, messages, config=None):
+            return next(responses)
+
+    monkeypatch.setattr(graph_mod, "_chat_model", lambda: FakeModel())
+    out = build_graph().invoke(initial_state("问两个"), config=_config(f"multi-{uuid.uuid4()}"))
+    assert queries == ["A", "B"]
+    assert out["answer"] == "双工具答"
+
+
+def test_graph_no_tool_calls_ends_with_content(monkeypatch):
+    reset_graph()
+
+    class FakeModel:
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages, config=None):
+            return AIMessage(content="直答")
+
+    monkeypatch.setattr(graph_mod, "_chat_model", lambda: FakeModel())
+    out = build_graph().invoke(initial_state("你好"), config=_config(f"direct-{uuid.uuid4()}"))
+    assert out["answer"] == "直答"
+    assert out["loop_count"] == 0
+
+
+def test_route_after_agent_uses_tools_condition():
+    state = {
+        "agent_messages": [
+            HumanMessage(content="q"),
+            AIMessage(content="", tool_calls=[{"name": "search_knowledge", "args": {"query": "x"}, "id": "1"}]),
+        ]
+    }
+    assert graph_mod.route_after_agent(state) == "tools"
+    state2 = {"agent_messages": [AIMessage(content="done")]}
+    assert graph_mod.route_after_agent(state2) == "__end__"

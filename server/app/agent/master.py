@@ -115,6 +115,7 @@ def node_knowledge(state: MasterState, config: RunnableConfig) -> dict[str, Any]
                 "thread_id": convo_raw or f"knowledge-{uuid.uuid4()}",
                 "session": inner_configurable("session"),
                 "user_id": inner_configurable("user_id"),
+                "knowledge_base_id": uuid.UUID(kb_raw) if kb_raw else None,
             }
         },
     )

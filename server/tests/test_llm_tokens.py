@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import uuid
+
+from langchain_core.messages import AIMessage
 
 from app.agent import graph as graph_mod
+from app.agent.graph import reset_graph
 from tests.http_client import api_client
 
 
@@ -51,14 +55,21 @@ def test_usage_of_and_chat_wrapper(monkeypatch):
 
 
 def test_trace_events_carry_tokens(monkeypatch):
+    reset_graph()
     usage = _usage(100, 20)
-    decisions = iter(
-        [
-            {"next_action": "generate", **{"usage": usage}},
-        ]
-    )
-    monkeypatch.setattr(graph_mod, "reason_decide", lambda state: next(decisions))
-    monkeypatch.setattr(graph_mod, "generate_answer", lambda state: ("回答", usage))
+
+    def fake_agent(state, config=None):
+        answer = "回答"
+        messages = list(state.get("messages") or [])
+        messages.append({"role": "assistant", "content": answer})
+        return {
+            "answer": answer,
+            "messages": messages,
+            "agent_messages": [AIMessage(content=answer)],
+            "usage": usage,
+        }
+
+    monkeypatch.setattr(graph_mod, "node_agent", fake_agent)
 
     with _client() as client:
         res = client.post("/api/agent/trace", json={"query": "问题", "task": "agent"})
@@ -66,17 +77,21 @@ def test_trace_events_carry_tokens(monkeypatch):
     events = _sse_events(res.text)
     steps = [e for e in events if e["type"] == "step"]
     final = next(e for e in events if e["type"] == "final")
-    reason_step = next(s for s in steps if s["node"] == "reason")
-    generate_step = next(s for s in steps if s["node"] == "generate")
-    assert reason_step["tokens"] == usage
-    assert generate_step["tokens"] == usage
-    assert final["tokens"] == _usage(200, 40)
-    # 无 LLM 步骤（run_tool 等）不带 tokens 字段
+    agent_step = next(s for s in steps if s["node"] == "agent")
+    assert agent_step["tokens"] == usage
+    assert final["tokens"] == usage
 
 
 def test_trace_final_tokens_zero_without_usage(monkeypatch):
-    monkeypatch.setattr(graph_mod, "reason_decide", lambda state: {"next_action": "generate"})
-    monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "直答")
+    reset_graph()
+
+    def fake_agent(state, config=None):
+        answer = "直答"
+        messages = list(state.get("messages") or [])
+        messages.append({"role": "assistant", "content": answer})
+        return {"answer": answer, "messages": messages, "agent_messages": [AIMessage(content=answer)]}
+
+    monkeypatch.setattr(graph_mod, "node_agent", fake_agent)
 
     with _client() as client:
         res = client.post("/api/agent/trace", json={"query": "问题", "task": "agent"})
@@ -85,8 +100,26 @@ def test_trace_final_tokens_zero_without_usage(monkeypatch):
     assert final["tokens"] == {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
 
-def test_node_generate_tolerates_plain_string(monkeypatch):
-    monkeypatch.setattr(graph_mod, "generate_answer", lambda state: "纯字符串")
-    updates = graph_mod.node_generate({"messages": [{"role": "user", "content": "q"}]})
+def test_node_agent_sets_answer_without_tool_calls(monkeypatch):
+    reset_graph()
+
+    class FakeModel:
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages, config=None):
+            return AIMessage(content="纯字符串")
+
+    monkeypatch.setattr(graph_mod, "_chat_model", lambda: FakeModel())
+    updates = graph_mod.node_agent(
+        {
+            "messages": [{"role": "user", "content": "q"}],
+            "agent_messages": [__import__("langchain_core.messages", fromlist=["HumanMessage"]).HumanMessage(content="q")],
+            "loop_count": 0,
+            "max_loops": 3,
+            "tool_call_count": 0,
+            "allow_web": False,
+            "task": "agent",
+        }
+    )
     assert updates["answer"] == "纯字符串"
-    assert "usage" not in updates
