@@ -20,8 +20,11 @@ data/parsed/**
 !data/files/.gitkeep
 !data/parsed/.gitkeep
 
-# Local runtime (logs, Redis snapshot)
+# Local runtime (logs, pids, Redis snapshot)
 server/logs/
+*.log
+*.pid
+*.rdb
 dump.rdb
 
 .DS_Store

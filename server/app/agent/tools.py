@@ -4,12 +4,28 @@ import uuid
 from typing import Any
 
 import httpx
+from langchain_core.tools import BaseTool, tool
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agent.text2sql import rows_preview
+from app.agent.text2sql import text2sql as run_text2sql
 from app.config import get_settings
 from app.models import Document, DocumentChunk, Entity, EntityLink, KnowledgeBase
 from app.rag.search import SearchHit, search_chunks
+
+AGENT_TOOL_NAMES = ("search_knowledge", "search_graph", "web_search", "text2sql")
+
+
+def text2sql(
+    session: Session,
+    question: str,
+    user_id: uuid.UUID,
+    *,
+    sql: str | None = None,
+) -> dict[str, Any]:
+    """自然语言查询 customers/products/orders/order_items（仅 SELECT）。"""
+    return run_text2sql(session, question, user_id, sql=sql)
 
 
 def search_knowledge(
@@ -211,6 +227,106 @@ def search_graph(
             break
     return hits
 
+
+def _format_search_hits(hits: list[SearchHit]) -> str:
+    if not hits:
+        return "未找到相关文档。"
+    return "\n\n".join(f"[{h.document_name}]\n{h.content}" for h in hits)
+
+
+def _format_web_hits(hits: list[dict[str, str]]) -> str:
+    if not hits:
+        return "未找到相关网页。"
+    return "\n\n".join(
+        f"[{h.get('title') or h.get('url')}]\n{h.get('url') or ''}\n{h.get('snippet') or ''}".strip()
+        for h in hits
+    )
+
+
+def _format_sql_result(result: dict[str, Any]) -> str:
+    parts = [f"SQL: {result.get('sql') or ''}"]
+    if result.get("error"):
+        parts.append(f"错误: {result['error']}")
+    parts.append(rows_preview(list(result.get("rows") or [])))
+    return "\n".join(parts)
+
+
+def build_agent_tools(
+    *,
+    allow_web: bool = False,
+    has_kb: bool = False,
+    session: Session | None = None,
+    user_id: uuid.UUID | None = None,
+    knowledge_base_id: uuid.UUID | None = None,
+    k: int = 5,
+) -> list[BaseTool]:
+    """官方 @tool 列表，供 model.bind_tools；门控靠是否纳入列表。
+
+    传入 session/user_id 时工具可直接 invoke；ReAct 的 node_run_tool 仍可调用同名实现函数拿结构化结果。
+    """
+
+    @tool("search_knowledge")
+    def search_knowledge_tool(query: str) -> str:
+        """在用户知识库中检索相关文档片段。
+
+        Args:
+            query: 检索关键词
+        """
+        if session is None or user_id is None:
+            return query
+        hits = search_knowledge(
+            session,
+            query,
+            user_id,
+            knowledge_base_id=knowledge_base_id,
+            k=k,
+        )
+        return _format_search_hits(hits)
+
+    @tool("text2sql")
+    def text2sql_tool(query: str) -> str:
+        """查询商品、订单等结构化业务数据（Text2SQL）。
+
+        Args:
+            query: 自然语言问题
+        """
+        if session is None or user_id is None:
+            return query
+        return _format_sql_result(text2sql(session, query, user_id))
+
+    @tool("search_graph")
+    def search_graph_tool(query: str) -> str:
+        """按知识图谱实体关系检索相关文档。
+
+        Args:
+            query: 检索关键词
+        """
+        if session is None or user_id is None or knowledge_base_id is None:
+            return query
+        hits = search_graph(
+            session,
+            query,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            k=k,
+        )
+        return _format_search_hits(hits)
+
+    @tool("web_search")
+    def web_search_tool(query: str) -> str:
+        """在互联网上搜索信息。当用户询问实时信息、新闻或不确定的知识时使用。
+
+        Args:
+            query: 搜索关键词
+        """
+        return _format_web_hits(web_search(query, k=k))
+
+    tools: list[BaseTool] = [search_knowledge_tool, text2sql_tool]
+    if has_kb:
+        tools.append(search_graph_tool)
+    if allow_web:
+        tools.append(web_search_tool)
+    return tools
 
 
 def _links_for_entities(

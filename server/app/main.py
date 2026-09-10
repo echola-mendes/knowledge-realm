@@ -24,6 +24,7 @@ from app.routers.tags import router as tags_router
 from app.routers.task import router as task_router
 from app.routers.news import router as news_router
 from app.scheduler.scheduler import shutdown_scheduler, start_scheduler
+from app.commerce.seed import seed_commerce_data
 from app.user import ensure_default_user
 
 
@@ -37,6 +38,7 @@ def create_app(*, load_file: bool = True, ensure_default: bool = True) -> FastAP
             try:
                 user = ensure_default_user(session)
                 ensure_default_knowledge_base(session, user.id)
+                seed_commerce_data(session, user.id)
             finally:
                 session.close()
         start_scheduler()
