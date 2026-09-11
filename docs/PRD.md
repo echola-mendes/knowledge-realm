@@ -157,7 +157,7 @@
 对话页模式：
 - **Chat**：`/api/chat` 单链 RAG。
 - **知识 Agent**：`task=knowledge` 走 `knowledge_flow`（analyze→Simple 单次检索 | Complex 分解 Qi→Sufficiency V0→Rewrite→Merge→Gap→Generate）；只做知识库编排与回答，不经差旅意图路由；`/api/chat` 不变。
-- **ReAct**：`task=react` 直连 `graph.py` 标准 Tool Calling（`agent ⇄ tools`，无手写 JSON action），不经 Master / `knowledge_flow`；工具包 `app/agent/tools/`；未指定知识库时多库检索；stream 推送 tool 中间事件且兼容现有 `token`/`citations`；决策审计 `mode=react` 记 `tool_call`/`tool_result`（`task=agent` 经 Master knowledge 调同一图时本期不接审计）。
+- **ReAct**：`task=react` 直连 `graph.py` 标准 Tool Calling（`agent ⇄ tools`，无手写 JSON action / 无 rewrite 类 Node），不经 Master / `knowledge_flow`；工具包 `app/agent/tools/` + registry；未指定知识库时多库检索；`MAX_TOOL_CALLS` 双保险硬上限（关并行 + ToolNode 前截断）；citations 按 `document_id+chunk_id` 去重并以 score top-N 保质；足够=本轮 Tool Observation（会话历史/LTM 不作本轮证据）；stream 的 `tool_call`/`tool_result` 可带安全短 `reason`，失败有 `error`，兼容 `token`/`citations`；决策审计 `mode=react` 记 `tool_call`/`tool_result`（`task=agent` 经 Master knowledge 调同一图时本期不接审计）。
 - **Multi Agent**：Master 多 Agent（知识 / 闲聊 / 行程规划 / 预订）。
 - **Report**：研究报告（经 Master，强制 knowledge 路径）。
 

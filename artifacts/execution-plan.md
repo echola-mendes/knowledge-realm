@@ -1,97 +1,117 @@
 # Execution Plan
 
-> 子需求：ReAct `graph.py` 标准 Tool Calling 重构  
-> 栈约束：FastAPI + LangGraph；检索仅经 Tool→`search_chunks`；身份只来自 Session/`configurable`；不改 Chat / knowledge_flow / booking / plan  
-> 已确认：见 `artifacts/prd-sub.md` R1–R14（含 Q1–Q10、A1、agent knowledge 不接审计）
-
-## Step 1：拆分 `agent/tools/` 包 + 旧路径 re-export + configurable 取上下文
-
-### 目标
-按 `flow.md` 落地工具包与 registry；去掉闭包版 `build_agent_tools`；Tool 执行时从 `configurable` 读 `session`/`user_id`/`knowledge_base_id` 等；旧 `from app.agent.tools import search_knowledge` 等仍可用。
-
-### 方案
-- 新建 `server/app/agent/tools/`：`knowledge.py` / `graph.py` / `web.py` / `text2sql.py` / `registry.py` / `__init__.py`。
-- 每个文件：`@tool`（仅业务参数）+ 可被 knowledge_flow 等调用的纯函数实现（迁移自现 `tools.py`）。
-- `registry.py`：`AGENT_TOOLS` 全量列表；`tools_for(*, allow_web, enable_graph)`（或等价）按门控返回 bind 子集（R4）。
-- Tool 内用 LangGraph/LangChain 惯例从运行配置读取 context（`configurable`），**禁止**闭包捕获 session（R2）。
-- `text2sql`：包装现有 `app.agent.text2sql` 实现；Schema 仅 `question`（等业务字段）。
-- 删除或替换根级 `tools.py`：改为包，或薄文件 re-export 到包（保证既有 import 不断）（R11）。
-- `search_knowledge`：`knowledge_base_id` **不进** Tool Schema；执行时用 configurable 中的值，`None` → 多库（R5/A1）。
-
-### 验收
-- [✅] `from app.agent.tools import search_knowledge, search_graph, web_search` 仍可 import，且 `search_knowledge` 签名/行为对 knowledge_flow 兼容（至少既有 `test_p1_tools` / knowledge 相关测试或等价冒烟通过）
-- [✅] `@tool` schema（args）不含 `session` / `user_id` / `conversation_id` / `knowledge_base_id`
-- [✅] `tools_for(allow_web=False)` 结果不含 `web_search`；`enable_graph=False` 不含 `search_graph`
+> 子需求：ReAct Agent 标准 Tool Calling 优化  
+> 栈约束：见 `AGENTS.md`；保留 `bind_tools`+`ToolNode`+`tools_condition`；不改 knowledge_flow / 旧 chat API  
+> 已确认（确认①）：① 关 `parallel_tool_calls` + 进 ToolNode 前预算截断双保险；② citations 去重后按 `score` top-N，无 score 保首次；③ `reason` 挂 `tool_call`/`tool_result` 可选字段，不新增独立事件；④ 只强化 `citations`，不维护 react `evidence` state  
+> 全局硬约束：禁止新增 `rewrite` / `select_tool` / `rerank` / `reflect` / `decide` 类 LangGraph Node；「下一步做什么」只由下一轮 `node_agent` LLM 决策（含改写 query / 选工具 / 是否继续）
 
 ---
 
-## Step 2：重构 `graph.py` 为标准 Tool Calling 循环
+## Step 1：`MAX_TOOL_CALLS` 双保险硬上限
 
 ### 目标
-`reason/agent ⇄ tools`；无手写 JSON action 路由；无独立 generate 节点（无 tool_calls 时 content 即终答）；支持多 tool_calls 与 MAX 循环上限；聚合 citations。
+使实际 Tool **执行**总次数始终 ≤ `MAX_TOOL_CALLS`（含模型仍并行发出多个 `tool_calls` 的情况）。
 
 ### 方案
-- State 以 messages 为主（可保留少量辅助字段：citations、loop_count、usage 等）；删除以 `next_action`/`subtasks`/`subtask_index` 作为工具路由协议（R6）。
-- `model.bind_tools(tools_for(...))`；`ToolNode` + `tools_condition`；有 `tool_calls` → tools → agent，否则 END。
-- 达 `MAX_LOOPS` / `MAX_TOOL_CALLS` 后强制不再调工具、以已有 context 产出终答（content 或最后一轮无 tools 调用）。
-- 从本轮 `ToolMessage` / 结构化 tool 结果聚合 `search_knowledge`/`search_graph` citations（R7）；结构化可序列化结果（flow.md §6）。
-- 适配依赖旧 API 的调用方：`initial_state` / `build_graph` / `reset_graph`；`plan_agent_search`（若仍被 retrieval_debug 使用）改为基于新 agent 节点或明确废弃并改调用方（最小改动）。
-- `task=agent` Master knowledge 继续 `build_graph().invoke`，**不**注入 `decision_recorder`（R12）。
+- `server/app/agent/graph.py`：`bind_tools` 时传 `parallel_tool_calls=False`（若客户端/模型不支持则吞掉并依赖第二道）。
+- 在进入 `ToolNode` 执行前：按 `remaining = MAX_TOOL_CALLS - tool_call_count` 截断本轮待执行的 `tool_calls`（改写最后一条 `AIMessage` 或其等价输入），只执行预算内调用；被截断的不计入执行。
+- 保留现有「预算耗尽则 `_bound_tools` 返回空列表、模型只能终答」行为。
+- 不单靠 `loop_count`；`tool_call_count` 仍按**实际执行数**累加。
+- 单测：模拟一轮 `tool_calls` 数量 > 剩余预算 → 实际执行 ≤ 剩余；多轮累计不超过 `MAX_TOOL_CALLS`。
 
 ### 验收
-- [✅] `graph.py` 中不存在以 `json.loads` 解析 `action`/`next_action` 作为工具路由的逻辑
-- [✅] 单测或契约：模拟带 `tool_calls` 的 AIMessage → ToolNode 执行 → 再进入 agent；无 `tool_calls` → 结束且 `answer`/`content` 为终答
-- [✅] 一轮多个 `tool_calls` 均可执行（不截成只跑第一个）
-- [✅] `test_p1_graph` / `test_react_agent_task`（及因 API 变更必改的最小测试）通过
+- [✅] 单测：一轮并行多个 `tool_calls` 超过剩余预算时，实际执行次数 ≤ 剩余预算，且最终累计 ≤ `MAX_TOOL_CALLS`
+- [✅] `bind_tools` 调用路径包含 `parallel_tool_calls=False`（源码断言或等价单测）
+- [✅] 既有 `test_p1_graph` / `test_react_*` 中与循环相关的用例仍通过（最小必要适配）
 
 ---
 
-## Step 3：`task=react` 检索上下文 A1 + 决策审计 span（tool_call / tool_result）
+## Step 2：增强 Tool description
 
 ### 目标
-react 路径检索 kb 未指定则为多库；审计按 Q7=B 落 span；agent knowledge 仍无审计。
+让 LLM 能正确理解各 Tool 用途、重试与切换时机；schema 仍仅业务参数。
 
 ### 方案
-- `_invoke_react_graph` / prepare：会话行 `Conversation.knowledge_base_id` 仍可 resolve 默认库；**检索用** `configurable.knowledge_base_id` = 请求显式值，否则 `None`（A1）。
-- react 注入 `decision_recorder`；在 agent/tools 路径记录 `tool_call` / `tool_result`（及必要终答 span）；`node_type` ≤ 现有 `String(20)`。
-- Master `node_knowledge` **不**传 `decision_recorder`（维持现状）。
-- 监控页：新 `node_type` 至少以原始字符串可展示、详情不崩（不做完整 Trace UI）。
+仅改各 `@tool` docstring（必要时 `description=`），不改实现逻辑：
+- `search_knowledge`：知识库语义/关键词综合检索；证据不足可换 query 重试
+- `search_graph`：实体、关系、关联文档
+- `web_search`：仅允许联网且库内不足/需外部最新信息时
+- `text2sql`：仅结构化业务数据查询
+- 验收：schema（args）仍不含 `session`/`user_id`/`knowledge_base_id` 等 runtime
 
 ### 验收
-- [✅] 单测：react 未传 `knowledge_base_id` 时，检索调用侧看到 `knowledge_base_id is None`（或多库 `search_kb_ids` 行为）
-- [✅] 单测或集成：`task=react` 成功轮次产生 `decision_run(mode=react)`，且 spans 含 tool_call/tool_result（或等价命名），而非仅旧 route/retrieve/generate
-- [✅] 单测或断言：Master knowledge 路径调用 `build_graph` 时 configurable 无 `decision_recorder`（或无新 run）
+- [✅] 四个 Tool 的 description/docstring 含用途与使用时机要点（人工对照 prd-sub §3.2）
+- [✅] 断言或既有工具 schema 检查：args 不含 runtime 字段（可复用/扩展 `test_p1_tools` 类检查）
 
 ---
 
-## Step 4：`task=react` 稳定 SSE（与 Graph 同套）+ 前端可忽略中间事件
+## Step 3：citations 去重与 score top-N 保质
 
 ### 目标
-仅 `task=react` 输出稳定中间事件 + 终答；与 invoke 共用 Graph；现前端可只靠兼容终答字段拿到完整回答（R9/R10）。
+按 `document_id + chunk_id` 去重；截断时保留高 score；无 score 保留首次出现；不维护 react `evidence`；前端 citations 形态兼容。
 
 ### 方案
-- `agent_stream` 在 `task=react` 分支对同一 `build_graph` 使用 `stream`（updates/messages/自定义），映射为 SSE：`agent_start`、`tool_call`、`tool_result`、`answer_delta`（或等价）、`agent_end`，以及错误事件；终态仍发 `citations`（或等价）以兼容现 ChatView。
-- **兼容**：在发新事件同时，保留或映射现有 `token`/`citations`/`intent`，使当前前端不改也能拼出终答（ChatView 已认 `token`+`citations`）。
-- `task=agent|report|knowledge` stream 行为保持现逻辑，不强制换新协议。
+- 在 `graph.py` 将 append+`[-MAX_CITATIONS:]` 替换为合并函数：键=`(document_id, chunk_id)`；同键保留更高 `score`（缺失 score 视为最低并保首次键序）；最后按 score 降序取 top-`MAX_CITATIONS`（无 score 的条目按首次出现次序排在有 score 之后或稳定穿插——约定：有 score 按分数降序，无 score 按首次出现追加在已选满前的空位，总数 ≤ N）。
+- `node_tools` 与终答聚合路径共用该函数。
+- 不读写/填充 react 路径的 `evidence` state。
+- 字段保持与 `CitationOut` / 现 Tool 输出兼容（`document_id`/`chunk_id`/`score`/title/snippet 等现有键）。
 
 ### 验收
-- [✅] 契约测试：`POST /api/agent/stream` + `task=react` 的 SSE 中出现至少一类 tool 中间事件，且存在可拼出完整回答的 `token` 或 `answer_delta`，并以 `citations`（或文档约定终态）结束
-- [✅] 同请求 `task=knowledge` 或 `task=agent` 的 stream 不强制出现新 `tool_call` 协议事件（冒烟：状态码 200 且既有事件类型仍可用）
-- [✅] invoke 与 stream 共用同一 `build_graph`（无第二套 ReAct 实现文件）
+- [✅] 单测：同键重复 citations → 只保留一条且为较高 score
+- [✅] 单测：先入高 score、后入大量低 score → 截断后仍保留早期高 score（不被「只留最后 20」挤掉）
+- [✅] 单测或契约：无 score 条目按首次出现保留且总数 ≤ `MAX_CITATIONS`
+- [✅] 输出仍可被现有 citations / `CitationOut` 消费路径解析（相关 react/sse 测试通过）
 
 ---
 
-## Step 5：文档与架构长期约束同步
+## Step 4：Streaming `reason` 可选字段 + `error` 路径
 
 ### 目标
-长期架构与对外需求/技术说明与实现一致（本 Step 只改文档，不改业务逻辑）。
+多轮 `Agent→Tool→Agent→…→Final` 事件保持完整；`tool_call`/`tool_result` 可带安全短 `reason`；失败有 `error` 事件；不新增独立 reason 事件、不泄漏 CoT。
 
 ### 方案
-- 更新 `artifacts/architecture.md`：`graph.py` = 标准 Tool Calling ReAct；`agent/tools/` 包 + registry；`task=react`；configurable 注入；react 审计 span 形态；明确 knowledge_flow / booking / plan 边界。
-- 更新 `docs/PRD.md`、`docs/TECH.md`；必要时修正 `docs/Trace.md` 中过时的「知识 Agent→graph.py / mode 仅 chat|knowledge」描述。
-- **不修改**用户需求源 `docs/agent/flow.md`。
+- `graph.py`：在 custom writer 或节点 updates 中附带安全 `reason`（如「正在检索知识库」「知识库命中 N 条」类固定模板），禁止模型原始 Thought。
+- `routers/master.py` `_stream_react_graph`：透传 `tool_call`/`tool_result` 的可选 `reason`；异常路径 `yield {"type":"error", ...}` 后再结束（与现有 `finish_run("failed")` 协调）。
+- 不改非 react 任务的强制事件集；保留 `token`/`answer_delta`/`citations` 兼容。
 
 ### 验收
-- [✅] `architecture.md` 中 Agent/Tool 描述与「Tool Calling + tools 包 + task=react」一致，且不再把 `graph.py` 写成 knowledge_flow 编排
-- [✅] `PRD.md` / `TECH.md` 写明 task=react Tool Calling 与 SSE/审计边界（agent knowledge 不接审计）
-- [✅] `flow.md` 无改动（git 状态或 diff 确认）
+- [✅] 契约/单测：`task=react` SSE 多轮可见 `tool_call`→`tool_result`→终答事件序列；`tool_call` 或 `tool_result` 至少一类带可选 `reason` 且为短摘要
+- [✅] 单测或源码断言：无独立 `type=reason` 事件
+- [✅] 单测或路径验证：react stream 异常时出现 `type=error`（可用 monkeypatch 抛错）
+- [✅] `test_react_sse` / `test_react_agent_task` 通过（兼容字段未破坏）
+
+---
+
+## Step 5：按需收紧 system prompt
+
+### 目标
+强化「足够 = 本轮 Observation」、工具切换/改写/停止策略；不新增 rewrite Node。
+
+### 方案
+- 仅改 `_system_prompt`：补强何时调 Tool / 换 Tool / 改写 query 再检索 / 交叉验证 / 停止；重申会话历史与 LTM 非本轮证据；`allow_web=false` 禁 web。
+- Tool 切换细节以 Step 2 description 为主，Prompt 不堆砌过长。
+- 不改图拓扑。
+
+### 验收
+- [✅] `_system_prompt` 文本含「本轮 Observation / 本轮 Tool」足够判定与禁止用会话历史冒充证据的明确表述
+- [✅] `graph.py` / `build_graph` 无新增 `rewrite`/`select_tool`/`rerank`/`reflect`/`decide` 类 Node；拓扑仍仅 `agent ⇄ tools`
+- [✅] 冒烟：相关 `test_p1_graph` / react 图测试通过
+
+---
+
+## Step 6：清理无效残留 + Registry 贯穿确认
+
+### 目标
+清理 `graph.py` 中明显旧 ReAct/无用残留；确认新增 Tool 不改主循环。
+
+### 方案
+- 只删明确无效残留（若有）；不大重构；不删 knowledge_flow 共享字段（若仍被 knowledge 路径依赖）。
+- 核对 `registry` / `tools_for` / `ToolNode(AGENT_TOOLS)` / `bind_tools(tools_for(...))`：主循环无按工具名 if/else。
+- Phase 4 前本 Step 不做文档大同步；仅代码清理与确认。
+
+### 验收
+- [✅] `node_agent`/`node_tools`/`route_after_agent` 无按具体 tool name 的业务 if/else 路由（审计 span / reason 模板除外）
+- [✅] `build_graph` 节点集合仍仅为 agent/tools（无 rewrite/select_tool/rerank/reflect/decide）
+- [✅] `git diff` 范围不含 `knowledge_flow.py`、旧 chat 路由行为文件的功能性改动
+- [✅] 本子需求相关测试子集通过（`test_react_*`、`test_p1_graph`、工具 schema 相关）
+  > 审计：无明显可删旧 ReAct 残留；knowledge_flow 共享 AgentState 字段保留；主循环经 `tools_for`/`ToolNode(AGENT_TOOLS)`/`bind_tools`，无按工具名业务路由。

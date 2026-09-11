@@ -41,11 +41,13 @@
 ### 2.2 graph.py ReAct（长期，`task=react` + Master knowledge）
 
 - 标准循环：`bind_tools` → `AIMessage.tool_calls` → `ToolNode` → `ToolMessage` → …；无 tool_calls 时 **content 即终答**（无手写 JSON `action` 路由）。
+- 图拓扑仅 `agent ⇄ tools`：禁止新增 `rewrite` / `select_tool` / `rerank` / `reflect` / `decide` 类 Node；「下一步做什么」只由下一轮 `node_agent` 的 LLM 决策（改写 query、选工具、是否停止均同此）。
 - 工具包：`app/agent/tools/`（一工具一模块 + `registry.py`）；运行时经 `configurable` 注入 `session`/`user_id`/`conversation_id`/`knowledge_base_id`；**禁止**闭包；**禁止**上述字段进 LLM Tool Schema。
 - 门控：`bind_tools` 时按 `allow_web` / 是否启用图谱裁剪列表。
 - 检索 kb：只来自 configurable；未指定 `None` = 全部已开启库（与 Chat 一致）。
-- 允许一轮多个 tool_calls；硬上限 `MAX_LOOPS` / `MAX_TOOL_CALLS`。
-- Citations：聚合本轮检索类 Tool 结构化结果。
+- Tool Call 预算双保险：`bind_tools(..., parallel_tool_calls=False)` + 进入 `ToolNode` 前按剩余配额截断；**实际执行次数**硬上限 `MAX_TOOL_CALLS`（另有 `MAX_LOOPS`）。
+- Citations（react）：按 `document_id+chunk_id` 去重；有 `score` 则 top-N 保质，无 score 保首次；**不**另维护 react `evidence` state 对外输出。
+- SSE：`tool_call` / `tool_result` 可带可选安全短字段 `reason`（非独立事件、非 CoT）。
 
 ## 3. 代码布局（禁止新建 p4/）
 
@@ -83,8 +85,9 @@
 | type | 用途 |
 |---|---|
 | `agent_start` / `agent_end` | ReAct 起止 |
-| `tool_call` / `tool_result` | 工具调用与结构化结果摘要 |
+| `tool_call` / `tool_result` | 工具调用与结构化结果摘要；可选安全短字段 `reason`（非独立事件） |
 | `answer_delta` | 终答增量（可与现有 `token` 并存以兼容旧前端） |
+| `error` | react 流失败时的错误事件 |
 
 **传输时机（react）**：`stream_mode=["updates","custom"]`；LLM 用 `model.stream` + `get_stream_writer` 边生成边推 `token`；节点 updates 推 tool_*；`_agent_persist` 在出字之后、`citations` 之前。knowledge / Master 路径仍可伪流式。
 

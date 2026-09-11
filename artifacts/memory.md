@@ -12,6 +12,7 @@
 | 知识 Agent 编排优化（Sufficiency V0） | 2026-09-09 | knowledge_flow：analyze/Simple·Complex/decompose/sufficiency/rewrite/merge/gap/generate；审计 step+IO；详情页可读 | 全 ✅ |
 | 局部邻居扩窗 + 双条件过滤（Chunk V3） | 2026-09-09 | search_chunks 门槛后 ±1 + 双条件；SearchHit 两字段；审计 assembly；Merge 按 chunk_id；TECH/PRD 同步 | 全 ✅ |
 | ReAct graph.py 标准 Tool Calling 重构 | 2026-09-10 | tools 包+registry+configurable；graph=agent⇄tools；task=react 审计/SSE；agent knowledge 不接审计 | 全 ✅ |
+| ReAct Agent 标准 Tool Calling 优化 | 2026-09-11 | MAX_TOOL_CALLS 双保险；Tool description；citations 去重+score top-N；SSE reason/error；prompt 本轮 Observation；Registry 确认 | 6/6 ✅ |
 
 ## 经验
 
@@ -196,6 +197,38 @@
 
 解法：审计 `decision_recorder` 与 react 专用 SSE（`_stream_react_graph`）仅在 react 路由注入；Master knowledge 共用图但不传 recorder；stream 另保留 `token`/`citations` 兼容旧前端。
 
+### MAX_TOOL_CALLS 须双保险
+
+日期：2026-09-11　来源：ReAct Tool Calling 优化
+
+问题：只靠执行后累加 `tool_call_count`，一轮多个 `tool_calls` 仍可一次击穿预算。
+
+解法：`parallel_tool_calls=False` + 进 ToolNode 前按 `remaining` 截断本轮待执行调用；计数只含实际执行。
+
+### Citations 保质：去重 + score top-N，勿「只留最后 N」
+
+日期：2026-09-11　来源：ReAct Tool Calling 优化
+
+问题：append + `[-MAX_CITATIONS:]` 会被后续低质结果挤掉早期高分证据。
+
+解法：键 `(document_id, chunk_id)` 去重留高分；有 score 降序 top-N，无 score 保首次；react 路径不另维护 `evidence` 输出。
+
+### reason 挂可选字段，不新增事件类型
+
+日期：2026-09-11　来源：ReAct Tool Calling 优化
+
+问题：独立 `type=reason` 易泄漏 CoT 并破坏前端事件集。
+
+解法：安全短摘要挂在既有 `tool_call`/`tool_result`；失败走 `error`；模板固定文案，不用模型 Thought。
+
+### 清理 react 残留时勿删共享 AgentState
+
+日期：2026-09-11　来源：ReAct Tool Calling 优化
+
+问题：`evidence` / `search_query` / sufficiency 字段看似 react 无用。
+
+解法：它们是 knowledge_flow 与 `graph.AgentState` 共享通道；只删明确无效残留，不删共享字段。
+
 ---
 
 ## 2026-09-10：ReAct graph.py 标准 Tool Calling 重构完成
@@ -205,3 +238,9 @@
 - `task=react`：多库检索 A1；`mode=react` + tool_call/tool_result span；SSE 中间事件 + token/citations 兼容
 - Master knowledge / knowledge_flow / booking / plan 边界未改；文档已同步 architecture/PRD/TECH/Trace
 - 契约：`test_react_sse.py` 等；临时文件 prd-sub / execution-plan 保留待下轮清空
+
+## 2026-09-11：ReAct Agent 标准 Tool Calling 优化完成
+
+- Step1–6 全 ✅：预算双保险、Tool description、citations 保质、SSE reason/error、prompt 本轮 Observation、Registry 审计
+- 未改 `knowledge_flow.py` / 旧 chat；无新增决策类 Node
+- 文档：architecture（Phase 2 已写长期约束）+ PRD/TECH Phase 4 同步；临时文件保留待下轮 Phase 1 清空
