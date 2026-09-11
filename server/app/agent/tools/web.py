@@ -71,10 +71,12 @@ def web_search(query: str, *, k: int = 5) -> list[dict[str, str]]:
 
 @tool("web_search")
 def web_search_tool(query: str, config: RunnableConfig) -> str:
-    """在互联网上搜索信息。当用户询问实时信息、新闻或不确定的知识时使用。
+    """互联网搜索。仅在允许联网（allow_web=true）且知识库证据不足，或问题需要外部最新信息时使用。
+
+    禁止在知识库已足够时调用；禁止与相同 query 重复空转。库内事实仍优先 search_knowledge / search_graph。
 
     Args:
-        query: 搜索关键词
+        query: 联网搜索查询
     """
     import json
 

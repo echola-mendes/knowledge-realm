@@ -20,7 +20,12 @@ from app.chains import compare_documents, gather_document_text
 from app.agent.ltm import load_ltm_hits
 from app.rag.conversation_summary import refresh_conversation_summary
 from app.message_ui import mark_prior_hitl_resolved, pack_assistant_citations
-from app.agent.graph import build_graph, initial_state
+from app.agent.graph import (
+    build_graph,
+    initial_state,
+    _safe_tool_call_reason,
+    _safe_tool_result_reason,
+)
 from app.agent.knowledge_flow import build_knowledge_flow_graph
 from app.agent.master import build_master_graph, master_initial_state
 from app.rag.chat import _history
@@ -256,6 +261,7 @@ def _stream_react_graph(
     yield {"type": "agent_start", "task": "react"}
     final: dict[str, Any] = dict(state)
     streamed_text = False
+    custom_tool_types: set[str] = set()
     try:
         for item in build_graph().stream(
             state, config=config, stream_mode=["updates", "custom"]
@@ -265,7 +271,10 @@ def _stream_react_graph(
                 continue
             mode, payload = item
             if mode == "custom" and isinstance(payload, dict):
-                if payload.get("type") == "token" and payload.get("text"):
+                event_type = payload.get("type")
+                if event_type in ("tool_call", "tool_result"):
+                    custom_tool_types.add(str(event_type))
+                if event_type == "token" and payload.get("text"):
                     streamed_text = True
                 yield payload
                 continue
@@ -280,17 +289,20 @@ def _stream_react_graph(
                     last = msgs[-1] if msgs else None
                     tool_calls = list(getattr(last, "tool_calls", None) or []) if last is not None else []
                     if tool_calls:
-                        yield {
-                            "type": "tool_call",
-                            "tool_calls": [
-                                {
-                                    "name": tc.get("name"),
-                                    "args": tc.get("args") or {},
-                                    "id": tc.get("id"),
-                                }
-                                for tc in tool_calls
-                            ],
-                        }
+                        if "tool_call" not in custom_tool_types:
+                            yield {
+                                "type": "tool_call",
+                                "reason": _safe_tool_call_reason(tool_calls),
+                                "tool_calls": [
+                                    {
+                                        "name": tc.get("name"),
+                                        "args": tc.get("args") or {},
+                                        "id": tc.get("id"),
+                                    }
+                                    for tc in tool_calls
+                                ],
+                            }
+                        custom_tool_types.discard("tool_call")
                     elif updates.get("answer") is not None:
                         answer = str(updates.get("answer") or "")
                         if answer:
@@ -300,15 +312,24 @@ def _stream_react_graph(
                                 for char in answer:
                                     yield {"type": "token", "text": char}
                 elif node == "tools":
-                    yield {
-                        "type": "tool_result",
-                        "hits": len(updates.get("citations") or [])
-                        + len(updates.get("web_hits") or []),
-                        "loop_count": int(updates.get("loop_count") or 0),
-                    }
+                    if "tool_result" not in custom_tool_types:
+                        tool_names = [
+                            str(getattr(m, "name", None) or "tool")
+                            for m in (updates.get("agent_messages") or [])
+                            if getattr(m, "tool_call_id", None)
+                        ]
+                        hits = len(updates.get("citations") or []) + len(updates.get("web_hits") or [])
+                        yield {
+                            "type": "tool_result",
+                            "reason": _safe_tool_result_reason(tool_names, hits),
+                            "hits": hits,
+                            "loop_count": int(updates.get("loop_count") or 0),
+                        }
+                    custom_tool_types.discard("tool_result")
     except Exception:
         recorder.finish_run("failed")
-        raise
+        yield {"type": "error", "message": "react graph failed"}
+        return
     out = {
         "answer": final.get("answer") or "",
         "citations": list(final.get("citations") or []),

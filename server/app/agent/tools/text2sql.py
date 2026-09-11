@@ -25,10 +25,12 @@ def text2sql(
 
 @tool("text2sql")
 def text2sql_tool(question: str, config: RunnableConfig) -> str:
-    """查询商品、订单等结构化业务数据（Text2SQL）。
+    """仅用于结构化业务数据查询（如商品、订单等表；Text2SQL，只读 SELECT）。
+
+    不要用于知识库文档问答或互联网检索；那些应使用 search_knowledge / search_graph / web_search。
 
     Args:
-        question: 自然语言问题
+        question: 面向结构化表的自然语言问题
     """
     import json
 

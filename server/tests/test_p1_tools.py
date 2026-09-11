@@ -95,3 +95,24 @@ def test_tool_schema_excludes_runtime_fields():
     for t in tools_for(allow_web=True, enable_graph=True):
         props = set((t.args_schema.model_json_schema().get("properties") or {}).keys())
         assert not (props & forbidden), f"{t.name} schema has runtime fields: {props & forbidden}"
+
+
+def test_tool_descriptions_cover_usage_timing():
+    """Step 2: descriptions encode purpose + when to use / retry / switch."""
+    from app.agent.tools.registry import AGENT_TOOLS
+
+    by_name = {t.name: t for t in AGENT_TOOLS}
+    required = {
+        "search_knowledge": ("知识库", "改写"),
+        "search_graph": ("实体", "关系"),
+        "web_search": ("联网", "不足"),
+        "text2sql": ("结构化",),
+    }
+    for name, needles in required.items():
+        desc_raw = by_name[name].description or ""
+        for needle in needles:
+            assert needle in desc_raw, f"{name} description missing {needle!r}: {desc_raw}"
+    forbidden = {"session", "user_id", "conversation_id", "knowledge_base_id", "config"}
+    for name in required:
+        props = set((by_name[name].args_schema.model_json_schema().get("properties") or {}).keys())
+        assert not (props & forbidden)

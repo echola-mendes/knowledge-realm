@@ -281,10 +281,13 @@ def _hit_citation(hit: SearchHit) -> dict:
 
 @tool("search_graph")
 def search_graph_tool(query: str, config: RunnableConfig) -> str:
-    """按知识图谱实体关系检索相关文档。
+    """按知识图谱实体、关系与关联文档检索。
+
+    适用于「谁/什么与什么相关」「实体之间关系」「关联文档」类问题。
+    普通语义检索优先 search_knowledge；图谱无命中时可改写 query 或回退 search_knowledge。
 
     Args:
-        query: 检索关键词
+        query: 实体或关系导向的检索查询
     """
     import json
 

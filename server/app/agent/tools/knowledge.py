@@ -48,10 +48,13 @@ def _hit_citation(hit: SearchHit) -> dict:
 
 @tool("search_knowledge")
 def search_knowledge_tool(query: str, config: RunnableConfig) -> str:
-    """在用户知识库中检索相关文档片段。
+    """知识库语义/关键词综合检索（向量 + BM25 等已在工具内封装）。
+
+    用于回答依赖用户文档/笔记的问题。若 Observation 证据不足，可改写 query 后再次调用；
+    不要用相同 query 重复调用。实体关系问题可改用 search_graph；需外部最新信息且允许联网时再用 web_search。
 
     Args:
-        query: 检索关键词
+        query: 检索查询（可改写后重试）
     """
     session, user_id, knowledge_base_id, k = tool_runtime(config)
     if session is None or user_id is None:
