@@ -6,7 +6,7 @@ import uuid
 
 from app.agent import knowledge_flow as kf
 from app.agent.decompose import make_sub_questions
-from app.agent.graph import MAX_LOOPS, initial_state
+from app.agent.knowledge_flow import MAX_LOOPS, knowledge_initial_state as initial_state
 from app.rag.search import SearchHit
 
 

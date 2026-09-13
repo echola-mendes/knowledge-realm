@@ -31,7 +31,10 @@ from app.agent.evidence_merge import (
     merge_evidence,
     merge_evidence_refs,
 )
-from app.agent.graph import MAX_LOOPS, AgentState, _user_question
+from app.agent.state import KnowledgeState, user_question
+
+# Supplemental retrieve budget only (rewrite 后的 search); same default as ReAct MAX_LOOPS, different semantics.
+MAX_LOOPS = 3
 from app.agent.rewrite import MAX_REWRITE_PER_Q, rewrite_decision, rewrite_query
 from app.agent.sufficiency import knowledge_span_decision, sufficiency_decision, sufficiency_v0
 from app.agent.tools import search_knowledge
@@ -42,7 +45,7 @@ _compiled_knowledge = None
 GAP_HEADING = "## Knowledge Gap"
 
 
-def _qi_hits(state: AgentState, qi: dict[str, Any]) -> list[dict[str, Any]]:
+def _qi_hits(state: KnowledgeState, qi: dict[str, Any]) -> list[dict[str, Any]]:
     qi_id = str(qi.get("id") or "")
     evidence_ids = set(str(x) for x in (qi.get("evidence_ids") or []))
     pool = list(state.get("evidence") or [])
@@ -53,7 +56,7 @@ def _qi_hits(state: AgentState, qi: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _current_qi(state: AgentState) -> dict[str, Any] | None:
+def _current_qi(state: KnowledgeState) -> dict[str, Any] | None:
     qs = list(state.get("sub_questions") or [])
     idx = int(state.get("current_qi_index") or 0)
     if idx < 0 or idx >= len(qs):
@@ -61,7 +64,7 @@ def _current_qi(state: AgentState) -> dict[str, Any] | None:
     return qs[idx]
 
 
-def _pick_rewrite_index(state: AgentState) -> int | None:
+def _pick_rewrite_index(state: KnowledgeState) -> int | None:
     if int(state.get("loop_count") or 0) >= int(state.get("max_loops") or MAX_LOOPS):
         return None
     for i, sq in enumerate(state.get("sub_questions") or []):
@@ -73,8 +76,8 @@ def _pick_rewrite_index(state: AgentState) -> int | None:
     return None
 
 
-def node_analyze(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]:
-    query = _user_question(state)
+def node_analyze(state: KnowledgeState, config: RunnableConfig = None) -> dict[str, Any]:
+    query = user_question(state)
     result = analyze_query(query)
     query_type = str(result.get("query_type") or "simple").strip().lower()
     if query_type not in ("simple", "complex"):
@@ -109,14 +112,14 @@ def node_analyze(state: AgentState, config: RunnableConfig = None) -> dict[str, 
     return updates
 
 
-def route_after_analyze(state: AgentState) -> Literal["retrieve_qi", "decompose"]:
+def route_after_analyze(state: KnowledgeState) -> Literal["retrieve_qi", "decompose"]:
     if str(state.get("query_type") or "") == "complex":
         return "decompose"
     return "retrieve_qi"
 
 
-def node_decompose(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]:
-    query = _user_question(state)
+def node_decompose(state: KnowledgeState, config: RunnableConfig = None) -> dict[str, Any]:
+    query = user_question(state)
     result = decompose_query(query)
     sub_questions = list(result.get("sub_questions") or fallback_single_qi(query))
     if len(sub_questions) > MAX_SUB_QUESTIONS:
@@ -150,7 +153,7 @@ def node_decompose(state: AgentState, config: RunnableConfig = None) -> dict[str
     }
 
 
-def node_retrieve_qi(state: AgentState, config: RunnableConfig) -> dict[str, Any]:
+def node_retrieve_qi(state: KnowledgeState, config: RunnableConfig) -> dict[str, Any]:
     qi = _current_qi(state)
     if qi is None:
         return {}
@@ -245,7 +248,7 @@ def node_retrieve_qi(state: AgentState, config: RunnableConfig) -> dict[str, Any
     }
 
 
-def node_sufficiency(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]:
+def node_sufficiency(state: KnowledgeState, config: RunnableConfig = None) -> dict[str, Any]:
     qi = _current_qi(state)
     if qi is None:
         return {}
@@ -289,7 +292,7 @@ def node_sufficiency(state: AgentState, config: RunnableConfig = None) -> dict[s
     return updates
 
 
-def node_rewrite(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]:
+def node_rewrite(state: KnowledgeState, config: RunnableConfig = None) -> dict[str, Any]:
     """Pick next INSUFFICIENT Qi, rewrite query, or signal done."""
     idx = _pick_rewrite_index(state)
     if idx is None:
@@ -304,7 +307,7 @@ def node_rewrite(state: AgentState, config: RunnableConfig = None) -> dict[str, 
     qi = sub_questions[idx]
     qi_id = str(qi.get("id") or "")
     from_query = str(qi.get("question") or "").strip()
-    user_query = _user_question(state)
+    user_query = user_question(state)
     result = rewrite_query(from_query, user_query=user_query)
     to_query = str(result.get("query") or from_query).strip() or from_query
 
@@ -350,7 +353,7 @@ def node_rewrite(state: AgentState, config: RunnableConfig = None) -> dict[str, 
     }
 
 
-def route_after_sufficiency(state: AgentState) -> Literal["retrieve_qi", "rewrite"]:
+def route_after_sufficiency(state: KnowledgeState) -> Literal["retrieve_qi", "rewrite"]:
     phase = str(state.get("retrieve_phase") or "initial")
     if phase == "initial":
         qs = list(state.get("sub_questions") or [])
@@ -361,7 +364,7 @@ def route_after_sufficiency(state: AgentState) -> Literal["retrieve_qi", "rewrit
     return "rewrite"
 
 
-def route_after_rewrite(state: AgentState) -> Literal["retrieve_qi", "rewrite", "merge"]:
+def route_after_rewrite(state: KnowledgeState) -> Literal["retrieve_qi", "rewrite", "merge"]:
     nxt = str(state.get("next_flow") or "")
     if nxt == "done":
         return "merge"
@@ -418,7 +421,7 @@ def _append_knowledge_gap(answer: str, gaps: list[str]) -> str:
     return f"{body}\n\n{section}" if body else section
 
 
-def node_merge(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]:
+def node_merge(state: KnowledgeState, config: RunnableConfig = None) -> dict[str, Any]:
     pool = list(state.get("evidence") or [])
     result = merge_evidence(pool, max_evidence=MAX_EVIDENCE)
     merged = list(result.get("merged") or [])
@@ -432,7 +435,7 @@ def node_merge(state: AgentState, config: RunnableConfig = None) -> dict[str, An
     return {"evidence": merged}
 
 
-def node_gap(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]:
+def node_gap(state: KnowledgeState, config: RunnableConfig = None) -> dict[str, Any]:
     sub_questions = list(state.get("sub_questions") or [])
     insufficient = [
         {"id": str(sq.get("id") or ""), "question": str(sq.get("question") or "")}
@@ -450,7 +453,7 @@ def node_gap(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]
     return {"knowledge_gaps": gaps}
 
 
-def node_generate(state: AgentState, config: RunnableConfig = None) -> dict[str, Any]:
+def node_generate(state: KnowledgeState, config: RunnableConfig = None) -> dict[str, Any]:
     """Final answer from merged evidence only; append Knowledge Gap when present."""
     from app import llm as llm_mod
 
@@ -458,7 +461,7 @@ def node_generate(state: AgentState, config: RunnableConfig = None) -> dict[str,
     evidence = list(state.get("evidence") or [])[:MAX_EVIDENCE]
     gaps = list(state.get("knowledge_gaps") or [])
     evidence_ids = [str(e.get("id") or e.get("chunk_id") or "") for e in evidence]
-    question = _user_question(state)
+    question = user_question(state)
 
     llm_mod.LAST_USAGE = None
     usage: dict[str, int] | None = None
@@ -516,13 +519,47 @@ def node_generate(state: AgentState, config: RunnableConfig = None) -> dict[str,
     return updates
 
 
+def knowledge_initial_state(
+    query: str,
+    *,
+    knowledge_base_id: uuid.UUID | None = None,
+    history: list[dict[str, str]] | None = None,
+    summary: str | None = None,
+    ltm_hits: list[dict[str, Any]] | None = None,
+) -> KnowledgeState:
+    """Initial state for knowledge_flow only (no ReAct / tool-loop fields)."""
+    messages = list(history or [])
+    messages.append({"role": "user", "content": query})
+    return {
+        "knowledge_base_id": str(knowledge_base_id) if knowledge_base_id else None,
+        "messages": messages,
+        "summary": (summary or "").strip(),
+        "ltm_hits": list(ltm_hits or []),
+        "citations": [],
+        "evidence": [],
+        "loop_count": 0,
+        "max_loops": MAX_LOOPS,
+        "answer": "",
+        "search_query": "",
+        "query_type": "complex",
+        "sub_questions": [],
+        "searched_queries": [],
+        "knowledge_gaps": [],
+        "current_qi_index": 0,
+        "last_qi_hits": 0,
+        "retrieve_phase": "initial",
+        "skip_retrieve": False,
+        "next_flow": "",
+    }
+
+
 def build_knowledge_flow_graph():
     """Knowledge Agent DAG: analyze → simple|complex → … → generate."""
     global _compiled_knowledge
     if _compiled_knowledge is not None:
         return _compiled_knowledge
 
-    graph = StateGraph(AgentState)
+    graph = StateGraph(KnowledgeState)
     graph.add_node("analyze", node_analyze)
     graph.add_node("decompose", node_decompose)
     graph.add_node("retrieve_qi", node_retrieve_qi)
@@ -563,9 +600,12 @@ def reset_knowledge_flow_graph() -> None:
 
 __all__ = [
     "GAP_HEADING",
+    "MAX_LOOPS",
     "MAX_REWRITE_PER_Q",
     "MAX_SUB_QUESTIONS",
+    "KnowledgeState",
     "build_knowledge_flow_graph",
+    "knowledge_initial_state",
     "collect_knowledge_gaps",
     "gap_decision",
     "node_analyze",

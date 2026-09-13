@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.agent import knowledge_flow as kf
 from app.agent.decompose import make_sub_questions
-from app.agent.graph import initial_state
+from app.agent.knowledge_flow import knowledge_initial_state as initial_state
 from app.rag.search import SearchHit
 
 

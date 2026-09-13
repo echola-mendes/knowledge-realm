@@ -11,7 +11,7 @@ from app.agent.decompose import (
     fallback_single_qi,
     make_sub_questions,
 )
-from app.agent.graph import initial_state
+from app.agent.knowledge_flow import knowledge_initial_state as initial_state
 from app.rag.search import SearchHit
 
 

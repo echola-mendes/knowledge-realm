@@ -100,3 +100,27 @@ def skip_post_index_enrich(monkeypatch):
 @pytest.fixture(autouse=True)
 def skip_rerank(monkeypatch):
     monkeypatch.setattr("app.rag.search.score_documents", lambda query, documents: None)
+
+
+@pytest.fixture(autouse=True)
+def stub_react_sufficiency_llm(monkeypatch):
+    """Avoid real DashScope calls from ReAct sufficiency during unit tests."""
+
+    def _stub(system: str, human: str):
+        from app.agent.evidence_sufficiency import EvidenceSufficiencyResult
+
+        return (
+            EvidenceSufficiencyResult(
+                sufficient=False,
+                covered_aspects=[],
+                missing_aspects=[],
+                gaps=["test-stub"],
+                reason="test-stub",
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(
+        "app.agent.evidence_sufficiency._invoke_structured_llm",
+        _stub,
+    )

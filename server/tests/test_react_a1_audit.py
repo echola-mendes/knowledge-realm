@@ -147,6 +147,13 @@ def test_react_audit_spans_are_tool_call_and_tool_result(monkeypatch):
         types = [s.get("node_type") for s in spans]
         assert "tool_call" in types
         assert "tool_result" in types
+        assert "sufficiency" not in types
+        tool_results = [s for s in spans if s.get("node_type") == "tool_result"]
+        assert tool_results
+        decision = tool_results[0].get("decision") or {}
+        assert "sufficient" in decision
+        assert "missing" in decision or "qi_id" in decision
+        assert decision.get("step") not in ("sufficiency", "rewrite")
     reset_app_state()
 
 
