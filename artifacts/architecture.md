@@ -41,13 +41,16 @@
 ### 2.2 graph.py ReAct（长期，`task=react` + Master knowledge）
 
 - 标准循环：`bind_tools` → `AIMessage.tool_calls` → `ToolNode` → `ToolMessage` → …；无 tool_calls 时 **content 即终答**（无手写 JSON `action` 路由）。
-- 图拓扑仅 `agent ⇄ tools`：禁止新增 `rewrite` / `select_tool` / `rerank` / `reflect` / `decide` 类 Node；「下一步做什么」只由下一轮 `node_agent` 的 LLM 决策（改写 query、选工具、是否停止均同此）。
+- 图拓扑仅 `agent ⇄ tools`：禁止新增 `decompose` / `rewrite` / `sufficiency` / `select_tool` / `rerank` / `reflect` / `decide` 类 Node；「下一步做什么」只由下一轮 `node_agent` 的 LLM 决策（改写 query、选工具、是否停止均同此）。
+- Tool 后处理（非 Node）：规则预检（`NO_VALID_EVIDENCE`/`HAS_VALID_EVIDENCE`）→ 独立模块 LLM Evidence Sufficiency 结构化输出 → 写回 `ReactState`（evidence/Qi/gaps）并反馈 Observation；不得把 `len(hits)>0` 当成充分；`knowledge_flow` 仍用 `sufficiency_v0`。
+- **State 分离**：`ReactState`（graph）与 `KnowledgeState`（knowledge_flow）独立；共享底层 SearchHit / Evidence merge / Citation / analyze·decompose·rewrite **函数**，禁止扩大共用巨型 AgentState、禁止复制第二套检索。
+- **检索控制增强（非 DAG）**：`initial_state` 一次 analyze+decompose 写入 `sub_questions`；`node_tools` 后处理维护 `evidence` / `knowledge_gaps` / `searched_queries` 与 Qi 归属；规则预检 + LLM Sufficiency 经 ToolMessage Observation + prompt 反馈 Agent；Rewrite **软约束**（prompt + Observation 暴露 gaps/`searched_queries`/rewrite 额度），仍由 Agent 自主改 tool query，受每 Qi `MAX_REWRITE_PER_Q` 与全局 `MAX_TOOL_CALLS` 双限——**不**硬拦 Tool、**不**调 `rewrite_query` Node。
 - 工具包：`app/agent/tools/`（一工具一模块 + `registry.py`）；运行时经 `configurable` 注入 `session`/`user_id`/`conversation_id`/`knowledge_base_id`；**禁止**闭包；**禁止**上述字段进 LLM Tool Schema。
 - 门控：`bind_tools` 时按 `allow_web` / 是否启用图谱裁剪列表。
 - 检索 kb：只来自 configurable；未指定 `None` = 全部已开启库（与 Chat 一致）。
 - Tool Call 预算双保险：`bind_tools(..., parallel_tool_calls=False)` + 进入 `ToolNode` 前按剩余配额截断；**实际执行次数**硬上限 `MAX_TOOL_CALLS`（另有 `MAX_LOOPS`）。
-- Citations（react）：按 `document_id+chunk_id` 去重；有 `score` 则 top-N 保质，无 score 保首次；**不**另维护 react `evidence` state 对外输出。
-- SSE：`tool_call` / `tool_result` 可带可选安全短字段 `reason`（非独立事件、非 CoT）。
+- Citations（react 对外）：按 `document_id+chunk_id` 去重；有 `score` 则 top-N 保质，无 score 保首次。`evidence[]` 仅作中间检索/Sufficiency 状态，**不**替代 citations 对外契约。
+- SSE：`tool_call` / `tool_result` 可带可选安全短字段 `reason`（非独立事件、非 CoT）；`tool_result.reason` 可含命中数 + 短 sufficiency 摘要（≤40）。审计 `tool_result.decision` 可 enrich `sufficient`/`qi_id`/`missing`/`covered`/短 `gaps`（不新 `node_type`、不拆 sufficiency span）；Master knowledge 共用图仍可不接 recorder。
 
 ## 3. 代码布局（禁止新建 p4/）
 

@@ -157,7 +157,7 @@
 对话页模式：
 - **Chat**：`/api/chat` 单链 RAG。
 - **知识 Agent**：`task=knowledge` 走 `knowledge_flow`（analyze→Simple 单次检索 | Complex 分解 Qi→Sufficiency V0→Rewrite→Merge→Gap→Generate）；只做知识库编排与回答，不经差旅意图路由；`/api/chat` 不变。
-- **ReAct**：`task=react` 直连 `graph.py` 标准 Tool Calling（`agent ⇄ tools`，无手写 JSON action / 无 rewrite 类 Node），不经 Master / `knowledge_flow`；工具包 `app/agent/tools/` + registry；未指定知识库时多库检索；`MAX_TOOL_CALLS` 双保险硬上限（关并行 + ToolNode 前截断）；citations 按 `document_id+chunk_id` 去重并以 score top-N 保质；足够=本轮 Tool Observation（会话历史/LTM 不作本轮证据）；stream 的 `tool_call`/`tool_result` 可带安全短 `reason`，失败有 `error`，兼容 `token`/`citations`；决策审计 `mode=react` 记 `tool_call`/`tool_result`（`task=agent` 经 Master knowledge 调同一图时本期不接审计）。
+- **ReAct**：`task=react` 直连 `graph.py` 标准 Tool Calling（`agent ⇄ tools`，无手写 JSON action / 无 rewrite 类 Node），不经 Master / `knowledge_flow`；工具包 `app/agent/tools/` + registry；未指定知识库时多库检索；`MAX_TOOL_CALLS` 双保险硬上限（关并行 + ToolNode 前截断）；citations 按 `document_id+chunk_id` 去重并以 score top-N 保质；足够=本轮 Tool Observation 中的规则预检 + LLM Evidence Sufficiency（会话历史/LTM 不作本轮证据；不足时 Observation 暴露 gaps/missing，预算尽仍保留 gaps）；V1 锚点验收由 `test_react_v1_anchor` mock 钉死；stream 的 `tool_call`/`tool_result` 可带安全短 `reason`，失败有 `error`，兼容 `token`/`citations`；决策审计 `mode=react` 记 `tool_call`/`tool_result`（`task=agent` 经 Master knowledge 调同一图时本期不接审计）。
 - **Multi Agent**：Master 多 Agent（知识 / 闲聊 / 行程规划 / 预订）。
 - **Report**：研究报告（经 Master，强制 knowledge 路径）。
 
@@ -319,3 +319,18 @@
 - **决策审计（极简，已上线）**（[`Trace.md`](Trace.md) / [`PRD-DECISIONS.md`](PRD-DECISIONS.md)）：每轮 assistant 落库决策链（route / retrieve / generate + 证据），绑 `message_id`；监控列表与详情。本期不做 LangSmith、自建 Trace 平台、Explain/Judge。Master / plan / booking 全路径埋点下一期接入。
 [… truncated at ~4102 of 4698 tokens — use ctx_read with lines= parameter to see specific sections]
 [… truncated at ~4109 of 4109 tokens — use ctx_read with lines= parameter to see specific sections]
+
+## ReAct Evidence Sufficiency（2026-09-12）
+
+- ReAct（`task=react`）在 Tool 结果后：规则预检 → LLM 结构化充分性评估 → 反馈 Agent；不改为固定 Workflow。
+- knowledge_flow 仍使用规则 `sufficiency_v0`（`len(hits)>0`）。
+
+## ReAct V1 锚点验收（2026-09-12）
+
+- Kafka 复合问 mock 单测（`test_react_v1_anchor`）：≥2 Qi、evidence 挂 `qi_id`、不足路径 gaps/Observation、无效应不调 Sufficiency LLM、缺口驱动补搜、预算尽保留 gaps、新一轮检索态隔离、拓扑仅 `agent`/`tools`。
+- 本轮未改 `knowledge_flow.py` 功能性逻辑；未新增 LangGraph Node。
+
+## ReAct 改写软约束 + SSE/审计 enrich（2026-09-13）
+
+- 改写：软约束（prompt + Observation 暴露 gaps/`searched_queries`/rewrite 额度）；Agent 自主；不硬拦、不调 `rewrite_query`、不新增 Node。
+- SSE/审计：仅 enrich 既有 `tool_result.reason`（≤40）与 `tool_result.decision`（sufficient/qi_id/missing 等）；无新事件/`node_type`；Master knowledge 仍不接审计。

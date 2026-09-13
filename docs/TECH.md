@@ -48,12 +48,13 @@
 - P0 问答：`ChatOpenAI` 单链；检索只用当前句
 - 检索（`search_chunks`）：pgvector +（可选）ES BM25 → RRF → Rerank → `RELEVANCE_MIN_SCORE`；仅 `role=child` 且有 embedding；门槛后按 `parent_id`（或无 parent 时 `doc+heading`）分组：seeds ∪ 各 seed ±1 去重，非 seed 邻居过双条件（最近 seed 余弦 ≥ `EXPAND_ANCHOR_MIN` 且 query 分 ≥ `EXPAND_QUERY_MIN`）后按 `chunk_index` 拼成 **1** 条 `content`；代表锚点取组内最高分；`SearchHit` 带 `neighbor_chunk_ids` / `expanded_chunk_ids`；不再默认 parent 全文或 V0 center-out；`search_debug` 不组装
 - Agent：LangGraph；检索必须经 Tool 调现有 `search.py`，禁止第二套向量查询
-  - `task=knowledge` → `knowledge_flow`（Workflow Agentic RAG）
-  - `task=react` → `graph.py`（标准 Tool Calling：`bind_tools` + `ToolNode` + `tools_condition`；工具在 `app/agent/tools/` + registry；runtime 经 `configurable`；拓扑仅 `agent ⇄ tools`）
+  - State：`app/agent/state.py` 中 `BaseAgentState` → `KnowledgeState` / `ReactState`；流程字段互不污染；共享 RAG 服务与领域结构，不共享流程 State
+  - `task=knowledge` → `knowledge_flow`（Workflow Agentic RAG；`KnowledgeState`）
+  - `task=react` → `graph.py`（`ReactState`；标准 Tool Calling：`bind_tools` + `ToolNode` + `tools_condition`；工具在 `app/agent/tools/` + registry；runtime 经 `configurable`；拓扑仅 `agent ⇄ tools`）
   - `task=react` 预算：`parallel_tool_calls=False` + 进 ToolNode 前按剩余配额截断；实际执行 ≤ `MAX_TOOL_CALLS`
   - `task=react` citations：`(document_id, chunk_id)` 去重；有 score 按降序 top-`MAX_CITATIONS`，无 score 保首次；不维护 react `evidence` 输出
-  - `task=react` 检索：请求未显式传 `knowledge_base_id` 时为 `None`（多库）；决策审计 span 为 `tool_call` / `tool_result`（Master knowledge 共用图但不接审计）
-  - `task=react` stream：`stream_mode=["updates","custom"]`；`node_agent` 用 `model.stream` + `get_stream_writer` 边生成边推 `token`；`tool_call`/`tool_result` 可选安全 `reason`；异常路径 `error`；persist 在出字之后；`citations` 收尾。knowledge/agent 路径仍伪流式
+  - `task=react` 检索：请求未显式传 `knowledge_base_id` 时为 `None`（多库）；决策审计 span 为 `tool_call` / `tool_result`（`tool_result.decision` 可 enrich sufficient/qi_id/missing/covered/短 gaps；Master knowledge 共用图但不接审计）
+  - `task=react` stream：`stream_mode=["updates","custom"]`；`node_agent` 用 `model.stream` + `get_stream_writer` 边生成边推 `token`；`tool_call`/`tool_result` 可选安全 `reason`（`tool_result.reason` 可含命中+短 sufficiency，≤40）；异常路径 `error`；persist 在出字之后；`citations` 收尾。knowledge/agent 路径仍伪流式
   - `task=agent|report` → Master（意图路由；知识分支仍用 `graph.py`）
 - Checkpoint：LangGraph PostgresSaver，同一 `DATABASE_URL`；不作 STM/聊天权威
 - URL 导入：`httpx` 超时 20s + `trafilatura`
@@ -124,3 +125,20 @@ P2 关键词用 ES BM25，不用 `pg_trgm` 冒充。
 2. Agent 经 Tool 复用 P0 `search_chunks`，不得另建向量检索。
 3. 摘要 / 自动标签 / 文档对比继续用 Chain，不强制 Graph。
 4. Checkpoint 不替代 `message` / `conversation.summary` / `user_memory`。
+
+## 2026-09-12 ReAct Evidence Sufficiency
+
+- 仅 `graph.py` ReAct 路径：`node_tools` 后处理调用 `react_evidence` / `evidence_sufficiency`（规则预检 + LLM 结构化判定）；拓扑仍 `agent ⇄ tools`。
+- 新增：`evidence_sufficiency.py`、`react_evidence.py`；`sufficiency.precheck_evidence`；Qi 增 `aspects`/`sufficiency`。
+- **不改** `knowledge_flow.py` 的 `sufficiency_v0` 规则。
+
+## 2026-09-12 ReAct V1 锚点验收
+
+- 单测：`server/tests/test_react_v1_anchor.py`（mock analyze/decompose/sufficiency LLM + 注入 tool query）；验收 gaps 补搜相关性、预算尽露缺口、历史隔离。
+- 本轮无业务源码改动；回归子集含 `test_react_evidence` / `qi_init` / `evidence_sufficiency` / `tool_budget` / `citations`。
+
+## 2026-09-13 ReAct 改写软约束 + SSE/审计 enrich
+
+- Observation/prompt：暴露 `searched_queries`、rewrite 次数/剩余额度；缺口改写软引导；超限不再鼓励盲目补搜。
+- `node_tools`：先 sufficiency 后写 SSE/审计；`tool_result.reason` ≤40 含短 sufficiency；`tool_result.decision` enrich sufficient/qi_id/missing/covered/gaps；不新 node_type/事件；Master knowledge 仍不接审计。
+- 未改 `knowledge_flow.py`；未调 `rewrite_query`；无硬拦 Tool。

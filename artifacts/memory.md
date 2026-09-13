@@ -13,6 +13,10 @@
 | 局部邻居扩窗 + 双条件过滤（Chunk V3） | 2026-09-09 | search_chunks 门槛后 ±1 + 双条件；SearchHit 两字段；审计 assembly；Merge 按 chunk_id；TECH/PRD 同步 | 全 ✅ |
 | ReAct graph.py 标准 Tool Calling 重构 | 2026-09-10 | tools 包+registry+configurable；graph=agent⇄tools；task=react 审计/SSE；agent knowledge 不接审计 | 全 ✅ |
 | ReAct Agent 标准 Tool Calling 优化 | 2026-09-11 | MAX_TOOL_CALLS 双保险；Tool description；citations 去重+score top-N；SSE reason/error；prompt 本轮 Observation；Registry 确认 | 6/6 ✅ |
+| ReAct V1 检索控制（规则 V0.5，未完成） | 2026-09-12 | 中途改需求：改为规则预检+LLM Sufficiency；已完成 ReactState/Qi init + sufficiency_aspect 规则函数 | Step1–2 ✅；3–5 废弃 |
+| ReAct Evidence Sufficiency（规则预检+LLM） | 2026-09-12 | precheck+LLM 结构化；node_tools 后处理；拓扑不变；KF 仍 V0 | 全 ✅ |
+| ReAct V1 锚点验收与缺口驱动补搜加固 | 2026-09-12 | `test_react_v1_anchor` mock 钉死 §7；补搜/预算尽/历史隔离；无 KF 功能性改动 | 3/3 ✅ |
+| ReAct 改写软约束 + SSE/审计 enrich | 2026-09-13 | Observation/prompt 软约束；tool_result reason/decision enrich sufficiency；Master 不接审计 | 4/4 ✅ |
 
 ## 经验
 
@@ -244,3 +248,28 @@
 - Step1–6 全 ✅：预算双保险、Tool description、citations 保质、SSE reason/error、prompt 本轮 Observation、Registry 审计
 - 未改 `knowledge_flow.py` / 旧 chat；无新增决策类 Node
 - 文档：architecture（Phase 2 已写长期约束）+ PRD/TECH Phase 4 同步；临时文件保留待下轮 Phase 1 清空
+
+### ReAct Sufficiency：规则预检 ≠ 充分
+
+日期：2026-09-12　来源：ReAct Evidence Sufficiency
+
+问题：`len(hits)>0` 只能表示有召回，不能表示证据足够。
+
+解法：ReAct 路径规则预检仅区分 NO_VALID_EVIDENCE / HAS_VALID_EVIDENCE；充分性由独立 LLM 模块结构化输出；knowledge_flow 仍用 sufficiency_v0。
+
+### V1 锚点验收：mock 钉死缺口补搜，不测真模型改写
+
+日期：2026-09-12　来源：ReAct V1 锚点验收与缺口驱动补搜加固
+
+问题：confirm §7 复合问缺端到端断言；补搜对准 gaps 若依赖真模型不稳定。
+
+解法：`test_react_v1_anchor` 用 mock sufficiency + 注入次轮 tool query，断言与 missing/gaps 关键词交集且非首轮重复；预算尽用尽 `MAX_TOOL_CALLS` 后 assert gaps/prompt 仍在；不重做 Sufficiency 主链路、不新增 Node。
+
+### SSE/审计 enrich 须在 Sufficiency 后写
+
+日期：2026-09-13　来源：ReAct 改写软约束 + SSE/审计 enrich
+
+问题：`node_tools` 若先推 `tool_result` SSE/审计再跑 `process_react_tool_round`，reason/decision 拿不到 sufficiency。
+
+解法：先 Evidence/Sufficiency 后处理并 patch ToolMessage，再写 `tool_result.reason`（≤40）与 span `decision` enrich；不新增事件/`node_type`。
+

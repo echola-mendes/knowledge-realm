@@ -68,7 +68,7 @@
 | --- | --- | --- |
 | Chat | `/api/chat/stream` | ✅ retrieve + generate |
 | 知识 Agent | `task=knowledge` → `knowledge_flow` | ✅ analyze / retrieve / sufficiency / … / generate |
-| ReAct | `task=react` → `graph.py`（Tool Calling） | ✅ tool_call / tool_result（+ 终答 span）；Master knowledge 共用图本期不接审计 |
+| ReAct | `task=react` → `graph.py`（Tool Calling） | ✅ tool_call / tool_result（+ 终答 span）；`tool_result.decision` 可含 sufficient/qi_id/missing/covered/gaps 短摘要（不另开 node_type）；Master knowledge 共用图本期不接审计 |
 | Multi Agent / Report | `master.py` | ⏳ 下一期再接 |
 | plan / booking | 子图 | ⏳ 下一期再接 |
 
@@ -127,6 +127,7 @@ class DecisionRecorder:
 `route` / `reason`：写入 `action` + 短 `rationale`（可来自模型 JSON 字段，失败则写「未给出理由」）。  
 `retrieve`：工具名、query、候选/入选 chunk id（excerpt 可截断）。  
 `generate`：一句结论摘要即可（答案全文已在 message）。
+`tool_result`（react）：在既有 tool/preview 上可 enrich `sufficient` / `qi_id` / `missing` / `covered` / 短 `gaps`；**禁止**写成 knowledge_flow 的 `decision.step=sufficiency|rewrite`。
 
 Recorder 故障：**不影响主回答**；该轮可不落库或 `status=failed`。
 
