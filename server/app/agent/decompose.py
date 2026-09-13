@@ -33,9 +33,11 @@ def make_sub_questions(questions: list[str]) -> list[dict[str, Any]]:
         {
             "id": f"q{i + 1}",
             "question": q,
+            "aspects": [],
             "status": "pending",
             "rewrite_count": 0,
             "evidence_ids": [],
+            "sufficiency": None,
         }
         for i, q in enumerate(questions)
     ]
