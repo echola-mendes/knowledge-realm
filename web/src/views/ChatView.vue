@@ -40,6 +40,8 @@ type ToolStep = {
   name: string;
   detail: string;
   status: "running" | "done";
+  /** 后端安全短摘要（tool_call / tool_result 的 reason） */
+  reason?: string;
   result?: string;
 };
 
@@ -565,21 +567,31 @@ async function ask() {
           tool_calls?: Array<{ name?: string; args?: Record<string, unknown>; id?: string }>;
           hits?: number;
           loop_count?: number;
+          reason?: string;
         };
         if (payload.type === "tool_call" && Array.isArray(payload.tool_calls)) {
+          const callReason =
+            typeof payload.reason === "string" && payload.reason.trim()
+              ? payload.reason.trim().slice(0, 40)
+              : undefined;
           const added: ToolStep[] = payload.tool_calls.map((tc, i) => ({
             id: tc.id || `tc-${Date.now()}-${i}`,
             name: String(tc.name || "tool"),
             detail: toolDetail(tc.args),
-            status: "running",
+            status: "running" as const,
+            reason: callReason,
           }));
           assistant.toolSteps = [...(assistant.toolSteps || []), ...added];
         }
         if (payload.type === "tool_result") {
           const hits = typeof payload.hits === "number" ? payload.hits : 0;
-          const result = hits > 0 ? `命中 ${hits} 条` : "完成";
+          const resultReason =
+            typeof payload.reason === "string" && payload.reason.trim()
+              ? payload.reason.trim().slice(0, 40)
+              : "";
+          const result = resultReason || (hits > 0 ? `命中 ${hits} 条` : "完成");
           assistant.toolSteps = (assistant.toolSteps || []).map((s) =>
-            s.status === "running" ? { ...s, status: "done", result } : s,
+            s.status === "running" ? { ...s, status: "done" as const, result, reason: resultReason || s.reason } : s,
           );
         }
         if (payload.type === "token" && payload.text) assistant.content += payload.text;
@@ -956,6 +968,7 @@ function pickDoc(id: string) {
                   思考中……
                 </div>
                 <div v-if="m.role === 'assistant' && m.toolSteps?.length" class="tool-steps">
+                  <p class="tool-steps-title">工具步骤</p>
                   <p
                     v-for="step in m.toolSteps"
                     :key="step.id"
@@ -965,7 +978,11 @@ function pickDoc(id: string) {
                     <span v-if="step.status === 'running'" class="spin" aria-hidden="true"></span>
                     <span v-else class="tool-done" aria-hidden="true">✓</span>
                     <span class="tool-label">{{ toolLabel(step.name) }}</span>
-                    <span v-if="step.detail" class="tool-detail">{{ step.detail }}</span>
+                    <span
+                      v-if="step.status === 'running' && step.reason"
+                      class="tool-reason"
+                    >{{ step.reason }}</span>
+                    <span v-else-if="step.detail" class="tool-detail">{{ step.detail }}</span>
                     <span v-if="step.result" class="tool-result">{{ step.result }}</span>
                   </p>
                 </div>
@@ -1208,10 +1225,21 @@ function pickDoc(id: string) {
   margin: 0.1rem 0;
 }
 .tool-steps {
-  margin: 0 0 0.45rem;
+  margin: 0 0 0.55rem;
+  padding: 0.4rem 0.55rem;
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.25rem;
+  border-radius: 8px;
+  background: var(--teal-soft);
+  border: 1px solid var(--line);
+}
+.tool-steps-title {
+  margin: 0 0 0.05rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
 }
 .tool-step {
   display: flex;
@@ -1219,7 +1247,7 @@ function pickDoc(id: string) {
   flex-wrap: wrap;
   gap: 0.35rem;
   margin: 0;
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--muted);
   line-height: 1.4;
 }
@@ -1236,14 +1264,17 @@ function pickDoc(id: string) {
 }
 .tool-label {
   font-weight: 550;
+  color: var(--text);
 }
+.tool-reason,
 .tool-detail {
-  opacity: 0.85;
+  opacity: 0.9;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 18rem;
 }
+.tool-reason::before,
 .tool-detail::before {
   content: "· ";
 }

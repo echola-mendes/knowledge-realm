@@ -132,8 +132,11 @@ def test_react_stream_emits_tool_events_and_compat_tokens(monkeypatch):
     assert len(str(tool_call["reason"])) <= 40
     assert "完整回答" not in str(tool_call.get("reason") or "")
     assert tool_result.get("reason")
-    assert "知识库命中" in str(tool_result["reason"])
-    assert len(str(tool_result["reason"])) <= 40
+    reason = str(tool_result["reason"])
+    assert "命中" in reason
+    assert len(reason) <= 40
+    assert "证据" in reason  # sufficiency short summary
+    assert "sufficiency" not in types
     assert types.index("tool_call") < types.index("tool_result") < text_i
     reset_app_state()
 
@@ -260,3 +263,21 @@ def test_react_stream_emits_error_on_graph_failure(monkeypatch):
     assert err.get("message")
     assert "reason" not in types
     reset_app_state()
+
+
+def test_safe_tool_result_reason_includes_sufficiency_short():
+    from app.agent.graph import _safe_tool_result_reason
+
+    ok = _safe_tool_result_reason(["search_knowledge"], 5, {"sufficient": True})
+    assert "命中5条" in ok
+    assert "充分" in ok
+    assert len(ok) <= 40
+
+    bad = _safe_tool_result_reason(
+        ["search_knowledge"],
+        3,
+        {"sufficient": False, "missing_aspects": ["排查指标"]},
+    )
+    assert "命中3条" in bad
+    assert "不足" in bad
+    assert len(bad) <= 40

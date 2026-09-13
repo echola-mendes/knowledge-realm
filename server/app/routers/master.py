@@ -26,7 +26,7 @@ from app.agent.graph import (
     _safe_tool_call_reason,
     _safe_tool_result_reason,
 )
-from app.agent.knowledge_flow import build_knowledge_flow_graph
+from app.agent.knowledge_flow import build_knowledge_flow_graph, knowledge_initial_state
 from app.agent.master import build_master_graph, master_initial_state
 from app.rag.chat import _history
 from app.agent.tools import search_graph, search_graph_details, search_knowledge, web_search
@@ -128,17 +128,14 @@ def _invoke_knowledge_graph(
     ltm_hits: list,
 ) -> dict[str, Any]:
     """task=knowledge：直连 knowledge_flow（analyze→…→generate），不经 Master。"""
-    graph_task = "report" if body.task == "report" else "agent"
     recorder = DecisionRecorder(session=session)
     recorder.start_run(user_id=user_id, conversation_id=convo.id, mode="knowledge", query=body.query)
-    state = initial_state(
+    state = knowledge_initial_state(
         body.query,
         knowledge_base_id=kb_id,
-        task=graph_task,
         history=history_msgs,
         summary=summary_text,
         ltm_hits=ltm_hits,
-        allow_web=bool(body.allow_web),
     )
     try:
         out = build_knowledge_flow_graph().invoke(
