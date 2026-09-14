@@ -77,7 +77,7 @@
 - HttpOnly Session；表 `users`
 - **Compose**：根目录 `docker-compose.yml` + `./scripts/deploy.sh`；Nginx 反代 `/api`
 - **本机**：`127.0.0.1`；Worker 另开进程
-- **CI**：`.github/workflows/ci.yml`（pytest + 前端 build + `docker compose build`；Node 24）
+- **CI**：`.github/workflows/ci.yml` — `test` job（pytest `-m "not integration" --timeout=60` + 前端 build，`timeout-minutes: 45`）与独立 `docker` job（`docker compose build`，`timeout-minutes: 30`）；Node 24
 
 ---
 
@@ -142,3 +142,8 @@ P2 关键词用 ES BM25，不用 `pg_trgm` 冒充。
 - Observation/prompt：暴露 `searched_queries`、rewrite 次数/剩余额度；缺口改写软引导；超限不再鼓励盲目补搜。
 - `node_tools`：先 sufficiency 后写 SSE/审计；`tool_result.reason` ≤40 含短 sufficiency；`tool_result.decision` enrich sufficient/qi_id/missing/covered/gaps；不新 node_type/事件；Master knowledge 仍不接审计。
 - 未改 `knowledge_flow.py`；未调 `rewrite_query`；无硬拦 Tool。
+
+## 2026-09-14 CI
+
+- pytest 跳过 `integration`，单测加 timeout；`test` / `docker` 拆 job。
+- 文档版本未登录断言改用匿名 `TestClient`。

@@ -64,11 +64,15 @@ def test_register_version_is_idempotent_per_version():
 
 
 def test_versions_cross_user_404():
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app, reset_app_state
+
     with _client() as client:
         kb = client.post("/api/knowledge-bases", json={"name": f"Ver-{uuid.uuid4().hex[:8]}"}).json()
         doc = _upload(client, kb["id"], "x.md", "x".encode()).json()
-        # 另一个用户登录态下访问：http_client 默认单用户，这里仅验证未带会话 401
-    import requests
-
-    res = requests.get(f"http://127.0.0.1:8000/api/documents/{doc['id']}/versions")
+    # http_client 默认已登录；未带会话应 401（不打真实 8000 端口）
+    reset_app_state()
+    anon = TestClient(create_app(load_file=True, ensure_default=True))
+    res = anon.get(f"/api/documents/{doc['id']}/versions")
     assert res.status_code == 401
